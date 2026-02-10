@@ -6,7 +6,7 @@
         <AppHeader />
       </div>
       <n-layout-content
-        :content-style="{ padding: '24px', background: 'var(--bg-page)', transition: 'background 0.3s' }"
+        :content-style="{ padding: '80px 24px 24px', background: 'var(--bg-page)', transition: 'background 0.3s' }"
         :native-scrollable="true"
         style="flex: 1; overflow-y: auto;"
       >

@@ -1,9 +1,9 @@
 <template>
-  <div class="app-header">
+  <div class="app-header" :style="headerStyle">
     <div class="header-left">
       <n-button quaternary circle @click="appStore.toggleSidebar">
         <template #icon>
-          <n-icon :size="20">
+          <n-icon :size="20" :color="appStore.isDarkMode ? '#ffffff' : '#2d3748'">
             <MenuOutline />
           </n-icon>
         </template>
@@ -18,14 +18,14 @@
         size="small"
       >
         <template #prefix>
-          <n-icon :size="16" color="#a0aec0">
+          <n-icon :size="16" :color="appStore.isDarkMode ? '#ffffff' : '#a0aec0'">
             <SearchOutline />
           </n-icon>
         </template>
       </n-input>
       <n-button quaternary circle @click="appStore.toggleDarkMode">
         <template #icon>
-          <n-icon :size="20">
+          <n-icon :size="20" :color="appStore.isDarkMode ? '#ffffff' : '#2d3748'">
             <MoonOutline v-if="!appStore.isDarkMode" />
             <SunnyOutline v-else />
           </n-icon>
@@ -34,7 +34,7 @@
       <n-badge :value="3" :max="99">
         <n-button quaternary circle>
           <template #icon>
-            <n-icon :size="20">
+            <n-icon :size="20" :color="appStore.isDarkMode ? '#ffffff' : '#2d3748'">
               <NotificationsOutline />
             </n-icon>
           </template>
@@ -63,10 +63,18 @@ const route = useRoute()
 const currentTitle = computed(() => {
   return (route.meta?.title as string) || '首页概览'
 })
+
+const headerStyle = computed(() => ({
+  left: appStore.sidebarCollapsed ? '64px' : '220px'
+}))
 </script>
 
 <style scoped>
 .app-header {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 1000;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -74,7 +82,7 @@ const currentTitle = computed(() => {
   padding: 0 20px;
   background: var(--bg-header);
   border-bottom: 1px solid var(--border-color);
-  transition: background 0.3s, border-color 0.3s;
+  transition: background 0.3s, border-color 0.3s, left 0.3s;
 }
 
 .header-left {
