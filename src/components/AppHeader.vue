@@ -61,6 +61,11 @@ const appStore = useAppStore()
 const route = useRoute()
 
 const currentTitle = computed(() => {
+  // For nested routes, show parent title
+  const matched = route.matched
+  if (matched.length > 1) {
+    return (matched[0].meta?.title as string) || '首页概览'
+  }
   return (route.meta?.title as string) || '首页概览'
 })
 

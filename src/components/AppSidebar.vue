@@ -85,7 +85,11 @@ const route = useRoute()
 const router = useRouter()
 
 const currentKey = computed(() => {
-  return route.name as string
+  const name = route.name as string
+  // Map child route names to sidebar keys
+  if (name === 'PointManagement') return 'video-devices'
+  if (name === 'VideoStreams') return 'video-streams'
+  return name
 })
 
 function renderIcon(icon: any) {
@@ -161,9 +165,20 @@ const menuThemeOverrides = computed(() => {
 })
 
 function handleMenuSelect(key: string) {
-  const routeNames = ['Dashboard', 'VideoManagement', 'AlgorithmManagement', 'PushManagement', 'AlarmManagement', 'SystemManagement']
-  if (routeNames.includes(key)) {
-    router.push({ name: key })
+  // Map sidebar keys to route names
+  const keyToRoute: Record<string, string> = {
+    'Dashboard': 'Dashboard',
+    'VideoManagement': 'PointManagement',
+    'video-devices': 'PointManagement',
+    'video-streams': 'VideoStreams',
+    'AlgorithmManagement': 'AlgorithmManagement',
+    'PushManagement': 'PushManagement',
+    'AlarmManagement': 'AlarmManagement',
+    'SystemManagement': 'SystemManagement'
+  }
+  const routeName = keyToRoute[key]
+  if (routeName) {
+    router.push({ name: routeName })
   }
 }
 </script>

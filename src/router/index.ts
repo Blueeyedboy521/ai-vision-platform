@@ -15,8 +15,23 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/video',
     name: 'VideoManagement',
-    component: () => import('@/views/Placeholder.vue'),
-    meta: { title: '视频管理' }
+    component: () => import('@/views/RouterViewWrapper.vue'),
+    redirect: '/video/points',
+    meta: { title: '视频管理' },
+    children: [
+      {
+        path: 'points',
+        name: 'PointManagement',
+        component: () => import('@/views/PointManagement.vue'),
+        meta: { title: '点位管理' }
+      },
+      {
+        path: 'streams',
+        name: 'VideoStreams',
+        component: () => import('@/views/Placeholder.vue'),
+        meta: { title: '视频流管理' }
+      }
+    ]
   },
   {
     path: '/algorithm',
