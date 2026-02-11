@@ -1,12 +1,23 @@
-# v0 runtime files (should only exist in preview, not in git)
-__v0_runtime_loader.js
-__v0_devtools.tsx
-__v0_jsx-dev-runtime.ts
-instrumentation-client.js
-instrumentation-client.ts
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# Common ignores
-node_modules/
-.next/
-.env*.local
+# OS
 .DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env*.local
+
+# Temporary files
+*.log
+*.tmp
+
+# Old src directory (to be deleted)
+/src/
+/.vite/
+node_modules

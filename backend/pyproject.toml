@@ -1,0 +1,29 @@
+[project]
+name = "ai-vision-platform-backend"
+version = "0.1.0"
+description = "AI Vision Platform Backend Service"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+    | \.venv
+    | __pycache__
+    | migrations
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
+ignore = ["E501"]
+exclude = [".venv", "__pycache__", "migrations"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
