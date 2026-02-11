@@ -1,30 +1,49 @@
 <template>
-  <n-layout has-sider style="height: 100vh;">
+  <!-- Login page without layout -->
+  <router-view v-if="isLoginPage" />
+  
+  <!-- Normal pages with layout -->
+  <n-layout v-else has-sider style="height: 100vh;">
     <AppSidebar />
-    <n-layout style="display: flex; flex-direction: column; height: 100vh; overflow: hidden;">
+    <n-layout style="height: 100vh; overflow: hidden;">
       <div class="sticky-header">
         <AppHeader />
       </div>
-      <n-layout-content
-        :content-style="{ padding: '80px 24px 24px', background: 'var(--bg-page)', transition: 'background 0.3s' }"
-        :native-scrollable="true"
-        style="flex: 1; overflow-y: auto;"
-      >
+      <div class="main-content">
         <router-view />
-      </n-layout-content>
+      </div>
     </n-layout>
   </n-layout>
 </template>
 
 <script setup lang="ts">
-import { NLayout, NLayoutContent } from 'naive-ui'
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+import { NLayout } from 'naive-ui'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
+
+const route = useRoute()
+
+// Check if current route is login page
+const isLoginPage = computed(() => route.path === '/login')
 </script>
 
 <style scoped>
 .sticky-header {
-  flex-shrink: 0;
-  z-index: 10;
+  position: fixed;
+  top: 0;
+  left: var(--sidebar-width, 220px);
+  right: 0;
+  z-index: 100;
+}
+
+.main-content {
+  height: calc(100vh - 56px);
+  margin-top: 56px;
+  padding: 24px;
+  overflow: hidden;
+  background: var(--bg-page);
+  box-sizing: border-box;
 }
 </style>

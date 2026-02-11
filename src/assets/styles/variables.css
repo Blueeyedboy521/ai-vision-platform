@@ -1,0 +1,128 @@
+/**
+ * 全局 CSS 变量定义
+ * AI 视觉管理平台 - 设计系统
+ */
+
+:root {
+  /* ===== 品牌色彩系统 ===== */
+  --primary-color: #4318FF;
+  --primary-light: #5a3eff;
+  --primary-dark: #3510d9;
+  --primary-darker: #2d0ec0;
+  
+  /* 功能色 */
+  --success-color: #22c55e;
+  --success-light: #4ade80;
+  --success-dark: #16a34a;
+  
+  --warning-color: #f97316;
+  --warning-light: #fb923c;
+  --warning-dark: #ea580c;
+  
+  --error-color: #ef4444;
+  --error-light: #f87171;
+  --error-dark: #dc2626;
+  
+  --info-color: #06b6d4;
+  --info-light: #22d3ee;
+  --info-dark: #0891b2;
+
+  /* ===== 亮色主题 ===== */
+  --bg-page: #f5f7fa;
+  --bg-card: #ffffff;
+  --bg-sidebar: #ffffff;
+  --bg-header: #ffffff;
+  --bg-hover: rgba(67, 24, 255, 0.04);
+  --bg-active: rgba(67, 24, 255, 0.08);
+  
+  --text-primary: #1a1a2e;
+  --text-secondary: #4a5568;
+  --text-muted: #6b7280;
+  --text-placeholder: #9ca3af;
+  
+  --border-color: #e5e7eb;
+  --border-light: #f0f0f0;
+  --border-medium: #d1d5db;
+  
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  --hover-shadow: rgba(67, 24, 255, 0.12);
+  
+  /* ===== 字体系统 ===== */
+  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, 'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'SF Mono', Monaco, 'Courier New', monospace;
+  
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-base: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 18px;
+  --font-size-2xl: 22px;
+  --font-size-3xl: 28px;
+  
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.75;
+  
+  /* ===== 间距系统 ===== */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 20px;
+  --spacing-2xl: 24px;
+  --spacing-3xl: 32px;
+  --spacing-4xl: 48px;
+  
+  /* ===== 圆角系统 ===== */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-full: 9999px;
+  
+  /* ===== 过渡动画 ===== */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.2s ease;
+  --transition-slow: 0.3s ease;
+  
+  /* ===== 布局尺寸 ===== */
+  --sidebar-width: 220px;
+  --sidebar-collapsed-width: 64px;
+  --header-height: 56px;
+  --content-padding: 24px;
+}
+
+/* ===== 暗色主题 ===== */
+html.dark {
+  --bg-page: #18181c;
+  --bg-card: #242428;
+  --bg-sidebar: #1e1e22;
+  --bg-header: #242428;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(67, 24, 255, 0.15);
+  
+  --text-primary: #e4e4e8;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --text-placeholder: #52525b;
+  
+  --border-color: #333338;
+  --border-light: #27272a;
+  --border-medium: #3f3f46;
+  
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+  --hover-shadow: rgba(67, 24, 255, 0.2);
+}

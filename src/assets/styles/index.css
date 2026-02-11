@@ -1,0 +1,10 @@
+/**
+ * 样式入口文件
+ * AI 视觉管理平台
+ */
+
+/* CSS 变量定义 */
+@import './variables.css';
+
+/* 通用样式类 */
+@import './common.css';

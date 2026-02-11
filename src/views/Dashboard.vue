@@ -73,6 +73,8 @@ import AlertList from '@/components/AlertList.vue'
   display: flex;
   flex-direction: column;
   gap: 20px;
+  height: 100%;
+  overflow-y: auto;
 }
 
 .stat-grid {

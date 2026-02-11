@@ -34,7 +34,7 @@
           :theme-overrides="menuThemeOverrides"
         />
 
-        <div v-if="!appStore.sidebarCollapsed" class="menu-group-label" style="margin-top: 12px;">核心配置</div>
+        <div v-if="!appStore.sidebarCollapsed" class="menu-group-label" style="margin-top: 12px;">系统配置</div>
         <n-menu
           :collapsed="appStore.sidebarCollapsed"
           :collapsed-width="64"
@@ -76,7 +76,11 @@ import {
   SendOutline,
   NotificationsOutline,
   SettingsOutline,
-  ChevronDownOutline
+  PeopleOutline,
+  ShieldCheckmarkOutline,
+  OptionsOutline,
+  DocumentTextOutline,
+  ServerOutline
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 
@@ -87,8 +91,13 @@ const router = useRouter()
 const currentKey = computed(() => {
   const name = route.name as string
   // Map child route names to sidebar keys
-  if (name === 'PointManagement') return 'video-devices'
-  if (name === 'VideoStreams') return 'video-streams'
+  if (name === 'CameraManagement') return 'video-devices'
+  if (name === 'VideoPreview') return 'video-preview'
+  if (name === 'SystemOverview') return 'system-overview'
+  if (name === 'UserManagement') return 'system-users'
+  if (name === 'RoleManagement') return 'system-roles'
+  if (name === 'SystemSettings') return 'system-settings'
+  if (name === 'OperationLogs') return 'system-logs'
   return name
 })
 
@@ -107,8 +116,8 @@ const platformMenuOptions: MenuOption[] = [
     key: 'VideoManagement',
     icon: renderIcon(VideocamOutline),
     children: [
-      { label: '点位管理', key: 'video-devices' },
-      { label: '视频流管理', key: 'video-streams' }
+      { label: '摄像头管理', key: 'video-devices' },
+      { label: '视频预览', key: 'video-preview' }
     ]
   },
   {
@@ -130,9 +139,16 @@ const platformMenuOptions: MenuOption[] = [
 
 const configMenuOptions: MenuOption[] = [
   {
-    label: '系统管理',
-    key: 'SystemManagement',
-    icon: renderIcon(SettingsOutline)
+    label: '系统配置',
+    key: 'SystemConfig',
+    icon: renderIcon(SettingsOutline),
+    children: [
+      { label: '系统概览', key: 'system-overview', icon: renderIcon(ServerOutline) },
+      { label: '用户管理', key: 'system-users', icon: renderIcon(PeopleOutline) },
+      { label: '角色权限', key: 'system-roles', icon: renderIcon(ShieldCheckmarkOutline) },
+      { label: '系统设置', key: 'system-settings', icon: renderIcon(OptionsOutline) },
+      { label: '操作日志', key: 'system-logs', icon: renderIcon(DocumentTextOutline) }
+    ]
   }
 ]
 
@@ -168,13 +184,17 @@ function handleMenuSelect(key: string) {
   // Map sidebar keys to route names
   const keyToRoute: Record<string, string> = {
     'Dashboard': 'Dashboard',
-    'VideoManagement': 'PointManagement',
-    'video-devices': 'PointManagement',
-    'video-streams': 'VideoStreams',
+    'VideoManagement': 'CameraManagement',
+    'video-devices': 'CameraManagement',
+    'video-preview': 'VideoPreview',
     'AlgorithmManagement': 'AlgorithmManagement',
     'PushManagement': 'PushManagement',
     'AlarmManagement': 'AlarmManagement',
-    'SystemManagement': 'SystemManagement'
+    'system-overview': 'SystemOverview',
+    'system-users': 'UserManagement',
+    'system-roles': 'RoleManagement',
+    'system-settings': 'SystemSettings',
+    'system-logs': 'OperationLogs'
   }
   const routeName = keyToRoute[key]
   if (routeName) {

@@ -54,7 +54,7 @@
 <script setup lang="ts">
 const alerts = [
   {
-    thumb: '/alert-thumb-1.jpg',
+    thumb: 'https://images.unsplash.com/photo-1557597774-9d273605dfa9?w=240&h=144&fit=crop',
     title: '区域入侵识别告警',
     level: 'critical',
     levelText: '高危',
@@ -63,7 +63,7 @@ const alerts = [
     datetime: '2023-11-20 14:32:15'
   },
   {
-    thumb: '/alert-thumb-2.jpg',
+    thumb: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=240&h=144&fit=crop',
     title: '人员聚集违规告警',
     level: 'medium',
     levelText: '中等',
@@ -72,7 +72,7 @@ const alerts = [
     datetime: '2023-11-20 14:22:45'
   },
   {
-    thumb: '/alert-thumb-3.jpg',
+    thumb: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=240&h=144&fit=crop',
     title: '消防设施占用检测',
     level: 'warning',
     levelText: '警告',
@@ -81,7 +81,7 @@ const alerts = [
     datetime: '2023-11-20 13:30:10'
   },
   {
-    thumb: '/alert-thumb-4.jpg',
+    thumb: 'https://images.unsplash.com/photo-1564182842519-8a3b2af3e228?w=240&h=144&fit=crop',
     title: '烟火特征疑似检出',
     level: 'urgent',
     levelText: '紧急',
