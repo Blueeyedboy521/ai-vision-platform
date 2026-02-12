@@ -1,26 +1,105 @@
+# -*- coding: utf-8 -*-
 """
-Area model.
+区域模型
+
+定义摄像头区域/点位分组的数据结构
 """
+from typing import Optional, List, TYPE_CHECKING
 
-from typing import Optional, List
-
-from sqlalchemy import String, Integer, ForeignKey
+from sqlalchemy import String, Integer, Text, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, TimestampMixin
+from .base import Base, AuditMixin, generate_uuid
+
+if TYPE_CHECKING:
+    from .camera import Camera
 
 
-class Area(Base, TimestampMixin):
-    """Area model."""
+class Area(Base, AuditMixin):
+    """
+    区域表
+    
+    用于组织和管理摄像头，支持树形结构
+    """
     
     __tablename__ = "areas"
+    __table_args__ = {
+        "comment": "区域表"
+    }
     
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(100), index=True)
-    parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("areas.id"), nullable=True)
-    description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # ==================== 主键 ====================
+    id: Mapped[str] = mapped_column(
+        String(32),
+        primary_key=True,
+        default=generate_uuid,
+        comment="区域ID (32位UUID)"
+    )
     
-    # Relationships
-    parent = relationship("Area", remote_side=[id], back_populates="children")
-    children: Mapped[List["Area"]] = relationship("Area", back_populates="parent")
-    cameras = relationship("Camera", back_populates="area")
+    # ==================== 基本信息 ====================
+    name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        comment="区域名称"
+    )
+    
+    code: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        unique=True,
+        nullable=True,
+        comment="区域编码 (可选)"
+    )
+    
+    description: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        comment="区域描述"
+    )
+    
+    # ==================== 树形结构 ====================
+    parent_id: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        ForeignKey("areas.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="父区域ID"
+    )
+    
+    # ==================== 排序 ====================
+    sort_order: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="排序序号 (越小越靠前)"
+    )
+    
+    # ==================== 关系 ====================
+    # 父区域
+    parent: Mapped[Optional["Area"]] = relationship(
+        "Area",
+        remote_side=[id],
+        back_populates="children"
+    )
+    
+    # 子区域
+    children: Mapped[List["Area"]] = relationship(
+        "Area",
+        back_populates="parent",
+        cascade="all, delete-orphan"
+    )
+    
+    # 该区域下的摄像头
+    cameras: Mapped[List["Camera"]] = relationship(
+        "Camera",
+        back_populates="area",
+        cascade="all, delete-orphan"
+    )
+    
+    def __repr__(self) -> str:
+        return f"<Area(id={self.id}, name={self.name})>"
+    
+    @property
+    def full_path(self) -> str:
+        """获取完整路径名称"""
+        if self.parent is None:
+            return self.name
+        return f"{self.parent.full_path}/{self.name}"

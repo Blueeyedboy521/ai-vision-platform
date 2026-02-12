@@ -1,166 +1,371 @@
+# -*- coding: utf-8 -*-
 """
-Alarm management endpoints.
+告警 API
+
+提供告警查询和处理接口
 """
+from datetime import datetime, timedelta
+from typing import Optional, List
 
-from datetime import datetime
-from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy import select, func, and_
+from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from app.core.database import get_db
+from app.api.deps import get_current_user
+from app.models import User, Alarm, Camera, Algorithm
+from app.schemas.alarm import (
+    AlarmConfirmRequest,
+    AlarmBatchConfirmRequest,
+    AlarmStatsData,
+    AlarmStatsItem,
+    AlarmTrendItem
+)
+from app.schemas.common import success_response, page_response
+from common.logging import logger
+
 
 router = APIRouter()
 
 
-class AlarmBase(BaseModel):
-    """Alarm base model."""
-    camera_id: int
-    algorithm_id: int
-    level: str  # info, warning, danger
-    title: str
-    description: Optional[str] = None
-
-
-class AlarmResponse(AlarmBase):
-    """Alarm response model."""
-    id: int
-    camera_name: str
-    algorithm_name: str
-    status: str = "pending"  # pending, confirmed, resolved, ignored
-    image_url: Optional[str] = None
-    video_url: Optional[str] = None
-    created_at: datetime
-    resolved_at: Optional[datetime] = None
-    
-    class Config:
-        from_attributes = True
-
-
-class AlarmListResponse(BaseModel):
-    """Alarm list response."""
-    total: int
-    items: List[AlarmResponse]
-
-
-class AlarmStats(BaseModel):
-    """Alarm statistics."""
-    total: int
-    pending: int
-    confirmed: int
-    resolved: int
-    today_count: int
-    danger_count: int
-    warning_count: int
-
-
-# Mock data
-mock_alarms = [
-    {
-        "id": 1,
-        "camera_id": 1,
-        "camera_name": "大厅摄像头-01",
-        "algorithm_id": 1,
-        "algorithm_name": "人员入侵检测",
-        "level": "danger",
-        "title": "检测到人员入侵",
-        "description": "在禁入区域检测到人员活动",
-        "status": "pending",
-        "image_url": "/alarm-001.jpg",
-        "created_at": datetime.now(),
-    },
-    {
-        "id": 2,
-        "camera_id": 2,
-        "camera_name": "大厅摄像头-02",
-        "algorithm_id": 2,
-        "algorithm_name": "烟火检测",
-        "level": "warning",
-        "title": "检测到烟雾",
-        "description": "画面中检测到疑似烟雾",
-        "status": "confirmed",
-        "image_url": "/alarm-002.jpg",
-        "created_at": datetime.now(),
-    },
-]
-
-
-@router.get("", response_model=AlarmListResponse)
-async def list_alarms(
-    camera_id: Optional[int] = Query(None, description="摄像头ID筛选"),
-    level: Optional[str] = Query(None, description="告警级别筛选"),
-    status: Optional[str] = Query(None, description="状态筛选"),
+@router.get("", summary="获取告警列表")
+async def get_alarms(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    camera_id: Optional[str] = Query(None, description="摄像头ID"),
+    algorithm_id: Optional[str] = Query(None, description="算法ID"),
+    level: Optional[str] = Query(None, description="告警级别"),
+    status: Optional[str] = Query(None, description="处理状态"),
     start_time: Optional[datetime] = Query(None, description="开始时间"),
     end_time: Optional[datetime] = Query(None, description="结束时间"),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Get alarm list."""
-    filtered = mock_alarms
+    """
+    获取告警列表
+    """
+    query = select(Alarm)
+    count_query = select(func.count(Alarm.id))
     
-    if camera_id is not None:
-        filtered = [a for a in filtered if a["camera_id"] == camera_id]
+    # 筛选条件
+    conditions = []
     
-    if level is not None:
-        filtered = [a for a in filtered if a["level"] == level]
+    if camera_id:
+        conditions.append(Alarm.camera_id == camera_id)
     
-    if status is not None:
-        filtered = [a for a in filtered if a["status"] == status]
+    if algorithm_id:
+        conditions.append(Alarm.algorithm_id == algorithm_id)
     
-    total = len(filtered)
-    items = filtered[skip : skip + limit]
+    if level:
+        conditions.append(Alarm.level == level)
     
-    return AlarmListResponse(
-        total=total,
-        items=[AlarmResponse(**a) for a in items],
+    if status:
+        conditions.append(Alarm.status == status)
+    
+    if start_time:
+        conditions.append(Alarm.alarm_time >= start_time)
+    
+    if end_time:
+        conditions.append(Alarm.alarm_time <= end_time)
+    
+    if conditions:
+        query = query.where(and_(*conditions))
+        count_query = count_query.where(and_(*conditions))
+    
+    # 统计总数
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+    
+    # 分页查询
+    query = query.order_by(Alarm.alarm_time.desc())
+    query = query.offset((page - 1) * page_size).limit(page_size)
+    
+    result = await db.execute(query)
+    alarms = result.scalars().all()
+    
+    # 获取关联信息
+    data = []
+    for alarm in alarms:
+        # 获取摄像头和算法名称
+        cam_result = await db.execute(
+            select(Camera.name).where(Camera.id == alarm.camera_id)
+        )
+        cam_name = cam_result.scalar_one_or_none()
+        
+        algo_result = await db.execute(
+            select(Algorithm.name).where(Algorithm.id == alarm.algorithm_id)
+        )
+        algo_name = algo_result.scalar_one_or_none()
+        
+        data.append({
+            "id": alarm.id,
+            "camera_id": alarm.camera_id,
+            "camera_name": cam_name,
+            "algorithm_id": alarm.algorithm_id,
+            "algorithm_name": algo_name,
+            "alarm_type": alarm.alarm_type,
+            "level": alarm.level,
+            "title": alarm.title,
+            "description": alarm.description,
+            "alarm_time": alarm.alarm_time.isoformat(),
+            "snapshot_url": alarm.snapshot_url,
+            "video_url": alarm.video_url,
+            "detection_data": alarm.detection_data,
+            "status": alarm.status,
+            "confirmed_by": alarm.confirmed_by,
+            "confirmed_at": alarm.confirmed_at.isoformat() if alarm.confirmed_at else None,
+            "confirm_remark": alarm.confirm_remark,
+            "is_pushed": alarm.is_pushed,
+            "created_at": alarm.created_at.isoformat()
+        })
+    
+    return page_response(data, page, page_size, total)
+
+
+@router.get("/stats", summary="获取告警统计")
+async def get_alarm_stats(
+    days: int = Query(7, ge=1, le=30, description="统计天数"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取告警统计数据
+    """
+    # 时间范围
+    end_time = datetime.now()
+    start_time = end_time - timedelta(days=days)
+    
+    # 总数
+    total_result = await db.execute(
+        select(func.count(Alarm.id))
+        .where(Alarm.alarm_time >= start_time)
     )
-
-
-@router.get("/stats", response_model=AlarmStats)
-async def get_alarm_stats():
-    """Get alarm statistics."""
-    return AlarmStats(
-        total=len(mock_alarms),
-        pending=len([a for a in mock_alarms if a["status"] == "pending"]),
-        confirmed=len([a for a in mock_alarms if a["status"] == "confirmed"]),
-        resolved=len([a for a in mock_alarms if a["status"] == "resolved"]),
-        today_count=len(mock_alarms),
-        danger_count=len([a for a in mock_alarms if a["level"] == "danger"]),
-        warning_count=len([a for a in mock_alarms if a["level"] == "warning"]),
+    total = total_result.scalar() or 0
+    
+    # 按状态统计
+    status_stats = {}
+    for s in ["unconfirmed", "confirmed", "ignored", "processed"]:
+        count_result = await db.execute(
+            select(func.count(Alarm.id))
+            .where(
+                Alarm.alarm_time >= start_time,
+                Alarm.status == s
+            )
+        )
+        status_stats[s] = count_result.scalar() or 0
+    
+    # 按级别统计
+    level_stats = []
+    for level in ["info", "warning", "danger", "critical"]:
+        count_result = await db.execute(
+            select(func.count(Alarm.id))
+            .where(
+                Alarm.alarm_time >= start_time,
+                Alarm.level == level
+            )
+        )
+        count = count_result.scalar() or 0
+        if count > 0:
+            level_stats.append({"label": level, "value": count})
+    
+    # 按摄像头统计 (Top 10)
+    camera_stats_result = await db.execute(
+        select(
+            Camera.name,
+            func.count(Alarm.id).label("count")
+        )
+        .join(Alarm, Camera.id == Alarm.camera_id)
+        .where(Alarm.alarm_time >= start_time)
+        .group_by(Camera.id, Camera.name)
+        .order_by(func.count(Alarm.id).desc())
+        .limit(10)
     )
-
-
-@router.get("/{alarm_id}", response_model=AlarmResponse)
-async def get_alarm(alarm_id: int):
-    """Get alarm by ID."""
-    for alarm in mock_alarms:
-        if alarm["id"] == alarm_id:
-            return AlarmResponse(**alarm)
+    camera_stats = [
+        {"label": row[0] or "未知", "value": row[1]}
+        for row in camera_stats_result
+    ]
     
-    raise HTTPException(status_code=404, detail="告警不存在")
-
-
-@router.put("/{alarm_id}/status")
-async def update_alarm_status(alarm_id: int, status: str):
-    """Update alarm status."""
-    valid_statuses = ["pending", "confirmed", "resolved", "ignored"]
-    if status not in valid_statuses:
-        raise HTTPException(status_code=400, detail=f"无效的状态，可选值: {valid_statuses}")
+    # 按算法统计 (Top 10)
+    algo_stats_result = await db.execute(
+        select(
+            Algorithm.name,
+            func.count(Alarm.id).label("count")
+        )
+        .join(Alarm, Algorithm.id == Alarm.algorithm_id)
+        .where(Alarm.alarm_time >= start_time)
+        .group_by(Algorithm.id, Algorithm.name)
+        .order_by(func.count(Alarm.id).desc())
+        .limit(10)
+    )
+    algo_stats = [
+        {"label": row[0] or "未知", "value": row[1]}
+        for row in algo_stats_result
+    ]
     
-    for i, alarm in enumerate(mock_alarms):
-        if alarm["id"] == alarm_id:
-            mock_alarms[i]["status"] = status
-            if status == "resolved":
-                mock_alarms[i]["resolved_at"] = datetime.now()
-            return {"message": "状态更新成功"}
+    # 趋势数据
+    trend = []
+    for i in range(days):
+        day_start = (end_time - timedelta(days=days - i - 1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        day_end = day_start + timedelta(days=1)
+        
+        count_result = await db.execute(
+            select(func.count(Alarm.id))
+            .where(
+                Alarm.alarm_time >= day_start,
+                Alarm.alarm_time < day_end
+            )
+        )
+        count = count_result.scalar() or 0
+        trend.append({
+            "date": day_start.strftime("%Y-%m-%d"),
+            "count": count
+        })
     
-    raise HTTPException(status_code=404, detail="告警不存在")
+    return success_response({
+        "total": total,
+        "unconfirmed": status_stats.get("unconfirmed", 0),
+        "confirmed": status_stats.get("confirmed", 0),
+        "ignored": status_stats.get("ignored", 0),
+        "processed": status_stats.get("processed", 0),
+        "by_level": level_stats,
+        "by_camera": camera_stats,
+        "by_algorithm": algo_stats,
+        "trend": trend
+    })
 
 
-@router.delete("/{alarm_id}")
-async def delete_alarm(alarm_id: int):
-    """Delete alarm."""
-    for i, alarm in enumerate(mock_alarms):
-        if alarm["id"] == alarm_id:
-            mock_alarms.pop(i)
-            return {"message": "删除成功"}
+@router.get("/{alarm_id}", summary="获取告警详情")
+async def get_alarm(
+    alarm_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取告警详情
+    """
+    result = await db.execute(
+        select(Alarm).where(Alarm.id == alarm_id)
+    )
+    alarm = result.scalar_one_or_none()
     
-    raise HTTPException(status_code=404, detail="告警不存在")
+    if alarm is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="告警不存在"
+        )
+    
+    # 获取关联信息
+    cam_result = await db.execute(
+        select(Camera.name).where(Camera.id == alarm.camera_id)
+    )
+    cam_name = cam_result.scalar_one_or_none()
+    
+    algo_result = await db.execute(
+        select(Algorithm.name).where(Algorithm.id == alarm.algorithm_id)
+    )
+    algo_name = algo_result.scalar_one_or_none()
+    
+    return success_response({
+        "id": alarm.id,
+        "camera_id": alarm.camera_id,
+        "camera_name": cam_name,
+        "algorithm_id": alarm.algorithm_id,
+        "algorithm_name": algo_name,
+        "alarm_type": alarm.alarm_type,
+        "level": alarm.level,
+        "title": alarm.title,
+        "description": alarm.description,
+        "alarm_time": alarm.alarm_time.isoformat(),
+        "snapshot_url": alarm.snapshot_url,
+        "video_url": alarm.video_url,
+        "detection_data": alarm.detection_data,
+        "status": alarm.status,
+        "confirmed_by": alarm.confirmed_by,
+        "confirmed_at": alarm.confirmed_at.isoformat() if alarm.confirmed_at else None,
+        "confirm_remark": alarm.confirm_remark,
+        "is_pushed": alarm.is_pushed,
+        "created_at": alarm.created_at.isoformat()
+    })
+
+
+@router.post("/{alarm_id}/confirm", summary="确认告警")
+async def confirm_alarm(
+    alarm_id: str,
+    confirm_data: AlarmConfirmRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    确认告警
+    """
+    result = await db.execute(
+        select(Alarm).where(Alarm.id == alarm_id)
+    )
+    alarm = result.scalar_one_or_none()
+    
+    if alarm is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="告警不存在"
+        )
+    
+    if not alarm.can_confirm:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"告警状态为 {alarm.status}，无法确认"
+        )
+    
+    alarm.confirm(
+        user_id=current_user.id,
+        remark=confirm_data.remark,
+        new_status=confirm_data.status
+    )
+    
+    await db.commit()
+    
+    logger.info(f"告警已确认: {alarm_id} -> {confirm_data.status}")
+    
+    return success_response(None, "确认成功")
+
+
+@router.post("/batch-confirm", summary="批量确认告警")
+async def batch_confirm_alarms(
+    confirm_data: AlarmBatchConfirmRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    批量确认告警
+    """
+    result = await db.execute(
+        select(Alarm)
+        .where(
+            Alarm.id.in_(confirm_data.alarm_ids),
+            Alarm.status == "unconfirmed"
+        )
+    )
+    alarms = result.scalars().all()
+    
+    confirmed_count = 0
+    for alarm in alarms:
+        try:
+            alarm.confirm(
+                user_id=current_user.id,
+                remark=confirm_data.remark,
+                new_status=confirm_data.status
+            )
+            confirmed_count += 1
+        except ValueError:
+            continue
+    
+    await db.commit()
+    
+    logger.info(f"批量确认告警: {confirmed_count}/{len(confirm_data.alarm_ids)}")
+    
+    return success_response(
+        {"confirmed_count": confirmed_count},
+        f"已确认 {confirmed_count} 条告警"
+    )

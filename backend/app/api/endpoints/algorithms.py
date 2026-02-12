@@ -1,173 +1,443 @@
+# -*- coding: utf-8 -*-
 """
-Algorithm management endpoints.
+算法 API
+
+提供算法 CRUD 和摄像头-算法配置接口
 """
+from typing import Optional
 
-from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from app.core.database import get_db
+from app.api.deps import get_current_user, get_current_admin
+from app.models import User, Algorithm, Model, CameraAlgorithm, Camera
+from app.models.base import generate_uuid
+from app.schemas.algorithm import (
+    AlgorithmCreate,
+    AlgorithmUpdate,
+    CameraAlgorithmCreate,
+    CameraAlgorithmUpdate
+)
+from app.schemas.common import success_response, page_response
+from app.services.config_publisher import get_config_publisher
+from common.logging import logger
+
 
 router = APIRouter()
 
 
-class AlgorithmBase(BaseModel):
-    """Algorithm base model."""
-    name: str
-    code: str
-    category: str  # detection, classification, segmentation
-    description: Optional[str] = None
-    model_path: Optional[str] = None
-
-
-class AlgorithmCreate(AlgorithmBase):
-    """Algorithm creation model."""
-    pass
-
-
-class AlgorithmUpdate(BaseModel):
-    """Algorithm update model."""
-    name: Optional[str] = None
-    description: Optional[str] = None
-    is_enabled: Optional[bool] = None
-    config: Optional[dict] = None
-
-
-class AlgorithmResponse(AlgorithmBase):
-    """Algorithm response model."""
-    id: int
-    is_enabled: bool = True
-    config: dict = {}
-    usage_count: int = 0
-    
-    class Config:
-        from_attributes = True
-
-
-class AlgorithmListResponse(BaseModel):
-    """Algorithm list response."""
-    total: int
-    items: List[AlgorithmResponse]
-
-
-# Mock data
-mock_algorithms = [
-    {
-        "id": 1,
-        "name": "人员入侵检测",
-        "code": "person_intrusion",
-        "category": "detection",
-        "description": "检测指定区域内的人员入侵行为",
-        "is_enabled": True,
-        "config": {"confidence_threshold": 0.5, "alert_cooldown": 30},
-        "usage_count": 5,
-    },
-    {
-        "id": 2,
-        "name": "烟火检测",
-        "code": "fire_smoke",
-        "category": "detection",
-        "description": "检测画面中的烟雾和火焰",
-        "is_enabled": True,
-        "config": {"confidence_threshold": 0.6},
-        "usage_count": 3,
-    },
-    {
-        "id": 3,
-        "name": "安全帽检测",
-        "code": "helmet_detection",
-        "category": "detection",
-        "description": "检测人员是否佩戴安全帽",
-        "is_enabled": True,
-        "config": {"confidence_threshold": 0.5},
-        "usage_count": 2,
-    },
-    {
-        "id": 4,
-        "name": "人员聚集检测",
-        "code": "crowd_detection",
-        "category": "detection",
-        "description": "检测区域内人员聚集情况",
-        "is_enabled": False,
-        "config": {"min_count": 5, "confidence_threshold": 0.5},
-        "usage_count": 0,
-    },
-    {
-        "id": 5,
-        "name": "离岗检测",
-        "code": "absence_detection",
-        "category": "detection",
-        "description": "检测指定岗位人员离岗情况",
-        "is_enabled": True,
-        "config": {"absence_threshold": 300},
-        "usage_count": 1,
-    },
-]
-
-
-@router.get("", response_model=AlgorithmListResponse)
-async def list_algorithms(
-    category: Optional[str] = Query(None, description="算法类别筛选"),
-    is_enabled: Optional[bool] = Query(None, description="是否启用筛选"),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
+@router.get("", summary="获取算法列表")
+async def get_algorithms(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    model_id: Optional[str] = Query(None, description="模型ID"),
+    keyword: Optional[str] = Query(None, description="关键词"),
+    is_enabled: Optional[bool] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Get algorithm list."""
-    filtered = mock_algorithms
+    """
+    获取算法列表
+    """
+    query = select(Algorithm).options(selectinload(Algorithm.model))
+    count_query = select(func.count(Algorithm.id))
     
-    if category is not None:
-        filtered = [a for a in filtered if a["category"] == category]
+    if model_id:
+        query = query.where(Algorithm.model_id == model_id)
+        count_query = count_query.where(Algorithm.model_id == model_id)
+    
+    if keyword:
+        keyword_filter = f"%{keyword}%"
+        query = query.where(
+            (Algorithm.name.ilike(keyword_filter)) |
+            (Algorithm.code.ilike(keyword_filter))
+        )
+        count_query = count_query.where(
+            (Algorithm.name.ilike(keyword_filter)) |
+            (Algorithm.code.ilike(keyword_filter))
+        )
     
     if is_enabled is not None:
-        filtered = [a for a in filtered if a["is_enabled"] == is_enabled]
+        query = query.where(Algorithm.is_enabled == is_enabled)
+        count_query = count_query.where(Algorithm.is_enabled == is_enabled)
     
-    total = len(filtered)
-    items = filtered[skip : skip + limit]
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
     
-    return AlgorithmListResponse(
-        total=total,
-        items=[AlgorithmResponse(**a) for a in items],
+    query = query.order_by(Algorithm.created_at.desc())
+    query = query.offset((page - 1) * page_size).limit(page_size)
+    
+    result = await db.execute(query)
+    algorithms = result.scalars().all()
+    
+    data = []
+    for algo in algorithms:
+        # 统计关联摄像头数量
+        cam_count_result = await db.execute(
+            select(func.count(CameraAlgorithm.id))
+            .where(CameraAlgorithm.algorithm_id == algo.id)
+        )
+        cam_count = cam_count_result.scalar() or 0
+        
+        data.append({
+            "id": algo.id,
+            "name": algo.name,
+            "code": algo.code,
+            "description": algo.description,
+            "model_id": algo.model_id,
+            "model_name": algo.model.name if algo.model else None,
+            "target_classes": algo.target_classes,
+            "default_confidence": algo.default_confidence,
+            "alert_config": algo.alert_config,
+            "is_enabled": algo.is_enabled,
+            "camera_count": cam_count,
+            "created_at": algo.created_at.isoformat(),
+            "updated_at": algo.updated_at.isoformat()
+        })
+    
+    return page_response(data, page, page_size, total)
+
+
+@router.get("/{algorithm_id}", summary="获取算法详情")
+async def get_algorithm(
+    algorithm_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取算法详情
+    """
+    result = await db.execute(
+        select(Algorithm)
+        .options(selectinload(Algorithm.model))
+        .where(Algorithm.id == algorithm_id)
     )
-
-
-@router.get("/{algorithm_id}", response_model=AlgorithmResponse)
-async def get_algorithm(algorithm_id: int):
-    """Get algorithm by ID."""
-    for algo in mock_algorithms:
-        if algo["id"] == algorithm_id:
-            return AlgorithmResponse(**algo)
+    algo = result.scalar_one_or_none()
     
-    raise HTTPException(status_code=404, detail="算法不存在")
-
-
-@router.put("/{algorithm_id}", response_model=AlgorithmResponse)
-async def update_algorithm(algorithm_id: int, algorithm_update: AlgorithmUpdate):
-    """Update algorithm."""
-    for i, algo in enumerate(mock_algorithms):
-        if algo["id"] == algorithm_id:
-            update_data = algorithm_update.model_dump(exclude_unset=True)
-            mock_algorithms[i].update(update_data)
-            return AlgorithmResponse(**mock_algorithms[i])
+    if algo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="算法不存在"
+        )
     
-    raise HTTPException(status_code=404, detail="算法不存在")
-
-
-@router.post("/{algorithm_id}/enable")
-async def enable_algorithm(algorithm_id: int):
-    """Enable algorithm."""
-    for i, algo in enumerate(mock_algorithms):
-        if algo["id"] == algorithm_id:
-            mock_algorithms[i]["is_enabled"] = True
-            return {"message": "算法已启用"}
+    cam_count_result = await db.execute(
+        select(func.count(CameraAlgorithm.id))
+        .where(CameraAlgorithm.algorithm_id == algo.id)
+    )
+    cam_count = cam_count_result.scalar() or 0
     
-    raise HTTPException(status_code=404, detail="算法不存在")
+    return success_response({
+        "id": algo.id,
+        "name": algo.name,
+        "code": algo.code,
+        "description": algo.description,
+        "model_id": algo.model_id,
+        "model_name": algo.model.name if algo.model else None,
+        "target_classes": algo.target_classes,
+        "default_confidence": algo.default_confidence,
+        "alert_config": algo.alert_config,
+        "is_enabled": algo.is_enabled,
+        "camera_count": cam_count,
+        "created_at": algo.created_at.isoformat(),
+        "updated_at": algo.updated_at.isoformat()
+    })
 
 
-@router.post("/{algorithm_id}/disable")
-async def disable_algorithm(algorithm_id: int):
-    """Disable algorithm."""
-    for i, algo in enumerate(mock_algorithms):
-        if algo["id"] == algorithm_id:
-            mock_algorithms[i]["is_enabled"] = False
-            return {"message": "算法已禁用"}
+@router.post("", summary="创建算法")
+async def create_algorithm(
+    algo_data: AlgorithmCreate,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    创建算法 (仅管理员)
+    """
+    # 检查编码
+    existing = await db.execute(
+        select(Algorithm).where(Algorithm.code == algo_data.code)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="算法编码已存在"
+        )
     
-    raise HTTPException(status_code=404, detail="算法不存在")
+    # 检查模型
+    model_result = await db.execute(
+        select(Model).where(Model.id == algo_data.model_id)
+    )
+    if model_result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="模型不存在"
+        )
+    
+    # 创建算法
+    algo = Algorithm(
+        id=generate_uuid(),
+        name=algo_data.name,
+        code=algo_data.code,
+        description=algo_data.description,
+        model_id=algo_data.model_id,
+        default_confidence=algo_data.default_confidence,
+        is_enabled=algo_data.is_enabled,
+        created_by=current_user.id,
+        updated_by=current_user.id
+    )
+    algo.target_classes = algo_data.target_classes
+    algo.alert_config = algo_data.alert_config
+    
+    db.add(algo)
+    await db.commit()
+    await db.refresh(algo)
+    
+    config_publisher = get_config_publisher()
+    await config_publisher.publish_algorithm_add({
+        "algorithm_id": algo.id,
+        "code": algo.code,
+        "model_id": algo.model_id
+    })
+    
+    logger.info(f"算法已创建: {algo.id} - {algo.name}")
+    
+    return success_response({"id": algo.id}, "创建成功")
+
+
+@router.put("/{algorithm_id}", summary="更新算法")
+async def update_algorithm(
+    algorithm_id: str,
+    algo_data: AlgorithmUpdate,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    更新算法 (仅管理员)
+    """
+    result = await db.execute(
+        select(Algorithm).where(Algorithm.id == algorithm_id)
+    )
+    algo = result.scalar_one_or_none()
+    
+    if algo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="算法不存在"
+        )
+    
+    update_data = algo_data.model_dump(exclude_unset=True)
+    
+    for field, value in update_data.items():
+        if field == "target_classes":
+            algo.target_classes = value
+        elif field == "alert_config":
+            algo.alert_config = value
+        else:
+            setattr(algo, field, value)
+    
+    algo.updated_by = current_user.id
+    
+    await db.commit()
+    
+    config_publisher = get_config_publisher()
+    await config_publisher.publish_algorithm_update({
+        "algorithm_id": algo.id,
+        "code": algo.code,
+        "model_id": algo.model_id
+    })
+    
+    logger.info(f"算法已更新: {algorithm_id}")
+    
+    return success_response(None, "更新成功")
+
+
+@router.delete("/{algorithm_id}", summary="删除算法")
+async def delete_algorithm(
+    algorithm_id: str,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    删除算法 (仅管理员)
+    """
+    result = await db.execute(
+        select(Algorithm).where(Algorithm.id == algorithm_id)
+    )
+    algo = result.scalar_one_or_none()
+    
+    if algo is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="算法不存在"
+        )
+    
+    # 检查关联
+    cam_count_result = await db.execute(
+        select(func.count(CameraAlgorithm.id))
+        .where(CameraAlgorithm.algorithm_id == algorithm_id)
+    )
+    if (cam_count_result.scalar() or 0) > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="存在关联的摄像头配置，无法删除"
+        )
+    
+    await db.delete(algo)
+    await db.commit()
+    
+    config_publisher = get_config_publisher()
+    await config_publisher.publish_algorithm_delete(algorithm_id)
+    
+    logger.info(f"算法已删除: {algorithm_id}")
+    
+    return success_response(None, "删除成功")
+
+
+# ==================== 摄像头-算法配置 ====================
+
+@router.get("/camera/{camera_id}/configs", summary="获取摄像头算法配置")
+async def get_camera_algorithm_configs(
+    camera_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取摄像头的算法配置列表
+    """
+    result = await db.execute(
+        select(CameraAlgorithm)
+        .options(
+            selectinload(CameraAlgorithm.algorithm),
+            selectinload(CameraAlgorithm.camera)
+        )
+        .where(CameraAlgorithm.camera_id == camera_id)
+    )
+    configs = result.scalars().all()
+    
+    data = []
+    for config in configs:
+        data.append({
+            "id": config.id,
+            "camera_id": config.camera_id,
+            "camera_name": config.camera.name if config.camera else None,
+            "algorithm_id": config.algorithm_id,
+            "algorithm_name": config.algorithm.name if config.algorithm else None,
+            "model_id": config.model_id,
+            "confidence": config.confidence,
+            "effective_confidence": config.get_effective_confidence(),
+            "alert_config": config.alert_config,
+            "effective_alert_config": config.get_effective_alert_config(),
+            "regions": config.regions,
+            "is_enabled": config.is_enabled,
+            "created_at": config.created_at.isoformat(),
+            "updated_at": config.updated_at.isoformat()
+        })
+    
+    return success_response(data)
+
+
+@router.post("/camera/{camera_id}/configs", summary="添加摄像头算法配置")
+async def create_camera_algorithm_config(
+    camera_id: str,
+    config_data: CameraAlgorithmCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    为摄像头添加算法配置
+    """
+    # 检查摄像头
+    cam_result = await db.execute(
+        select(Camera).where(Camera.id == camera_id)
+    )
+    if cam_result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="摄像头不存在"
+        )
+    
+    # 检查是否已存在
+    existing = await db.execute(
+        select(CameraAlgorithm)
+        .where(
+            CameraAlgorithm.camera_id == camera_id,
+            CameraAlgorithm.algorithm_id == config_data.algorithm_id
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该摄像头已配置此算法"
+        )
+    
+    # 创建配置
+    config = CameraAlgorithm(
+        id=generate_uuid(),
+        camera_id=camera_id,
+        algorithm_id=config_data.algorithm_id,
+        model_id=config_data.model_id,
+        confidence=config_data.confidence,
+        is_enabled=config_data.is_enabled,
+        created_by=current_user.id,
+        updated_by=current_user.id
+    )
+    config.alert_config = config_data.alert_config
+    config.regions = config_data.regions
+    
+    db.add(config)
+    await db.commit()
+    
+    config_publisher = get_config_publisher()
+    await config_publisher.publish_camera_algorithm_add(
+        camera_id,
+        config_data.algorithm_id,
+        {
+            "confidence": config.get_effective_confidence(),
+            "regions": config.regions,
+            "alert_config": config.get_effective_alert_config()
+        }
+    )
+    
+    logger.info(f"摄像头算法配置已添加: {camera_id} - {config_data.algorithm_id}")
+    
+    return success_response({"id": config.id}, "添加成功")
+
+
+@router.delete("/camera/{camera_id}/configs/{config_id}", summary="删除摄像头算法配置")
+async def delete_camera_algorithm_config(
+    camera_id: str,
+    config_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    删除摄像头算法配置
+    """
+    result = await db.execute(
+        select(CameraAlgorithm)
+        .where(
+            CameraAlgorithm.id == config_id,
+            CameraAlgorithm.camera_id == camera_id
+        )
+    )
+    config = result.scalar_one_or_none()
+    
+    if config is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="配置不存在"
+        )
+    
+    algorithm_id = config.algorithm_id
+    
+    await db.delete(config)
+    await db.commit()
+    
+    config_publisher = get_config_publisher()
+    await config_publisher.publish_camera_algorithm_delete(camera_id, algorithm_id)
+    
+    logger.info(f"摄像头算法配置已删除: {camera_id} - {algorithm_id}")
+    
+    return success_response(None, "删除成功")

@@ -1,3 +1,4 @@
-"""AI Vision Platform Backend"""
-
-__version__ = "0.1.0"
+# -*- coding: utf-8 -*-
+"""
+AI 视觉平台后端应用
+"""

@@ -1,124 +1,294 @@
+# -*- coding: utf-8 -*-
 """
-Area management endpoints.
+区域 API
+
+提供区域 CRUD 和树形结构接口
 """
+from typing import Optional, List
 
-from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from app.core.database import get_db
+from app.api.deps import get_current_user
+from app.models import User, Area, Camera
+from app.models.base import generate_uuid
+from app.schemas.area import (
+    AreaCreate,
+    AreaUpdate,
+    AreaResponse,
+    AreaTreeNode,
+    AreaTreeResponse,
+    AreaListResponse
+)
+from app.schemas.common import success_response
+from common.logging import logger
+
 
 router = APIRouter()
 
 
-class AreaBase(BaseModel):
-    """Area base model."""
-    name: str
-    parent_id: Optional[int] = None
-    description: Optional[str] = None
-
-
-class AreaCreate(AreaBase):
-    """Area creation model."""
-    pass
-
-
-class AreaUpdate(BaseModel):
-    """Area update model."""
-    name: Optional[str] = None
-    parent_id: Optional[int] = None
-    description: Optional[str] = None
-
-
-class AreaResponse(AreaBase):
-    """Area response model."""
-    id: int
-    camera_count: int = 0
-    children: List["AreaResponse"] = []
+@router.get("", summary="获取区域列表")
+async def get_areas(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取区域列表 (平铺)
+    """
+    result = await db.execute(
+        select(Area).order_by(Area.sort_order, Area.created_at)
+    )
+    areas = result.scalars().all()
     
-    class Config:
-        from_attributes = True
-
-
-# Mock data
-mock_areas = [
-    {"id": 1, "name": "一楼", "parent_id": None, "description": "一楼区域", "camera_count": 2},
-    {"id": 2, "name": "二楼", "parent_id": None, "description": "二楼区域", "camera_count": 1},
-    {"id": 3, "name": "大厅", "parent_id": 1, "description": "一楼大厅", "camera_count": 2},
-    {"id": 4, "name": "办公区", "parent_id": 2, "description": "二楼办公区", "camera_count": 1},
-]
-
-
-def build_tree(areas: List[dict], parent_id: Optional[int] = None) -> List[dict]:
-    """Build area tree structure."""
-    result = []
+    data = []
     for area in areas:
-        if area["parent_id"] == parent_id:
-            children = build_tree(areas, area["id"])
-            area_copy = area.copy()
-            area_copy["children"] = children
-            result.append(area_copy)
-    return result
-
-
-@router.get("", response_model=List[AreaResponse])
-async def list_areas(flat: bool = False):
-    """Get area list (tree structure by default)."""
-    if flat:
-        return [AreaResponse(**a, children=[]) for a in mock_areas]
+        # 统计摄像头数量
+        camera_count_result = await db.execute(
+            select(func.count(Camera.id)).where(Camera.area_id == area.id)
+        )
+        camera_count = camera_count_result.scalar() or 0
+        
+        data.append({
+            "id": area.id,
+            "name": area.name,
+            "code": area.code,
+            "description": area.description,
+            "parent_id": area.parent_id,
+            "sort_order": area.sort_order,
+            "camera_count": camera_count,
+            "created_at": area.created_at.isoformat(),
+            "updated_at": area.updated_at.isoformat()
+        })
     
-    tree = build_tree(mock_areas)
-    return [AreaResponse(**a) for a in tree]
+    return success_response(data)
 
 
-@router.post("", response_model=AreaResponse)
-async def create_area(area: AreaCreate):
-    """Create a new area."""
-    new_id = max(a["id"] for a in mock_areas) + 1 if mock_areas else 1
+@router.get("/tree", summary="获取区域树")
+async def get_area_tree(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取区域树形结构
+    """
+    result = await db.execute(
+        select(Area).order_by(Area.sort_order, Area.created_at)
+    )
+    areas = result.scalars().all()
     
-    new_area = {
-        "id": new_id,
-        **area.model_dump(),
-        "camera_count": 0,
-    }
-    mock_areas.append(new_area)
+    # 构建ID到区域的映射
+    area_map = {}
+    for area in areas:
+        # 统计摄像头数量
+        camera_count_result = await db.execute(
+            select(func.count(Camera.id)).where(Camera.area_id == area.id)
+        )
+        camera_count = camera_count_result.scalar() or 0
+        
+        area_map[area.id] = {
+            "id": area.id,
+            "name": area.name,
+            "code": area.code,
+            "parent_id": area.parent_id,
+            "sort_order": area.sort_order,
+            "camera_count": camera_count,
+            "children": []
+        }
     
-    return AreaResponse(**new_area, children=[])
-
-
-@router.get("/{area_id}", response_model=AreaResponse)
-async def get_area(area_id: int):
-    """Get area by ID."""
-    for area in mock_areas:
-        if area["id"] == area_id:
-            children = build_tree(mock_areas, area_id)
-            return AreaResponse(**area, children=children)
+    # 构建树形结构
+    tree = []
+    for area_id, area_data in area_map.items():
+        parent_id = area_data["parent_id"]
+        if parent_id and parent_id in area_map:
+            area_map[parent_id]["children"].append(area_data)
+        else:
+            tree.append(area_data)
     
-    raise HTTPException(status_code=404, detail="区域不存在")
+    return success_response(tree)
 
 
-@router.put("/{area_id}", response_model=AreaResponse)
-async def update_area(area_id: int, area_update: AreaUpdate):
-    """Update area."""
-    for i, area in enumerate(mock_areas):
-        if area["id"] == area_id:
-            update_data = area_update.model_dump(exclude_unset=True)
-            mock_areas[i].update(update_data)
-            return AreaResponse(**mock_areas[i], children=[])
+@router.get("/{area_id}", summary="获取区域详情")
+async def get_area(
+    area_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取区域详情
+    """
+    result = await db.execute(
+        select(Area).where(Area.id == area_id)
+    )
+    area = result.scalar_one_or_none()
     
-    raise HTTPException(status_code=404, detail="区域不存在")
+    if area is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="区域不存在"
+        )
+    
+    # 统计摄像头数量
+    camera_count_result = await db.execute(
+        select(func.count(Camera.id)).where(Camera.area_id == area.id)
+    )
+    camera_count = camera_count_result.scalar() or 0
+    
+    return success_response({
+        "id": area.id,
+        "name": area.name,
+        "code": area.code,
+        "description": area.description,
+        "parent_id": area.parent_id,
+        "sort_order": area.sort_order,
+        "camera_count": camera_count,
+        "created_at": area.created_at.isoformat(),
+        "updated_at": area.updated_at.isoformat()
+    })
 
 
-@router.delete("/{area_id}")
-async def delete_area(area_id: int):
-    """Delete area."""
-    # Check if area has children
-    for area in mock_areas:
-        if area["parent_id"] == area_id:
-            raise HTTPException(status_code=400, detail="该区域下有子区域，无法删除")
+@router.post("", summary="创建区域")
+async def create_area(
+    area_data: AreaCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    创建区域
+    """
+    # 检查编码是否重复
+    if area_data.code:
+        existing = await db.execute(
+            select(Area).where(Area.code == area_data.code)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="区域编码已存在"
+            )
     
-    for i, area in enumerate(mock_areas):
-        if area["id"] == area_id:
-            mock_areas.pop(i)
-            return {"message": "删除成功"}
+    # 检查父区域是否存在
+    if area_data.parent_id:
+        parent_result = await db.execute(
+            select(Area).where(Area.id == area_data.parent_id)
+        )
+        if parent_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="父区域不存在"
+            )
     
-    raise HTTPException(status_code=404, detail="区域不存在")
+    # 创建区域
+    area = Area(
+        id=generate_uuid(),
+        name=area_data.name,
+        code=area_data.code,
+        description=area_data.description,
+        parent_id=area_data.parent_id,
+        sort_order=area_data.sort_order,
+        created_by=current_user.id,
+        updated_by=current_user.id
+    )
+    
+    db.add(area)
+    await db.commit()
+    await db.refresh(area)
+    
+    logger.info(f"区域已创建: {area.id} - {area.name}")
+    
+    return success_response({"id": area.id}, "创建成功")
+
+
+@router.put("/{area_id}", summary="更新区域")
+async def update_area(
+    area_id: str,
+    area_data: AreaUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    更新区域
+    """
+    result = await db.execute(
+        select(Area).where(Area.id == area_id)
+    )
+    area = result.scalar_one_or_none()
+    
+    if area is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="区域不存在"
+        )
+    
+    # 防止循环引用
+    if area_data.parent_id and area_data.parent_id == area_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="父区域不能是自己"
+        )
+    
+    # 更新字段
+    update_data = area_data.model_dump(exclude_unset=True)
+    
+    for field, value in update_data.items():
+        setattr(area, field, value)
+    
+    area.updated_by = current_user.id
+    
+    await db.commit()
+    
+    logger.info(f"区域已更新: {area_id}")
+    
+    return success_response(None, "更新成功")
+
+
+@router.delete("/{area_id}", summary="删除区域")
+async def delete_area(
+    area_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    删除区域
+    
+    如果有子区域或摄像头，则无法删除
+    """
+    result = await db.execute(
+        select(Area).where(Area.id == area_id)
+    )
+    area = result.scalar_one_or_none()
+    
+    if area is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="区域不存在"
+        )
+    
+    # 检查是否有子区域
+    child_count_result = await db.execute(
+        select(func.count(Area.id)).where(Area.parent_id == area_id)
+    )
+    if (child_count_result.scalar() or 0) > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="存在子区域，无法删除"
+        )
+    
+    # 检查是否有摄像头
+    camera_count_result = await db.execute(
+        select(func.count(Camera.id)).where(Camera.area_id == area_id)
+    )
+    if (camera_count_result.scalar() or 0) > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="存在关联的摄像头，无法删除"
+        )
+    
+    await db.delete(area)
+    await db.commit()
+    
+    logger.info(f"区域已删除: {area_id}")
+    
+    return success_response(None, "删除成功")

@@ -1,133 +1,175 @@
+# -*- coding: utf-8 -*-
 """
-System management endpoints.
-"""
+系统 API
 
+提供系统信息和健康检查接口
+"""
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends
+from sqlalchemy import select, func, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.core.config import settings
+from app.api.deps import get_current_user, get_current_admin
+from app.models import User, Camera, Area, Algorithm, Alarm
+from app.websocket.manager import connection_manager
+from app.consumer.worker_pool import alarm_worker_pool
+from app.schemas.common import success_response
+from common.logging import logger
+
 
 router = APIRouter()
 
 
-class SystemInfo(BaseModel):
-    """System information."""
-    version: str
-    uptime: int  # seconds
-    cpu_usage: float
-    memory_usage: float
-    disk_usage: float
-    camera_count: int
-    online_camera_count: int
-    algorithm_count: int
-    today_alarm_count: int
-
-
-class OperationLog(BaseModel):
-    """Operation log model."""
-    id: int
-    user: str
-    action: str
-    resource: str
-    resource_id: Optional[int] = None
-    detail: Optional[str] = None
-    ip_address: str
-    created_at: datetime
-
-
-class OperationLogListResponse(BaseModel):
-    """Operation log list response."""
-    total: int
-    items: List[OperationLog]
-
-
-# Mock data
-mock_logs = [
-    {
-        "id": 1,
-        "user": "admin",
-        "action": "create",
-        "resource": "camera",
-        "resource_id": 1,
-        "detail": "创建摄像头：大厅摄像头-01",
-        "ip_address": "192.168.1.100",
-        "created_at": datetime.now(),
-    },
-    {
-        "id": 2,
-        "user": "admin",
-        "action": "update",
-        "resource": "algorithm",
-        "resource_id": 1,
-        "detail": "更新算法配置：人员入侵检测",
-        "ip_address": "192.168.1.100",
-        "created_at": datetime.now(),
-    },
-]
-
-
-@router.get("/info", response_model=SystemInfo)
-async def get_system_info():
-    """Get system information."""
-    return SystemInfo(
-        version="0.1.0",
-        uptime=3600,
-        cpu_usage=25.5,
-        memory_usage=45.2,
-        disk_usage=60.8,
-        camera_count=3,
-        online_camera_count=2,
-        algorithm_count=5,
-        today_alarm_count=10,
-    )
-
-
-@router.get("/logs", response_model=OperationLogListResponse)
-async def list_operation_logs(
-    user: Optional[str] = Query(None, description="用户筛选"),
-    action: Optional[str] = Query(None, description="操作类型筛选"),
-    resource: Optional[str] = Query(None, description="资源类型筛选"),
-    start_time: Optional[datetime] = Query(None, description="开始时间"),
-    end_time: Optional[datetime] = Query(None, description="结束时间"),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
-):
-    """Get operation logs."""
-    filtered = mock_logs
+@router.get("/health", summary="健康检查")
+async def health_check():
+    """
+    健康检查
     
-    if user is not None:
-        filtered = [log for log in filtered if log["user"] == user]
-    
-    if action is not None:
-        filtered = [log for log in filtered if log["action"] == action]
-    
-    if resource is not None:
-        filtered = [log for log in filtered if log["resource"] == resource]
-    
-    total = len(filtered)
-    items = filtered[skip : skip + limit]
-    
-    return OperationLogListResponse(
-        total=total,
-        items=[OperationLog(**log) for log in items],
-    )
-
-
-@router.get("/settings")
-async def get_system_settings():
-    """Get system settings."""
+    用于负载均衡和监控
+    """
     return {
-        "site_name": "AI Vision Platform",
-        "retention_days": 30,
-        "max_cameras": 100,
-        "alarm_sound_enabled": True,
-        "email_notification_enabled": False,
+        "status": "ok",
+        "timestamp": datetime.now().isoformat()
     }
 
 
-@router.put("/settings")
-async def update_system_settings(settings: dict):
-    """Update system settings."""
-    # TODO: Implement settings update
-    return {"message": "设置已更新"}
+@router.get("/info", summary="系统信息")
+async def system_info(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取系统信息
+    """
+    # 统计各种数量
+    camera_count = (await db.execute(
+        select(func.count(Camera.id))
+    )).scalar() or 0
+    
+    online_camera_count = (await db.execute(
+        select(func.count(Camera.id))
+        .where(Camera.status == "online")
+    )).scalar() or 0
+    
+    area_count = (await db.execute(
+        select(func.count(Area.id))
+    )).scalar() or 0
+    
+    algorithm_count = (await db.execute(
+        select(func.count(Algorithm.id))
+    )).scalar() or 0
+    
+    alarm_count = (await db.execute(
+        select(func.count(Alarm.id))
+    )).scalar() or 0
+    
+    unconfirmed_alarm_count = (await db.execute(
+        select(func.count(Alarm.id))
+        .where(Alarm.status == "unconfirmed")
+    )).scalar() or 0
+    
+    user_count = (await db.execute(
+        select(func.count(User.id))
+    )).scalar() or 0
+    
+    return success_response({
+        "project_name": settings.PROJECT_NAME,
+        "environment": settings.ENVIRONMENT,
+        "version": "1.0.0",
+        "statistics": {
+            "cameras": {
+                "total": camera_count,
+                "online": online_camera_count
+            },
+            "areas": area_count,
+            "algorithms": algorithm_count,
+            "alarms": {
+                "total": alarm_count,
+                "unconfirmed": unconfirmed_alarm_count
+            },
+            "users": user_count
+        },
+        "services": {
+            "websocket_connections": connection_manager.get_connection_count(),
+            "alarm_workers": {
+                "running": alarm_worker_pool.is_running,
+                "count": alarm_worker_pool.worker_count
+            }
+        }
+    })
+
+
+@router.get("/dashboard", summary="仪表盘数据")
+async def dashboard(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取仪表盘数据
+    """
+    # 摄像头状态
+    total_cameras = (await db.execute(
+        select(func.count(Camera.id))
+    )).scalar() or 0
+    
+    online_cameras = (await db.execute(
+        select(func.count(Camera.id))
+        .where(Camera.status == "online")
+    )).scalar() or 0
+    
+    offline_cameras = (await db.execute(
+        select(func.count(Camera.id))
+        .where(Camera.status == "offline")
+    )).scalar() or 0
+    
+    error_cameras = (await db.execute(
+        select(func.count(Camera.id))
+        .where(Camera.status == "error")
+    )).scalar() or 0
+    
+    # 今日告警
+    from datetime import timedelta
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    today_alarms = (await db.execute(
+        select(func.count(Alarm.id))
+        .where(Alarm.alarm_time >= today_start)
+    )).scalar() or 0
+    
+    today_unconfirmed = (await db.execute(
+        select(func.count(Alarm.id))
+        .where(
+            Alarm.alarm_time >= today_start,
+            Alarm.status == "unconfirmed"
+        )
+    )).scalar() or 0
+    
+    # 按级别统计今日告警
+    level_stats = []
+    for level in ["info", "warning", "danger", "critical"]:
+        count = (await db.execute(
+            select(func.count(Alarm.id))
+            .where(
+                Alarm.alarm_time >= today_start,
+                Alarm.level == level
+            )
+        )).scalar() or 0
+        level_stats.append({"label": level, "value": count})
+    
+    return success_response({
+        "cameras": {
+            "total": total_cameras,
+            "online": online_cameras,
+            "offline": offline_cameras,
+            "error": error_cameras
+        },
+        "today_alarms": {
+            "total": today_alarms,
+            "unconfirmed": today_unconfirmed,
+            "by_level": level_stats
+        }
+    })

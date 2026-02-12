@@ -1,49 +1,112 @@
+# -*- coding: utf-8 -*-
 """
-AI Vision Platform - Main Application Entry
-"""
+FastAPI 应用入口
 
+AI 视觉平台后端服务
+"""
+import sys
+from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
-from loguru import logger
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 
-from app.core.config import settings
+# 添加项目根目录到 Python 路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from config.settings import settings
+from common.logging import setup_logging, logger
+from app.core.database import init_db, close_db
+from app.core.redis import init_redis, close_redis
 from app.api import api_router
+from app.websocket.manager import connection_manager
+from app.websocket.handlers import websocket_handler
+from app.consumer.worker_pool import alarm_worker_pool
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan events."""
-    # Startup
-    logger.info("Starting AI Vision Platform Backend...")
-    logger.info(f"Environment: {settings.ENVIRONMENT}")
+    """
+    应用生命周期管理
     
-    # Initialize database connection pool
-    # await init_db()
+    在应用启动和关闭时执行初始化和清理工作
+    """
+    # ==================== 启动阶段 ====================
+    logger.info("=" * 50)
+    logger.info(f"启动 {settings.PROJECT_NAME}")
+    logger.info(f"环境: {settings.ENVIRONMENT}")
+    logger.info("=" * 50)
     
-    # Initialize Redis connection
-    # await init_redis()
+    # 初始化日志
+    setup_logging(
+        log_level=settings.LOG_LEVEL,
+        log_path=settings.LOG_PATH,
+        rotation=settings.LOG_ROTATION,
+        retention=settings.LOG_RETENTION
+    )
+    
+    # 初始化数据库
+    logger.info("初始化数据库...")
+    await init_db()
+    
+    # 初始化 Redis
+    logger.info("初始化 Redis...")
+    await init_redis()
+    
+    # 启动 WebSocket 处理器
+    logger.info("启动 WebSocket 处理器...")
+    await websocket_handler.start()
+    
+    # 启动告警消费者线程池
+    logger.info("启动告警消费者线程池...")
+    alarm_worker_pool.start(num_workers=settings.ALARM_CONSUMER_WORKERS)
+    
+    logger.info("应用启动完成")
+    logger.info("=" * 50)
     
     yield
     
-    # Shutdown
-    logger.info("Shutting down AI Vision Platform Backend...")
-    # await close_db()
-    # await close_redis()
+    # ==================== 关闭阶段 ====================
+    logger.info("=" * 50)
+    logger.info("正在关闭应用...")
+    
+    # 停止告警消费者
+    logger.info("停止告警消费者线程池...")
+    alarm_worker_pool.stop(timeout=5.0)
+    
+    # 停止 WebSocket 处理器
+    logger.info("停止 WebSocket 处理器...")
+    await websocket_handler.stop()
+    
+    # 关闭 Redis
+    logger.info("关闭 Redis 连接...")
+    await close_redis()
+    
+    # 关闭数据库
+    logger.info("关闭数据库连接...")
+    await close_db()
+    
+    logger.info("应用已关闭")
+    logger.info("=" * 50)
 
 
+# 创建 FastAPI 应用
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="AI Vision Platform - Intelligent Video Analytics System",
-    version="0.1.0",
-    openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",
-    docs_url=f"{settings.API_V1_PREFIX}/docs",
-    redoc_url=f"{settings.API_V1_PREFIX}/redoc",
-    lifespan=lifespan,
+    description="AI 视觉平台后端 API",
+    version="1.0.0",
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    openapi_url="/openapi.json" if settings.DEBUG else None,
+    lifespan=lifespan
 )
 
-# CORS middleware
+
+# ==================== 中间件配置 ====================
+
+# CORS 中间件
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -52,14 +115,120 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API router
+
+# ==================== 异常处理 ====================
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """
+    全局异常处理
+    
+    捕获未处理的异常，返回统一格式的错误响应
+    """
+    logger.error(f"未处理的异常: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "code": -1,
+            "message": "服务器内部错误",
+            "detail": str(exc) if settings.DEBUG else None
+        }
+    )
+
+
+# ==================== 路由注册 ====================
+
+# 注册 API 路由
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
 
+# 静态文件服务 (告警截图等)
+data_path = Path(settings.LOCAL_STORAGE_PATH)
+if data_path.exists():
+    app.mount("/static", StaticFiles(directory=str(data_path)), name="static")
+
+
+# ==================== WebSocket 端点 ====================
+
+@app.websocket("/ws/detections/{camera_id}")
+async def websocket_detections(websocket: WebSocket, camera_id: str):
+    """
+    实时检测结果 WebSocket
+    
+    订阅指定摄像头的检测框推送
+    """
+    conn_info = await connection_manager.connect(websocket)
+    
+    try:
+        # 订阅摄像头频道
+        await connection_manager.subscribe(websocket, f"camera:{camera_id}")
+        
+        # 发送连接成功消息
+        await connection_manager.send_personal(
+            websocket,
+            {"type": "connected", "camera_id": camera_id}
+        )
+        
+        # 保持连接，等待客户端消息
+        while True:
+            data = await websocket.receive_text()
+            # 可以处理客户端发送的消息 (如心跳)
+            if data == "ping":
+                await websocket.send_text("pong")
+                
+    except WebSocketDisconnect:
+        logger.debug(f"WebSocket 断开: camera={camera_id}")
+    finally:
+        await connection_manager.disconnect(websocket)
+
+
+@app.websocket("/ws/alarms")
+async def websocket_alarms(websocket: WebSocket):
+    """
+    实时告警 WebSocket
+    
+    订阅实时告警推送
+    """
+    conn_info = await connection_manager.connect(websocket)
+    
+    try:
+        # 订阅告警频道
+        await connection_manager.subscribe(websocket, "alarms")
+        
+        # 发送连接成功消息
+        await connection_manager.send_personal(
+            websocket,
+            {"type": "connected", "channel": "alarms"}
+        )
+        
+        # 保持连接
+        while True:
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+                
+    except WebSocketDisconnect:
+        logger.debug("告警 WebSocket 断开")
+    finally:
+        await connection_manager.disconnect(websocket)
+
+
+# ==================== 健康检查 ====================
+
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "version": "0.1.0"}
+    """健康检查端点"""
+    return {"status": "ok"}
+
+
+@app.get("/")
+async def root():
+    """根路径"""
+    return {
+        "name": settings.PROJECT_NAME,
+        "version": "1.0.0",
+        "docs": "/docs" if settings.DEBUG else None
+    }
 
 
 if __name__ == "__main__":
@@ -69,5 +238,6 @@ if __name__ == "__main__":
         "app.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=settings.ENVIRONMENT == "development",
+        reload=settings.DEBUG,
+        log_level="info"
     )

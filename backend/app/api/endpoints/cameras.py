@@ -1,167 +1,426 @@
+# -*- coding: utf-8 -*-
 """
-Camera management endpoints.
+摄像头 API
+
+提供摄像头 CRUD 和流媒体控制接口
 """
+from typing import Optional, List
 
-from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from app.core.database import get_db
+from app.api.deps import get_current_user
+from app.models import User, Camera, Area, CameraAlgorithm
+from app.models.base import generate_uuid
+from app.schemas.camera import (
+    CameraCreate,
+    CameraUpdate,
+    CameraResponse,
+    CameraListResponse,
+    CameraStatusResponse,
+    CameraPlayUrlResponse
+)
+from app.schemas.common import MessageResponse, success_response, page_response
+from app.services.config_publisher import get_config_publisher
+from common.media import get_stream_manager
+from common.logging import logger
+
 
 router = APIRouter()
 
 
-class CameraBase(BaseModel):
-    """Camera base model."""
-    name: str
-    rtsp_url: str
-    area_id: Optional[int] = None
-    description: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-
-
-class CameraCreate(CameraBase):
-    """Camera creation model."""
-    pass
-
-
-class CameraUpdate(BaseModel):
-    """Camera update model."""
-    name: Optional[str] = None
-    rtsp_url: Optional[str] = None
-    area_id: Optional[int] = None
-    description: Optional[str] = None
-    status: Optional[str] = None
-
-
-class CameraResponse(CameraBase):
-    """Camera response model."""
-    id: int
-    status: str = "offline"  # online, offline, error
-    thumbnail_url: Optional[str] = None
-    
-    class Config:
-        from_attributes = True
-
-
-class CameraListResponse(BaseModel):
-    """Camera list response."""
-    total: int
-    items: List[CameraResponse]
-
-
-# Mock data
-mock_cameras = [
-    {
-        "id": 1,
-        "name": "大厅摄像头-01",
-        "rtsp_url": "rtsp://192.168.1.100:554/stream1",
-        "area_id": 1,
-        "description": "一楼大厅入口",
-        "status": "online",
-        "thumbnail_url": "/camera-lobby-01.jpg",
-    },
-    {
-        "id": 2,
-        "name": "大厅摄像头-02",
-        "rtsp_url": "rtsp://192.168.1.101:554/stream1",
-        "area_id": 1,
-        "description": "一楼大厅出口",
-        "status": "online",
-        "thumbnail_url": "/camera-lobby-02.jpg",
-    },
-    {
-        "id": 3,
-        "name": "办公区摄像头-01",
-        "rtsp_url": "rtsp://192.168.1.102:554/stream1",
-        "area_id": 2,
-        "description": "二楼办公区",
-        "status": "offline",
-        "thumbnail_url": "/camera-office-01.jpg",
-    },
-]
-
-
-@router.get("", response_model=CameraListResponse)
-async def list_cameras(
-    area_id: Optional[int] = Query(None, description="区域ID筛选"),
-    status: Optional[str] = Query(None, description="状态筛选"),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
+@router.get("", summary="获取摄像头列表")
+async def get_cameras(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    area_id: Optional[str] = Query(None, description="区域ID"),
+    status: Optional[str] = Query(None, description="状态"),
+    keyword: Optional[str] = Query(None, description="关键词"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Get camera list."""
-    filtered = mock_cameras
+    """
+    获取摄像头列表
     
-    if area_id is not None:
-        filtered = [c for c in filtered if c["area_id"] == area_id]
+    支持按区域、状态、关键词筛选
+    """
+    # 构建查询
+    query = select(Camera)
+    count_query = select(func.count(Camera.id))
     
-    if status is not None:
-        filtered = [c for c in filtered if c["status"] == status]
+    # 筛选条件
+    if area_id:
+        query = query.where(Camera.area_id == area_id)
+        count_query = count_query.where(Camera.area_id == area_id)
     
-    total = len(filtered)
-    items = filtered[skip : skip + limit]
+    if status:
+        query = query.where(Camera.status == status)
+        count_query = count_query.where(Camera.status == status)
     
-    return CameraListResponse(
-        total=total,
-        items=[CameraResponse(**c) for c in items],
+    if keyword:
+        keyword_filter = f"%{keyword}%"
+        query = query.where(
+            (Camera.name.ilike(keyword_filter)) |
+            (Camera.code.ilike(keyword_filter)) |
+            (Camera.location.ilike(keyword_filter))
+        )
+        count_query = count_query.where(
+            (Camera.name.ilike(keyword_filter)) |
+            (Camera.code.ilike(keyword_filter)) |
+            (Camera.location.ilike(keyword_filter))
+        )
+    
+    # 统计总数
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+    
+    # 分页查询
+    query = query.options(selectinload(Camera.area))
+    query = query.order_by(Camera.created_at.desc())
+    query = query.offset((page - 1) * page_size).limit(page_size)
+    
+    result = await db.execute(query)
+    cameras = result.scalars().all()
+    
+    # 构建响应
+    data = []
+    for camera in cameras:
+        # 统计关联算法数量
+        algo_count_result = await db.execute(
+            select(func.count(CameraAlgorithm.id))
+            .where(CameraAlgorithm.camera_id == camera.id)
+        )
+        algo_count = algo_count_result.scalar() or 0
+        
+        data.append({
+            "id": camera.id,
+            "name": camera.name,
+            "code": camera.code,
+            "description": camera.description,
+            "area_id": camera.area_id,
+            "area_name": camera.area.name if camera.area else None,
+            "rtsp_url": camera.rtsp_url,
+            "manufacturer": camera.manufacturer,
+            "device_model": camera.device_model,
+            "ip_address": camera.ip_address,
+            "location": camera.location,
+            "longitude": camera.longitude,
+            "latitude": camera.latitude,
+            "fps": camera.fps,
+            "resolution": camera.resolution,
+            "is_enabled": camera.is_enabled,
+            "status": camera.status,
+            "algorithm_count": algo_count,
+            "created_at": camera.created_at.isoformat(),
+            "updated_at": camera.updated_at.isoformat()
+        })
+    
+    return page_response(data, page, page_size, total)
+
+
+@router.get("/{camera_id}", summary="获取摄像头详情")
+async def get_camera(
+    camera_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取摄像头详情
+    """
+    result = await db.execute(
+        select(Camera)
+        .options(selectinload(Camera.area))
+        .where(Camera.id == camera_id)
     )
-
-
-@router.post("", response_model=CameraResponse)
-async def create_camera(camera: CameraCreate):
-    """Create a new camera."""
-    new_id = max(c["id"] for c in mock_cameras) + 1 if mock_cameras else 1
+    camera = result.scalar_one_or_none()
     
-    new_camera = {
-        "id": new_id,
-        **camera.model_dump(),
-        "status": "offline",
-        "thumbnail_url": None,
-    }
-    mock_cameras.append(new_camera)
+    if camera is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="摄像头不存在"
+        )
     
-    return CameraResponse(**new_camera)
-
-
-@router.get("/{camera_id}", response_model=CameraResponse)
-async def get_camera(camera_id: int):
-    """Get camera by ID."""
-    for camera in mock_cameras:
-        if camera["id"] == camera_id:
-            return CameraResponse(**camera)
+    # 统计关联算法数量
+    algo_count_result = await db.execute(
+        select(func.count(CameraAlgorithm.id))
+        .where(CameraAlgorithm.camera_id == camera.id)
+    )
+    algo_count = algo_count_result.scalar() or 0
     
-    raise HTTPException(status_code=404, detail="摄像头不存在")
+    return success_response({
+        "id": camera.id,
+        "name": camera.name,
+        "code": camera.code,
+        "description": camera.description,
+        "area_id": camera.area_id,
+        "area_name": camera.area.name if camera.area else None,
+        "rtsp_url": camera.rtsp_url,
+        "rtsp_username": camera.rtsp_username,
+        "manufacturer": camera.manufacturer,
+        "device_model": camera.device_model,
+        "ip_address": camera.ip_address,
+        "location": camera.location,
+        "longitude": camera.longitude,
+        "latitude": camera.latitude,
+        "fps": camera.fps,
+        "resolution": camera.resolution,
+        "is_enabled": camera.is_enabled,
+        "status": camera.status,
+        "algorithm_count": algo_count,
+        "created_at": camera.created_at.isoformat(),
+        "updated_at": camera.updated_at.isoformat()
+    })
 
 
-@router.put("/{camera_id}", response_model=CameraResponse)
-async def update_camera(camera_id: int, camera_update: CameraUpdate):
-    """Update camera."""
-    for i, camera in enumerate(mock_cameras):
-        if camera["id"] == camera_id:
-            update_data = camera_update.model_dump(exclude_unset=True)
-            mock_cameras[i].update(update_data)
-            return CameraResponse(**mock_cameras[i])
+@router.post("", summary="创建摄像头")
+async def create_camera(
+    camera_data: CameraCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    创建摄像头
+    """
+    # 检查编码是否重复
+    if camera_data.code:
+        existing = await db.execute(
+            select(Camera).where(Camera.code == camera_data.code)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="摄像头编码已存在"
+            )
     
-    raise HTTPException(status_code=404, detail="摄像头不存在")
-
-
-@router.delete("/{camera_id}")
-async def delete_camera(camera_id: int):
-    """Delete camera."""
-    for i, camera in enumerate(mock_cameras):
-        if camera["id"] == camera_id:
-            mock_cameras.pop(i)
-            return {"message": "删除成功"}
+    # 检查区域是否存在
+    if camera_data.area_id:
+        area_result = await db.execute(
+            select(Area).where(Area.id == camera_data.area_id)
+        )
+        if area_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="区域不存在"
+            )
     
-    raise HTTPException(status_code=404, detail="摄像头不存在")
-
-
-@router.post("/{camera_id}/test")
-async def test_camera_connection(camera_id: int):
-    """Test camera RTSP connection."""
-    for camera in mock_cameras:
-        if camera["id"] == camera_id:
-            # TODO: Implement actual RTSP connection test
-            return {"success": True, "message": "连接成功"}
+    # 创建摄像头
+    camera = Camera(
+        id=generate_uuid(),
+        name=camera_data.name,
+        code=camera_data.code,
+        description=camera_data.description,
+        area_id=camera_data.area_id,
+        rtsp_url=camera_data.rtsp_url,
+        rtsp_username=camera_data.rtsp_username,
+        rtsp_password=camera_data.rtsp_password,
+        manufacturer=camera_data.manufacturer,
+        device_model=camera_data.device_model,
+        ip_address=camera_data.ip_address,
+        location=camera_data.location,
+        longitude=camera_data.longitude,
+        latitude=camera_data.latitude,
+        fps=camera_data.fps,
+        resolution=camera_data.resolution,
+        is_enabled=camera_data.is_enabled,
+        created_by=current_user.id,
+        updated_by=current_user.id
+    )
     
-    raise HTTPException(status_code=404, detail="摄像头不存在")
+    db.add(camera)
+    await db.commit()
+    await db.refresh(camera)
+    
+    # 注册流
+    stream_manager = get_stream_manager()
+    stream_manager.register_stream(camera.id, camera.full_rtsp_url)
+    
+    # 发布配置变更
+    config_publisher = get_config_publisher()
+    await config_publisher.publish_camera_add({
+        "camera_id": camera.id,
+        "name": camera.name,
+        "rtsp_url": camera.full_rtsp_url,
+        "fps": camera.fps,
+        "is_enabled": camera.is_enabled
+    })
+    
+    logger.info(f"摄像头已创建: {camera.id} - {camera.name}")
+    
+    return success_response({"id": camera.id}, "创建成功")
+
+
+@router.put("/{camera_id}", summary="更新摄像头")
+async def update_camera(
+    camera_id: str,
+    camera_data: CameraUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    更新摄像头
+    """
+    result = await db.execute(
+        select(Camera).where(Camera.id == camera_id)
+    )
+    camera = result.scalar_one_or_none()
+    
+    if camera is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="摄像头不存在"
+        )
+    
+    # 更新字段
+    update_data = camera_data.model_dump(exclude_unset=True)
+    
+    for field, value in update_data.items():
+        setattr(camera, field, value)
+    
+    camera.updated_by = current_user.id
+    
+    await db.commit()
+    
+    # 发布配置变更
+    config_publisher = get_config_publisher()
+    await config_publisher.publish_camera_update({
+        "camera_id": camera.id,
+        "name": camera.name,
+        "rtsp_url": camera.full_rtsp_url,
+        "fps": camera.fps,
+        "is_enabled": camera.is_enabled
+    })
+    
+    logger.info(f"摄像头已更新: {camera.id}")
+    
+    return success_response(None, "更新成功")
+
+
+@router.delete("/{camera_id}", summary="删除摄像头")
+async def delete_camera(
+    camera_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    删除摄像头
+    """
+    result = await db.execute(
+        select(Camera).where(Camera.id == camera_id)
+    )
+    camera = result.scalar_one_or_none()
+    
+    if camera is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="摄像头不存在"
+        )
+    
+    await db.delete(camera)
+    await db.commit()
+    
+    # 注销流
+    stream_manager = get_stream_manager()
+    stream_manager.unregister_stream(camera_id)
+    
+    # 发布配置变更
+    config_publisher = get_config_publisher()
+    await config_publisher.publish_camera_delete(camera_id)
+    
+    logger.info(f"摄像头已删除: {camera_id}")
+    
+    return success_response(None, "删除成功")
+
+
+@router.post("/{camera_id}/start", summary="启动摄像头")
+async def start_camera(
+    camera_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    启动摄像头 (开始分析)
+    """
+    result = await db.execute(
+        select(Camera).where(Camera.id == camera_id)
+    )
+    camera = result.scalar_one_or_none()
+    
+    if camera is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="摄像头不存在"
+        )
+    
+    # 发布启动命令
+    config_publisher = get_config_publisher()
+    await config_publisher.publish_camera_start(camera_id)
+    
+    logger.info(f"摄像头启动命令已发送: {camera_id}")
+    
+    return success_response(None, "启动命令已发送")
+
+
+@router.post("/{camera_id}/stop", summary="停止摄像头")
+async def stop_camera(
+    camera_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    停止摄像头 (停止分析)
+    """
+    result = await db.execute(
+        select(Camera).where(Camera.id == camera_id)
+    )
+    camera = result.scalar_one_or_none()
+    
+    if camera is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="摄像头不存在"
+        )
+    
+    # 发布停止命令
+    config_publisher = get_config_publisher()
+    await config_publisher.publish_camera_stop(camera_id)
+    
+    logger.info(f"摄像头停止命令已发送: {camera_id}")
+    
+    return success_response(None, "停止命令已发送")
+
+
+@router.get("/{camera_id}/play-url", summary="获取播放地址")
+async def get_play_url(
+    camera_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取摄像头播放地址
+    
+    返回 HTTP-FLV、RTSP、HLS 等多种格式的播放地址
+    """
+    result = await db.execute(
+        select(Camera).where(Camera.id == camera_id)
+    )
+    camera = result.scalar_one_or_none()
+    
+    if camera is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="摄像头不存在"
+        )
+    
+    # 获取播放地址
+    stream_manager = get_stream_manager()
+    urls = stream_manager.get_play_urls(camera_id)
+    
+    return success_response({
+        "camera_id": camera_id,
+        "flv_url": urls.get("flv"),
+        "rtsp_url": urls.get("rtsp"),
+        "hls_url": urls.get("hls")
+    })
