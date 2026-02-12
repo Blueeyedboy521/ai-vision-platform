@@ -516,7 +516,178 @@ class DedupTracker:
 
 ---
 
-## 十、待确认事项
+## 十、模型与检测能力分层设计
+
+### 10.1 设计背景
+
+一个模型可能训练了多个检测类别，例如一个 YOLO 模型同时能检测：
+- 人 (person)
+- 安全帽 (helmet) / 未戴安全帽 (no_helmet)
+- 反光衣 (vest) / 未穿反光衣 (no_vest)
+
+需要设计合理的数据模型，既能复用模型节省资源，又能灵活配置各检测能力。
+
+### 10.2 分层架构
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        模型与检测能力分层设计                                     │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  模型层 (Model)：物理模型文件，只加载一次                                         │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  模型ID: yolo_safety_v1                                                 │   │
+│  │  模型名称: 安全生产检测模型                                               │   │
+│  │  模型文件: yolov8-safety.pt                                             │   │
+│  │  支持的类别: [person, helmet, no_helmet, vest, no_vest]                 │   │
+│  │  显存占用: 500MB                                                        │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                 │
+│  检测能力层 (Algorithm)：业务定义的检测场景                                       │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  能力: 人员入侵检测                                                      │   │
+│  │  所属模型: yolo_safety_v1                                               │   │
+│  │  使用类别: [person]                                                     │   │
+│  │  置信度: 0.5 | 告警条件: 立即告警                                        │   │
+│  ├─────────────────────────────────────────────────────────────────────────┤   │
+│  │  能力: 安全帽检测                                                        │   │
+│  │  所属模型: yolo_safety_v1                                               │   │
+│  │  使用类别: [no_helmet]                                                  │   │
+│  │  置信度: 0.6 | 告警条件: 持续3秒后告警                                    │   │
+│  ├─────────────────────────────────────────────────────────────────────────┤   │
+│  │  能力: 反光衣检测                                                        │   │
+│  │  所属模型: yolo_safety_v1                                               │   │
+│  │  使用类别: [no_vest]                                                    │   │
+│  │  置信度: 0.6 | 告警条件: 立即告警                                        │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                 │
+│  摄像头配置层：选择启用哪些检测能力，可覆盖默认参数                                │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  摄像头: 车间入口-01                                                     │   │
+│  │  ├── 人员入侵检测 (置信度: 0.5, 区域: 已配置)                            │   │
+│  │  └── 安全帽检测 (置信度: 0.7, 区域: 全画面)  ← 覆盖了默认置信度            │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 10.3 数据库模型
+
+```sql
+-- 模型表 (物理模型文件)
+CREATE TABLE models (
+    id              SERIAL PRIMARY KEY,
+    code            VARCHAR(50) UNIQUE NOT NULL,    -- 唯一标识
+    name            VARCHAR(100) NOT NULL,          -- 显示名称
+    model_type      VARCHAR(20) NOT NULL,           -- YOLO / ResNet / Custom
+    model_path      VARCHAR(500) NOT NULL,          -- 模型文件路径
+    classes         JSONB NOT NULL,                 -- 支持的类别 ["person", "helmet", ...]
+    gpu_memory_mb   INT,                            -- 预估显存占用
+    inference_ms    INT,                            -- 预估推理时间
+    is_enabled      BOOLEAN DEFAULT TRUE,
+    created_at      TIMESTAMP DEFAULT NOW()
+);
+
+-- 检测能力表 (业务检测场景)
+CREATE TABLE algorithms (
+    id                  SERIAL PRIMARY KEY,
+    code                VARCHAR(50) UNIQUE NOT NULL,    -- 唯一标识
+    name                VARCHAR(100) NOT NULL,          -- 显示名称
+    model_id            INT REFERENCES models(id),      -- 关联模型
+    target_classes      JSONB NOT NULL,                 -- 使用哪些类别 ["person"]
+    default_confidence  FLOAT DEFAULT 0.5,              -- 默认置信度阈值
+    alert_config        JSONB,                          -- 告警配置
+    is_enabled          BOOLEAN DEFAULT TRUE,
+    created_at          TIMESTAMP DEFAULT NOW()
+);
+
+-- 摄像头-算法配置表
+CREATE TABLE camera_algorithms (
+    id              SERIAL PRIMARY KEY,
+    camera_id       INT REFERENCES cameras(id),
+    algorithm_id    INT REFERENCES algorithms(id),
+    confidence      FLOAT,                          -- 覆盖默认置信度 (可选)
+    alert_config    JSONB,                          -- 覆盖默认告警配置 (可选)
+    regions         JSONB,                          -- 检测区域 (多边形坐标)
+    is_enabled      BOOLEAN DEFAULT TRUE,
+    created_at      TIMESTAMP DEFAULT NOW(),
+    UNIQUE(camera_id, algorithm_id)
+);
+```
+
+### 10.4 告警配置结构
+
+```json
+{
+    "trigger_type": "instant",     // instant(立即) / duration(持续) / count(计数)
+    "duration_seconds": 0,         // 持续 N 秒才告警
+    "count_threshold": 0,          // 检测到 N 个才告警
+    "cooldown_seconds": 30,        // 告警冷却时间
+    "alert_level": "warning"       // info / warning / danger
+}
+```
+
+**示例配置：**
+
+| 检测能力 | 告警配置 | 说明 |
+|----------|----------|------|
+| 人员入侵 | instant, cooldown=30s | 检测到立即告警 |
+| 安全帽检测 | duration=3s, cooldown=60s | 持续3秒未戴帽才告警，避免误报 |
+| 人员聚集 | count>=5, duration=10s | 5人以上聚集超过10秒才告警 |
+
+### 10.5 推理服务处理逻辑
+
+```python
+def process_inference(frame, camera_config):
+    """
+    1. 根据摄像头配置的算法，确定需要哪些模型
+    2. 每个模型只推理一次，得到所有类别的检测结果
+    3. 按算法配置过滤和分发结果
+    """
+    
+    # 示例: 摄像头配置了 人员入侵 + 安全帽检测
+    # 两个算法都用 yolo_safety_v1 模型
+    
+    # 步骤1: 模型只推理一次
+    all_detections = yolo_model.detect(frame)
+    # 返回: [
+    #   {label: "person", conf: 0.9, bbox: [...]},
+    #   {label: "no_helmet", conf: 0.7, bbox: [...]},
+    #   {label: "helmet", conf: 0.8, bbox: [...]},
+    # ]
+    
+    # 步骤2: 按算法配置分发结果
+    results = {}
+    
+    for algo_config in camera_config.algorithms:
+        algo_detections = []
+        for det in all_detections:
+            # 检查类别是否匹配
+            if det["label"] in algo_config.target_classes:
+                # 检查置信度是否达标
+                if det["conf"] >= algo_config.confidence:
+                    # 检查是否在检测区域内 (如果配置了区域)
+                    if is_in_region(det["bbox"], algo_config.regions):
+                        algo_detections.append(det)
+        
+        results[algo_config.code] = algo_detections
+    
+    return results
+```
+
+### 10.6 设计优势
+
+| 优势 | 说明 |
+|------|------|
+| 模型复用 | 同一模型文件只加载一次，多个检测能力共享 |
+| 配置灵活 | 每个检测能力独立配置置信度、告警条件 |
+| 易于扩展 | 新增检测能力只需配置，无需改代码 |
+| 更新简单 | 模型更新只改一处，所有关联能力自动生效 |
+| 摄像头级覆盖 | 可针对特定摄像头调整参数 |
+
+---
+
+## 十一、待确认事项
 
 1. **跳帧策略**: 每几帧推理一次？不同算法是否不同？
 2. **告警去重时间窗口**: 30秒是否合适？
