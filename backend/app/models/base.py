@@ -40,15 +40,14 @@ class TimestampMixin:
     
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        server_default=func.now(),
+        server_default=text("CURRENT_TIMESTAMP"),
         nullable=False,
         comment="创建时间"
     )
     
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        server_default=func.now(),
-        onupdate=func.now(),
+        server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
         nullable=False,
         comment="更新时间"
     )

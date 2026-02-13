@@ -5,6 +5,6 @@
 提供 ZLMediaKit 流媒体服务器的 API 封装
 """
 from .zlm_client import ZLMediaKitClient, get_zlm_client
-from .stream_manager import StreamManager
+from .stream_manager import StreamManager, get_stream_manager
 
-__all__ = ["ZLMediaKitClient", "get_zlm_client", "StreamManager"]
+__all__ = ["ZLMediaKitClient", "get_zlm_client", "StreamManager", "get_stream_manager"]
