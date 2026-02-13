@@ -114,7 +114,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { NForm, NFormItem, NInput, NButton, NCheckbox, NIcon, useMessage } from 'naive-ui'
 import { 
   PersonOutline, 
@@ -124,12 +124,16 @@ import {
   ShieldCheckmarkOutline,
   SparklesOutline
 } from '@vicons/ionicons5'
+import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
+const route = useRoute()
 const message = useMessage()
+const userStore = useUserStore()
 const formRef = ref()
 const loading = ref(false)
-const showCaptcha = ref(true)
+// 暂时关闭验证码（后端未实现）
+const showCaptcha = ref(false)
 const captchaText = ref('ABCD')
 
 const formData = ref({
@@ -141,8 +145,7 @@ const formData = ref({
 
 const rules = {
   username: { required: true, message: '请输入用户名', trigger: 'blur' },
-  password: { required: true, message: '请输入密码', trigger: 'blur' },
-  captcha: { required: true, message: '请输入验证码', trigger: 'blur' }
+  password: { required: true, message: '请输入密码', trigger: 'blur' }
 }
 
 function refreshCaptcha() {
@@ -155,27 +158,24 @@ async function handleLogin() {
     await formRef.value?.validate()
     loading.value = true
     
-    // Simulate login request
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    // 调用登录 API
+    const success = await userStore.login({
+      username: formData.value.username,
+      password: formData.value.password
+    })
     
-    // Demo: accept any username/password
-    if (formData.value.username && formData.value.password) {
-      // Store user info
-      localStorage.setItem('user', JSON.stringify({
-        username: formData.value.username,
-        name: formData.value.username === 'admin' ? '系统管理员' : formData.value.username,
-        role: formData.value.username === 'admin' ? '超级管理员' : '普通用户',
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${formData.value.username}`
-      }))
-      localStorage.setItem('token', 'demo-token-' + Date.now())
-      
+    if (success) {
       message.success('登录成功')
-      router.push('/dashboard')
+      // 跳转到原来要访问的页面或首页
+      const redirect = (route.query.redirect as string) || '/dashboard'
+      router.push(redirect)
     } else {
       message.error('用户名或密码错误')
+      refreshCaptcha()
     }
-  } catch (error) {
-    // Validation failed
+  } catch (error: any) {
+    message.error(error.message || '登录失败，请重试')
+    refreshCaptcha()
   } finally {
     loading.value = false
   }
@@ -183,6 +183,10 @@ async function handleLogin() {
 
 onMounted(() => {
   refreshCaptcha()
+  // 如果已登录，直接跳转
+  if (userStore.isLoggedIn) {
+    router.push('/dashboard')
+  }
 })
 </script>
 

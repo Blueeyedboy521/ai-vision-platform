@@ -109,32 +109,54 @@ const router = createRouter({
   routes
 })
 
-// Navigation guard for authentication
-// Note: Authentication is optional for development. Set VITE_REQUIRE_AUTH=true to enable.
-router.beforeEach((to, from, next) => {
-  // Skip auth check in development for easier testing
-  const requireAuth = false // Set to true to enable login requirement
-  
-  if (!requireAuth) {
-    next()
-    return
+// 白名单路由（不需要登录）
+const whiteList = ['/login']
+
+// 路由守卫
+router.beforeEach(async (to, from, next) => {
+  // 设置页面标题
+  const title = to.meta.title as string
+  if (title) {
+    document.title = `${title} - AI 视觉管理平台`
   }
   
-  const token = localStorage.getItem('token')
+  // 动态导入 userStore（避免循环依赖）
+  const { useUserStore } = await import('@/stores/user')
+  const userStore = useUserStore()
   
-  // If going to login page and already logged in, redirect to dashboard
-  if (to.name === 'Login' && token) {
-    next({ name: 'Dashboard' })
-    return
+  // 检查是否有 Token
+  const hasToken = userStore.checkAuth()
+  
+  if (hasToken) {
+    // 已登录
+    if (to.path === '/login') {
+      // 已登录但访问登录页，重定向到首页
+      next({ path: '/dashboard' })
+    } else {
+      // 如果没有用户信息，尝试获取
+      if (!userStore.userInfo) {
+        try {
+          await userStore.fetchUserInfo()
+          next()
+        } catch (error) {
+          // 获取用户信息失败，清除 Token 并跳转登录
+          userStore.clearAuth()
+          next(`/login?redirect=${to.path}`)
+        }
+      } else {
+        next()
+      }
+    }
+  } else {
+    // 未登录
+    if (whiteList.includes(to.path)) {
+      // 在白名单中，直接进入
+      next()
+    } else {
+      // 重定向到登录页，并记录原始路径
+      next(`/login?redirect=${to.path}`)
+    }
   }
-  
-  // If not going to login and not logged in, redirect to login
-  if (to.name !== 'Login' && !token) {
-    next({ name: 'Login' })
-    return
-  }
-  
-  next()
 })
 
 export default router
