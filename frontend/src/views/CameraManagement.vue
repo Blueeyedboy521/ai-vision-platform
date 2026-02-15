@@ -12,7 +12,7 @@
       <!-- Left: Area Tree -->
       <AreaTree 
         ref="areaTreeRef"
-        :selected-key="selectedAreaKey" 
+        :selected-key="selectedAreaKey || ''" 
         @select="handleAreaSelect"
         @update="handleTreeUpdate"
       />
@@ -66,7 +66,7 @@
               icon-bg="rgba(67, 24, 255, 0.1)"
               accent-color="#4318FF"
               label="已注册摄像头"
-              :value="filteredCameras.length"
+              :value="totalCount"
             />
             <PointStatCard
               :icon="CheckmarkCircleOutline"
@@ -215,7 +215,7 @@
           <n-pagination
             v-model:page="currentPage"
             :page-size="pageSize"
-            :item-count="searchedCameras.length"
+            :item-count="totalCount"
             :page-sizes="[6, 12, 24, 48]"
             show-size-picker
             show-quick-jumper
@@ -232,9 +232,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import {
-  NInput, NIcon, NButton, NEmpty, NPagination, NTag
+  NInput, NIcon, NButton, NEmpty, NPagination, NTag, useMessage
 } from 'naive-ui'
 import {
   ListOutline,
@@ -256,8 +256,10 @@ import CameraCard from '@/components/CameraCard.vue'
 import PointStatCard from '@/components/PointStatCard.vue'
 import AddCameraPage from '@/components/AddCameraPage.vue'
 import type { CameraInfo } from '@/components/CameraCard.vue'
+import { getCameraList, createCamera, type Camera } from '@/api/camera'
 
 const appStore = useAppStore()
+const message = useMessage()
 
 // Refs
 const areaTreeRef = ref<InstanceType<typeof AreaTree> | null>(null)
@@ -265,92 +267,90 @@ const areaTreeRef = ref<InstanceType<typeof AreaTree> | null>(null)
 // View state
 const viewMode = ref<'grid' | 'list'>('grid')
 const searchQuery = ref('')
-const selectedAreaKey = ref('main-park')
-const currentAreaLabel = ref('主园区')
+const selectedAreaKey = ref<string | null>(null)
+const currentAreaLabel = ref('全部区域')
 const showAddPage = ref(false)
+const loading = ref(false)
 
 // Pagination
 const currentPage = ref(1)
 const pageSize = ref(6)
+const totalCount = ref(0)
 
 // Area tree data (synced from AreaTree component)
 const areaTreeData = ref<any[]>([])
 
-// Camera data - Extended test data (20+ cameras in 主园区)
-const allCameras = ref<CameraInfo[]>([
-  // 主园区摄像头 (20个)
-  { id: 'cam-001', name: 'CAM-MAIN-01', location: '主园区', ip: '192.168.1.101', thumbnail: '/camera-lobby-01.jpg', online: true, algorithmEnabled: true },
-  { id: 'cam-002', name: 'CAM-MAIN-02', location: '主园区', ip: '192.168.1.102', thumbnail: '/camera-lobby-02.jpg', online: true, algorithmEnabled: true },
-  { id: 'cam-003', name: 'CAM-MAIN-03', location: '主园区', ip: '192.168.1.103', thumbnail: '/camera-warehouse-01.jpg', online: true, algorithmEnabled: false },
-  { id: 'cam-004', name: 'CAM-MAIN-04', location: '主园区', ip: '192.168.1.104', thumbnail: '/camera-office-01.jpg', online: false, algorithmEnabled: true },
-  { id: 'cam-005', name: 'CAM-MAIN-05', location: '主园区', ip: '192.168.1.105', thumbnail: '/camera-lobby-01.jpg', online: true, algorithmEnabled: true },
-  { id: 'cam-006', name: 'CAM-MAIN-06', location: '主园区', ip: '192.168.1.106', thumbnail: '/camera-lobby-02.jpg', online: true, algorithmEnabled: false },
-  { id: 'cam-007', name: 'CAM-MAIN-07', location: '主园区', ip: '192.168.1.107', thumbnail: '/camera-warehouse-01.jpg', online: true, algorithmEnabled: true },
-  { id: 'cam-008', name: 'CAM-MAIN-08', location: '主园区', ip: '192.168.1.108', thumbnail: '/camera-office-01.jpg', online: false, algorithmEnabled: false },
-  { id: 'cam-009', name: 'CAM-MAIN-09', location: '主园区', ip: '192.168.1.109', thumbnail: '/camera-lobby-01.jpg', online: true, algorithmEnabled: true },
-  { id: 'cam-010', name: 'CAM-MAIN-10', location: '主园区', ip: '192.168.1.110', thumbnail: '/camera-lobby-02.jpg', online: true, algorithmEnabled: true },
-  { id: 'cam-011', name: 'CAM-MAIN-11', location: '主园区', ip: '192.168.1.111', thumbnail: '/camera-warehouse-01.jpg', online: true, algorithmEnabled: false },
-  { id: 'cam-012', name: 'CAM-MAIN-12', location: '主园区', ip: '192.168.1.112', thumbnail: '/camera-office-01.jpg', online: true, algorithmEnabled: true },
-  { id: 'cam-013', name: 'CAM-MAIN-13', location: '主园区', ip: '192.168.1.113', thumbnail: '/camera-lobby-01.jpg', online: false, algorithmEnabled: true },
-  { id: 'cam-014', name: 'CAM-MAIN-14', location: '主园区', ip: '192.168.1.114', thumbnail: '/camera-lobby-02.jpg', online: true, algorithmEnabled: false },
-  { id: 'cam-015', name: 'CAM-MAIN-15', location: '主园区', ip: '192.168.1.115', thumbnail: '/camera-warehouse-01.jpg', online: true, algorithmEnabled: true },
-  { id: 'cam-016', name: 'CAM-MAIN-16', location: '主园区', ip: '192.168.1.116', thumbnail: '/camera-office-01.jpg', online: true, algorithmEnabled: true },
-  { id: 'cam-017', name: 'CAM-MAIN-17', location: '主园区', ip: '192.168.1.117', thumbnail: '/camera-lobby-01.jpg', online: true, algorithmEnabled: false },
-  { id: 'cam-018', name: 'CAM-MAIN-18', location: '主园区', ip: '192.168.1.118', thumbnail: '/camera-lobby-02.jpg', online: false, algorithmEnabled: true },
-  { id: 'cam-019', name: 'CAM-MAIN-19', location: '主园区', ip: '192.168.1.119', thumbnail: '/camera-warehouse-01.jpg', online: true, algorithmEnabled: true },
-  { id: 'cam-020', name: 'CAM-MAIN-20', location: '主园区', ip: '192.168.1.120', thumbnail: '/camera-office-01.jpg', online: true, algorithmEnabled: false },
-  // A栋仓库
-  { id: 'cam-021', name: 'CAM-WH-A01', location: 'A栋仓库', ip: '192.168.1.201', thumbnail: '/camera-warehouse-01.jpg', online: true, algorithmEnabled: true },
-  { id: 'cam-022', name: 'CAM-WH-A02', location: 'A栋仓库', ip: '192.168.1.202', thumbnail: '/camera-warehouse-01.jpg', online: true, algorithmEnabled: true },
-  // B区办公楼
-  { id: 'cam-023', name: 'CAM-OFFICE-B01', location: 'B区办公楼', ip: '192.168.1.150', thumbnail: '/camera-office-01.jpg', online: true, algorithmEnabled: false },
-  { id: 'cam-024', name: 'CAM-OFFICE-B02', location: 'B区办公楼', ip: '192.168.1.151', thumbnail: '/camera-office-01.jpg', online: true, algorithmEnabled: true },
-  // 安防中心
-  { id: 'cam-025', name: 'CAM-SEC-01', location: '安防中心', ip: '192.168.1.50', thumbnail: '/camera-lobby-01.jpg', online: true, algorithmEnabled: true },
-  // 堆场
-  { id: 'cam-026', name: 'CAM-YARD-A01', location: '堆场A区', ip: '192.168.2.10', thumbnail: '/camera-warehouse-01.jpg', online: true, algorithmEnabled: false },
-  { id: 'cam-027', name: 'CAM-YARD-B01', location: '堆场B区', ip: '192.168.2.20', thumbnail: '/camera-warehouse-01.jpg', online: true, algorithmEnabled: true }
-])
+// Camera data - 从 API 加载
+const allCameras = ref<CameraInfo[]>([])
 
 // Area key to label mapping
-const areaKeyLabelMap = ref<Record<string, string>>({
-  'main-park': '主园区',
-  'a-warehouse': 'A栋仓库',
-  'b-office': 'B区办公楼',
-  'security-center': '安防中心',
-  'b-lobby': 'B栋 - 大厅入口',
-  'yard-a': '堆场A区',
-  'yard-b': '堆场B区'
-})
+const areaKeyLabelMap = ref<Record<string, string>>({})
 
-const filteredCameras = computed(() => {
-  const locationFilter = areaKeyLabelMap.value[selectedAreaKey.value]
-  if (!locationFilter) return allCameras.value
-  return allCameras.value.filter(c => c.location === locationFilter)
-})
+// 将后端摄像头数据转换为组件格式
+function convertCamera(camera: Camera): CameraInfo {
+  return {
+    id: camera.id,
+    name: camera.name,
+    location: camera.area_name || '未分配',
+    ip: camera.ip_address || '-',
+    thumbnail: '/camera-lobby-01.jpg', // 默认缩略图
+    online: camera.status === 'online',
+    algorithmEnabled: camera.is_enabled
+  }
+}
 
-const searchedCameras = computed(() => {
-  if (!searchQuery.value) return filteredCameras.value
-  const q = searchQuery.value.toLowerCase()
-  return filteredCameras.value.filter(c =>
-    c.name.toLowerCase().includes(q) || c.ip.includes(q)
-  )
-})
+// 加载摄像头列表
+async function loadCameras() {
+  loading.value = true
+  try {
+    const response = await getCameraList({
+      page: currentPage.value,
+      page_size: pageSize.value,
+      area_id: selectedAreaKey.value || undefined,
+      keyword: searchQuery.value || undefined
+    })
+    
+    if (response.data.data) {
+      const pageData = response.data.data
+      allCameras.value = pageData.items.map(convertCamera)
+      totalCount.value = pageData.total
+    }
+  } catch (error: any) {
+    console.error('加载摄像头列表失败:', error)
+  } finally {
+    loading.value = false
+  }
+}
 
-const paginatedCameras = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  return searchedCameras.value.slice(start, start + pageSize.value)
-})
+// 搜索时重新加载
+const searchedCameras = computed(() => allCameras.value)
+const paginatedCameras = computed(() => allCameras.value)
 
-const onlineCount = computed(() => filteredCameras.value.filter(c => c.online).length)
-const offlineCount = computed(() => filteredCameras.value.filter(c => !c.online).length)
-const algorithmCount = computed(() => filteredCameras.value.filter(c => c.algorithmEnabled).length)
+const onlineCount = computed(() => allCameras.value.filter(c => c.online).length)
+const offlineCount = computed(() => allCameras.value.filter(c => !c.online).length)
+const algorithmCount = computed(() => allCameras.value.filter(c => c.algorithmEnabled).length)
+
+// 搜索防抖
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+watch(searchQuery, () => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    currentPage.value = 1
+    loadCameras()
+  }, 300)
+})
 
 function handleAreaSelect(key: string, label: string) {
   selectedAreaKey.value = key
   currentAreaLabel.value = label
-  currentPage.value = 1 // Reset to first page when area changes
+  currentPage.value = 1
+  loadCameras()
 }
+
+// 组件挂载时加载数据
+onMounted(() => {
+  loadCameras()
+})
 
 function handleTreeUpdate(treeData: any[]) {
   areaTreeData.value = treeData
@@ -384,29 +384,37 @@ function handleBatchDisplay() {
 function handlePageSizeChange(size: number) {
   pageSize.value = size
   currentPage.value = 1
+  loadCameras()
 }
 
-function handleSaveCamera(data: any) {
-  // Get location label from key
-  const locationLabel = areaKeyLabelMap.value[data.location] || currentAreaLabel.value
-  
-  const cam: CameraInfo = {
-    id: `cam-${Date.now()}`,
-    name: data.name || '新摄像头',
-    location: locationLabel,
-    ip: data.rtspUrl ? data.rtspUrl.match(/\d+\.\d+\.\d+\.\d+/)?.[0] || '0.0.0.0' : '0.0.0.0',
-    thumbnail: '/camera-lobby-01.jpg',
-    online: true,
-    algorithmEnabled: data.algorithms && data.algorithms.length > 0
-  }
-  allCameras.value.push(cam)
-  
-  // Close add page
-  showAddPage.value = false
-  
-  // If added to current area, show it
-  if (cam.location === currentAreaLabel.value) {
-    currentPage.value = Math.ceil(searchedCameras.value.length / pageSize.value)
+// 页码变化时重新加载
+watch(currentPage, () => {
+  loadCameras()
+})
+
+async function handleSaveCamera(data: any) {
+  try {
+    // 提取 IP 地址
+    const ipMatch = data.rtspUrl?.match(/\d+\.\d+\.\d+\.\d+/)
+    
+    const response = await createCamera({
+      name: data.name || '新摄像头',
+      area_id: data.location || selectedAreaKey.value || undefined,
+      rtsp_url: data.rtspUrl,
+      rtsp_username: data.username || undefined,
+      rtsp_password: data.password || undefined,
+      ip_address: ipMatch ? ipMatch[0] : undefined,
+      is_enabled: true
+    })
+    
+    if (response.data.data) {
+      message.success('摄像头添加成功')
+      showAddPage.value = false
+      // 重新加载列表
+      await loadCameras()
+    }
+  } catch (error: any) {
+    message.error(error.message || '添加摄像头失败')
   }
 }
 </script>

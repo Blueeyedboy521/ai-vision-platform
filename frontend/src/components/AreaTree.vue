@@ -46,12 +46,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, h } from 'vue'
-import { NTree, NIcon, NButton, NPopconfirm } from 'naive-ui'
+import { ref, computed, h, onMounted } from 'vue'
+import { NTree, NIcon, NButton, NPopconfirm, useMessage } from 'naive-ui'
 import type { TreeOption } from 'naive-ui'
 import { AddOutline, CreateOutline, TrashOutline } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import AddAreaModal from './AddAreaModal.vue'
+import { getAreaTree, createArea, updateArea, deleteArea, type AreaTreeNode } from '@/api/area'
 
 export interface AreaNode {
   key: string
@@ -61,6 +62,7 @@ export interface AreaNode {
 }
 
 const appStore = useAppStore()
+const message = useMessage()
 
 const emit = defineEmits<{
   (e: 'select', key: string, label: string): void
@@ -72,8 +74,9 @@ const props = defineProps<{
 }>()
 
 const selectedKeys = computed(() => [props.selectedKey])
-const expandedKeys = ref<string[]>(['main-park', 'material-yard', 'parking-lot'])
+const expandedKeys = ref<string[]>([])
 const hoveredKey = ref<string | null>(null)
+const loading = ref(false)
 
 // Modal states
 const showAddAreaModal = ref(false)
@@ -81,32 +84,50 @@ const showEditAreaModal = ref(false)
 const editingArea = ref<AreaNode | null>(null)
 
 // Tree data - reactive
-const treeData = ref<TreeOption[]>([
-  {
-    label: '主园区',
-    key: 'main-park',
-    children: [
-      { label: 'A栋仓库', key: 'a-warehouse' },
-      { label: 'B区办公楼', key: 'b-office' },
-      { label: '安防中心', key: 'security-center' }
-    ]
-  },
-  {
-    label: '物料堆场',
-    key: 'material-yard',
-    children: [
-      { label: '堆场A区', key: 'yard-a' },
-      { label: '堆场B区', key: 'yard-b' }
-    ]
-  },
-  {
-    label: '停车场',
-    key: 'parking-lot',
-    children: [
-      { label: 'B栋 - 大厅入口', key: 'b-lobby' }
-    ]
+const treeData = ref<TreeOption[]>([])
+
+// 将后端区域数据转换为树形结构
+function convertToTreeOption(node: AreaTreeNode): TreeOption {
+  const option: TreeOption = {
+    key: node.id,
+    label: node.name
   }
-])
+  if (node.children && node.children.length > 0) {
+    option.children = node.children.map(convertToTreeOption)
+  }
+  return option
+}
+
+// 加载区域树数据
+async function loadAreaTree() {
+  loading.value = true
+  try {
+    const response = await getAreaTree()
+    if (response.data.data) {
+      treeData.value = response.data.data.map(convertToTreeOption)
+      // 默认展开第一层
+      expandedKeys.value = treeData.value.map(n => n.key as string)
+      emit('update', treeData.value)
+    }
+  } catch (error: any) {
+    console.error('加载区域树失败:', error)
+    // 如果 API 失败，使用默认数据
+    treeData.value = [
+      {
+        label: '默认园区',
+        key: 'default-area',
+        children: []
+      }
+    ]
+  } finally {
+    loading.value = false
+  }
+}
+
+// 组件挂载时加载数据
+onMounted(() => {
+  loadAreaTree()
+})
 
 function handleExpandedKeysUpdate(keys: string[]) {
   expandedKeys.value = keys
@@ -188,24 +209,26 @@ function findParentKey(key: string, nodes: TreeOption[] = treeData.value, parent
   return undefined
 }
 
-function handleAddArea(data: { name: string; parentKey: string; description: string }) {
-  const newNode: TreeOption = {
-    key: `area-${Date.now()}`,
-    label: data.name
-  }
-  
-  if (data.parentKey) {
-    // Add as child
-    addToParent(treeData.value, data.parentKey, newNode)
-    if (!expandedKeys.value.includes(data.parentKey)) {
-      expandedKeys.value.push(data.parentKey)
+async function handleAddArea(data: { name: string; parentKey: string; description: string }) {
+  try {
+    const response = await createArea({
+      name: data.name,
+      parent_id: data.parentKey || undefined,
+      description: data.description || undefined
+    })
+    
+    if (response.data.data) {
+      message.success('区域创建成功')
+      // 重新加载区域树
+      await loadAreaTree()
+      // 展开父节点
+      if (data.parentKey && !expandedKeys.value.includes(data.parentKey)) {
+        expandedKeys.value.push(data.parentKey)
+      }
     }
-  } else {
-    // Add as root
-    treeData.value.push(newNode)
+  } catch (error: any) {
+    message.error(error.message || '创建区域失败')
   }
-  
-  emit('update', treeData.value)
 }
 
 function addToParent(nodes: TreeOption[], parentKey: string, newNode: TreeOption) {
@@ -222,43 +245,33 @@ function addToParent(nodes: TreeOption[], parentKey: string, newNode: TreeOption
   return false
 }
 
-function handleEditArea(data: { name: string; parentKey: string; description: string }) {
+async function handleEditArea(data: { name: string; parentKey: string; description: string }) {
   if (!editingArea.value) return
-  updateNode(treeData.value, editingArea.value.key, data.name)
-  editingArea.value = null
-  emit('update', treeData.value)
+  
+  try {
+    await updateArea(editingArea.value.key, {
+      name: data.name,
+      description: data.description || undefined
+    })
+    
+    message.success('区域更新成功')
+    editingArea.value = null
+    // 重新加载区域树
+    await loadAreaTree()
+  } catch (error: any) {
+    message.error(error.message || '更新区域失败')
+  }
 }
 
-function updateNode(nodes: TreeOption[], key: string, label: string) {
-  for (const node of nodes) {
-    if (node.key === key) {
-      node.label = label
-      return true
-    }
-    if (node.children && updateNode(node.children, key, label)) {
-      return true
-    }
+async function handleDeleteArea(key: string) {
+  try {
+    await deleteArea(key)
+    message.success('区域删除成功')
+    // 重新加载区域树
+    await loadAreaTree()
+  } catch (error: any) {
+    message.error(error.message || '删除区域失败')
   }
-  return false
-}
-
-function handleDeleteArea(key: string) {
-  deleteNode(treeData.value, key)
-  emit('update', treeData.value)
-}
-
-function deleteNode(nodes: TreeOption[], key: string): boolean {
-  const index = nodes.findIndex(n => n.key === key)
-  if (index !== -1) {
-    nodes.splice(index, 1)
-    return true
-  }
-  for (const node of nodes) {
-    if (node.children && deleteNode(node.children, key)) {
-      return true
-    }
-  }
-  return false
 }
 
 const treeThemeOverrides = computed(() => {

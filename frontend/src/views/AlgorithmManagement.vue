@@ -530,7 +530,7 @@ const modelRules = {
   model_type: { required: true, message: '请选择模型类型', trigger: 'change' },
   model_path: { required: true, message: '请输入模型文件路径', trigger: 'blur' },
   classes: { 
-    type: 'array', 
+    type: 'array' as const, 
     required: true, 
     min: 1,
     message: '请至少添加一个检测类别', 
@@ -574,7 +574,7 @@ const algorithmRules = {
   name: { required: true, message: '请输入能力名称', trigger: 'blur' },
   code: { required: true, message: '请输入能力编码', trigger: 'blur' },
   target_classes: { 
-    type: 'array', 
+    type: 'array' as const, 
     required: true, 
     min: 1,
     message: '请至少选择一个检测类别', 
@@ -697,7 +697,15 @@ async function handleModelSubmit() {
       if (idx !== -1) {
         models.value[idx] = {
           ...models.value[idx],
-          ...modelForm.value
+          name: modelForm.value.name,
+          code: modelForm.value.code,
+          model_type: modelForm.value.model_type || models.value[idx].model_type,
+          model_path: modelForm.value.model_path,
+          classes: modelForm.value.classes,
+          version: modelForm.value.version,
+          gpu_memory_mb: modelForm.value.gpu_memory_mb || undefined,
+          inference_ms: modelForm.value.inference_ms || undefined,
+          description: modelForm.value.description
         }
       }
       message.success('模型更新成功')
@@ -752,7 +760,7 @@ function handleMoreAction(key: string, model: Model) {
 function openAlgorithmConfig(model: Model) {
   selectedModel.value = model
   // Load algorithms for this model (mock data)
-  algorithms.value = [
+  const mockAlgorithms: Algorithm[] = [
     {
       id: '20000000000000000000000000000001',
       name: '人员入侵检测',
@@ -761,11 +769,11 @@ function openAlgorithmConfig(model: Model) {
       target_classes: ['person'],
       default_confidence: 0.5,
       alert_config: {
-        trigger_type: 'instant',
+        trigger_type: 'instant' as const,
         duration_seconds: 0,
         count_threshold: 0,
         cooldown_seconds: 30,
-        alert_level: 'danger'
+        alert_level: 'danger' as const
       },
       is_enabled: true
     },
@@ -777,11 +785,11 @@ function openAlgorithmConfig(model: Model) {
       target_classes: ['no_helmet'],
       default_confidence: 0.6,
       alert_config: {
-        trigger_type: 'duration',
+        trigger_type: 'duration' as const,
         duration_seconds: 3,
         count_threshold: 0,
         cooldown_seconds: 60,
-        alert_level: 'danger'
+        alert_level: 'danger' as const
       },
       is_enabled: true
     },
@@ -793,15 +801,16 @@ function openAlgorithmConfig(model: Model) {
       target_classes: ['no_vest'],
       default_confidence: 0.6,
       alert_config: {
-        trigger_type: 'instant',
+        trigger_type: 'instant' as const,
         duration_seconds: 0,
         count_threshold: 0,
         cooldown_seconds: 60,
-        alert_level: 'warning'
+        alert_level: 'warning' as const
       },
       is_enabled: true
     }
-  ].filter(algo => algo.model_id === model.id)
+  ]
+  algorithms.value = mockAlgorithms.filter(algo => algo.model_id === model.id)
   
   showAlgorithmModal.value = true
 }
