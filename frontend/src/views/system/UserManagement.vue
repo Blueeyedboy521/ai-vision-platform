@@ -64,12 +64,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, h } from 'vue'
+import { ref, computed, h, onMounted, watch } from 'vue'
 import { NButton, NIcon, NInput, NSelect, NDataTable, NModal, NForm, NFormItem, NTag, NSwitch, useMessage } from 'naive-ui'
 import { AddOutline, SearchOutline } from '@vicons/ionicons5'
+import { getUserList, createUser, updateUser, deleteUser as deleteUserApi, resetUserPassword, enableUser, disableUser, type User as ApiUser } from '@/api/user'
 
 interface User {
-  id: number
+  id: string
   username: string
   name: string
   email: string
@@ -86,6 +87,7 @@ const editingUser = ref<User | null>(null)
 const searchQuery = ref('')
 const roleFilter = ref(null)
 const statusFilter = ref(null)
+const loading = ref(false)
 
 const formData = ref({
   username: '',
@@ -97,13 +99,48 @@ const formData = ref({
   password: ''
 })
 
-const users = ref<User[]>([
-  { id: 1, username: 'admin', name: '系统管理员', email: 'admin@example.com', phone: '138****1234', role: '超级管理员', department: '技术部', status: 'active', lastLogin: '2024-01-15 14:30' },
-  { id: 2, username: 'zhangsan', name: '张三', email: 'zhangsan@example.com', phone: '139****5678', role: '运维管理员', department: '运维部', status: 'active', lastLogin: '2024-01-15 13:20' },
-  { id: 3, username: 'lisi', name: '李四', email: 'lisi@example.com', phone: '137****9012', role: '安全管理员', department: '安防部', status: 'active', lastLogin: '2024-01-15 10:15' },
-  { id: 4, username: 'wangwu', name: '王五', email: 'wangwu@example.com', phone: '136****3456', role: '普通用户', department: '业务部', status: 'inactive', lastLogin: '2024-01-10 09:30' },
-  { id: 5, username: 'zhaoliu', name: '赵六', email: 'zhaoliu@example.com', phone: '135****7890', role: '普通用户', department: '市场部', status: 'active', lastLogin: '2024-01-14 16:45' }
-])
+const users = ref<User[]>([])
+
+// 转换后端用户数据
+function convertUser(apiUser: ApiUser): User {
+  return {
+    id: apiUser.id,
+    username: apiUser.username,
+    name: apiUser.nickname || apiUser.username,
+    email: apiUser.email || '',
+    phone: apiUser.phone || '',
+    role: apiUser.is_admin ? '超级管理员' : (apiUser.role === 'admin' ? '运维管理员' : apiUser.role === 'operator' ? '安全管理员' : '普通用户'),
+    department: '',
+    status: apiUser.is_active ? 'active' : 'inactive',
+    lastLogin: apiUser.last_login_at || '-'
+  }
+}
+
+// 加载用户列表
+async function loadUsers() {
+  loading.value = true
+  try {
+    const response = await getUserList({ keyword: searchQuery.value || undefined })
+    if (response.data.data) {
+      users.value = response.data.data.items.map(convertUser)
+    }
+  } catch (error) {
+    console.error('加载用户列表失败:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+// 搜索防抖
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+watch(searchQuery, () => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => loadUsers(), 300)
+})
+
+onMounted(() => {
+  loadUsers()
+})
 
 const roleOptions = [
   { label: '超级管理员', value: '超级管理员' },
@@ -119,12 +156,6 @@ const statusOptions = [
 
 const filteredUsers = computed(() => {
   return users.value.filter(user => {
-    if (searchQuery.value) {
-      const q = searchQuery.value.toLowerCase()
-      if (!user.username.toLowerCase().includes(q) && !user.name.includes(q) && !user.email.toLowerCase().includes(q)) {
-        return false
-      }
-    }
     if (roleFilter.value && user.role !== roleFilter.value) return false
     if (statusFilter.value && user.status !== statusFilter.value) return false
     return true
@@ -146,15 +177,24 @@ const columns = [
     width: 150,
     render: (row: User) => h('div', { style: 'display: flex; gap: 8px' }, [
       h(NButton, { text: true, type: 'primary', size: 'small', onClick: () => editUser(row) }, () => '编辑'),
-      h(NButton, { text: true, type: 'warning', size: 'small', onClick: () => resetPassword(row) }, () => '重置密码'),
-      h(NButton, { text: true, type: 'error', size: 'small', onClick: () => deleteUser(row) }, () => '删除')
+      h(NButton, { text: true, type: 'warning', size: 'small', onClick: () => handleResetPassword(row) }, () => '重置密码'),
+      h(NButton, { text: true, type: 'error', size: 'small', onClick: () => handleDeleteUser(row) }, () => '删除')
     ])
   }
 ]
 
-function toggleStatus(user: User, active: boolean) {
-  user.status = active ? 'active' : 'inactive'
-  message.success(active ? '用户已启用' : '用户已禁用')
+async function toggleStatus(user: User, active: boolean) {
+  try {
+    if (active) {
+      await enableUser(user.id)
+    } else {
+      await disableUser(user.id)
+    }
+    user.status = active ? 'active' : 'inactive'
+    message.success(active ? '用户已启用' : '用户已禁用')
+  } catch (error: any) {
+    message.error(error.message || '操作失败')
+  }
 }
 
 function editUser(user: User) {
@@ -163,35 +203,60 @@ function editUser(user: User) {
   showModal.value = true
 }
 
-function resetPassword(user: User) {
-  message.success(`已重置 ${user.name} 的密码`)
+async function handleResetPassword(user: User) {
+  try {
+    await resetUserPassword(user.id, 'password123')
+    message.success(`已重置 ${user.name} 的密码为: password123`)
+  } catch (error: any) {
+    message.error(error.message || '重置密码失败')
+  }
 }
 
-function deleteUser(user: User) {
-  const index = users.value.findIndex(u => u.id === user.id)
-  if (index > -1) {
-    users.value.splice(index, 1)
+async function handleDeleteUser(user: User) {
+  try {
+    await deleteUserApi(user.id)
+    await loadUsers()
     message.success('用户已删除')
+  } catch (error: any) {
+    message.error(error.message || '删除用户失败')
   }
 }
 
-function saveUser() {
-  if (editingUser.value) {
-    Object.assign(editingUser.value, formData.value)
-    message.success('用户信息已更新')
-  } else {
-    users.value.push({
-      id: Date.now(),
-      ...formData.value,
-      role: formData.value.role || '普通用户',
-      status: 'active',
-      lastLogin: '-'
-    } as User)
-    message.success('用户添加成功')
+async function saveUser() {
+  try {
+    const roleMap: Record<string, string> = {
+      '超级管理员': 'admin',
+      '运维管理员': 'admin',
+      '安全管理员': 'operator',
+      '普通用户': 'viewer'
+    }
+    
+    if (editingUser.value) {
+      await updateUser(editingUser.value.id, {
+        nickname: formData.value.name,
+        email: formData.value.email || undefined,
+        phone: formData.value.phone || undefined,
+        role: roleMap[formData.value.role || '普通用户'] as any
+      })
+      message.success('用户信息已更新')
+    } else {
+      await createUser({
+        username: formData.value.username,
+        password: formData.value.password || 'password123',
+        nickname: formData.value.name,
+        email: formData.value.email || undefined,
+        phone: formData.value.phone || undefined,
+        role: roleMap[formData.value.role || '普通用户'] as any
+      })
+      message.success('用户添加成功')
+    }
+    showModal.value = false
+    editingUser.value = null
+    formData.value = { username: '', name: '', email: '', phone: '', role: null, department: '', password: '' }
+    await loadUsers()
+  } catch (error: any) {
+    message.error(error.message || '保存失败')
   }
-  showModal.value = false
-  editingUser.value = null
-  formData.value = { username: '', name: '', email: '', phone: '', role: null, department: '', password: '' }
 }
 </script>
 

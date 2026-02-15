@@ -156,6 +156,7 @@ import {
   SettingsOutline, AddOutline, SearchOutline, ExpandOutline, 
   CloseOutline, SquareOutline, GridOutline, AppsOutline, VideocamOffOutline
 } from '@vicons/ionicons5'
+import { createDetectionWebSocket, createAlarmWebSocket, type WebSocketClient } from '@/utils/websocket'
 
 interface Camera {
   id: string
@@ -167,6 +168,13 @@ interface Camera {
 
 interface GridSlot {
   camera: Camera | null
+  detections?: Detection[]
+}
+
+interface Detection {
+  class_name: string
+  confidence: number
+  bbox: [number, number, number, number]
 }
 
 const message = useMessage()
@@ -176,6 +184,48 @@ const showSelectModal = ref(false)
 const showConfigModal = ref(false)
 const searchCamera = ref('')
 const currentTime = ref('')
+
+// WebSocket 连接管理
+const wsClients = ref<Map<string, WebSocketClient>>(new Map())
+const alarmWsClient = ref<WebSocketClient | null>(null)
+
+// 处理检测结果
+function handleDetectionMessage(cameraId: string, data: any) {
+  if (data.type === 'detection' && data.detections) {
+    // 更新对应摄像头的检测结果
+    const slot = gridSlots.value.find((s: GridSlot) => s.camera?.id === cameraId)
+    if (slot) {
+      slot.detections = data.detections
+    }
+  }
+}
+
+// 处理告警消息
+function handleAlarmMessage(data: any) {
+  if (data.type === 'alarm') {
+    message.warning(`新告警: ${data.title || '检测到异常'}`)
+  }
+}
+
+// 连接摄像头 WebSocket
+function connectCameraWs(cameraId: string) {
+  if (wsClients.value.has(cameraId)) return
+  
+  const client = createDetectionWebSocket(cameraId, (data) => {
+    handleDetectionMessage(cameraId, data)
+  })
+  client.connect()
+  wsClients.value.set(cameraId, client)
+}
+
+// 断开摄像头 WebSocket
+function disconnectCameraWs(cameraId: string) {
+  const client = wsClients.value.get(cameraId)
+  if (client) {
+    client.disconnect()
+    wsClients.value.delete(cameraId)
+  }
+}
 
 // Grid container ref and calculated dimensions
 const gridContainerRef = ref<HTMLElement | null>(null)
@@ -421,6 +471,17 @@ onMounted(() => {
       resizeObserver.observe(gridContainerRef.value)
     }
   })
+  
+  // 连接告警 WebSocket
+  alarmWsClient.value = createAlarmWebSocket(handleAlarmMessage)
+  alarmWsClient.value.connect()
+  
+  // 为现有摄像头连接 WebSocket
+  gridSlots.value.forEach((slot: GridSlot) => {
+    if (slot.camera) {
+      connectCameraWs(slot.camera.id)
+    }
+  })
 })
 
 onUnmounted(() => {
@@ -428,6 +489,15 @@ onUnmounted(() => {
   if (resizeObserver) {
     resizeObserver.disconnect()
     resizeObserver = null
+  }
+  
+  // 断开所有 WebSocket 连接
+  wsClients.value.forEach(client => client.disconnect())
+  wsClients.value.clear()
+  
+  if (alarmWsClient.value) {
+    alarmWsClient.value.disconnect()
+    alarmWsClient.value = null
   }
 })
 </script>

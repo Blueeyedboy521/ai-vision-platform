@@ -1,0 +1,66 @@
+# AI 视觉平台 Docker Compose 开发配置
+# 仅启动基础设施服务 (MySQL, Redis, ZLMediaKit)
+# 前后端使用本地开发服务器
+
+version: '3.8'
+
+services:
+  # MySQL 数据库
+  mysql:
+    image: mysql:8.0
+    container_name: aivision-mysql-dev
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root123456
+      MYSQL_DATABASE: ai_vision
+      MYSQL_USER: aivision
+      MYSQL_PASSWORD: aivision123
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_dev_data:/var/lib/mysql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+8:00
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    container_name: aivision-redis-dev
+    restart: unless-stopped
+    command: redis-server --requirepass redis123
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis123", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ZLMediaKit 流媒体服务器
+  zlmediakit:
+    image: zlmediakit/zlmediakit:master
+    container_name: aivision-zlm-dev
+    restart: unless-stopped
+    ports:
+      - "1935:1935"      # RTMP
+      - "554:554"        # RTSP
+      - "8080:80"        # HTTP-FLV / API
+      - "10000:10000/udp" # RTP
+    environment:
+      - TZ=Asia/Shanghai
+
+volumes:
+  mysql_dev_data:
+    name: aivision-mysql-dev-data
+  redis_dev_data:
+    name: aivision-redis-dev-data
