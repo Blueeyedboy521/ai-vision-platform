@@ -27,6 +27,8 @@ export interface Camera {
   status: CameraStatus
   fps: number
   resolution: string | null
+  algorithm_count?: number
+  snapshot_url?: string | null
   created_at: string
   updated_at: string
 }
@@ -143,5 +145,34 @@ export function stopCamera(id: string) {
  * 获取播放地址
  */
 export function getCameraPlayUrls(id: string) {
-  return request.get<PlayUrls>(`/cameras/${id}/play-urls`)
+  return request.get<PlayUrls>(`/cameras/${id}/play-url`)
+}
+
+/** 流通性测试请求 */
+export interface ProbeStreamRequest {
+  rtsp_url: string
+  rtsp_username?: string
+  rtsp_password?: string
+}
+
+/** 流通性测试响应 */
+export interface ProbeStreamResult {
+  width: number
+  height: number
+  fps: number | null
+  resolution: string | null
+}
+
+/**
+ * 流通性测试（后端用 OpenCV/ffprobe 获取宽高、帧率）
+ */
+export function probeStream(data: ProbeStreamRequest) {
+  return request.post<ProbeStreamResult>('/cameras/probe-stream', data)
+}
+
+/**
+ * 抓拍并保存为最新缩略图
+ */
+export function snapshotCamera(id: string) {
+  return request.post<{ snapshot_url: string }>(`/cameras/${id}/snapshot`)
 }

@@ -27,20 +27,19 @@ export interface Model {
   updated_at: string
 }
 
-// 创建模型请求
+// 创建模型请求（后端使用 model_path）
 export interface CreateModelRequest {
   name: string
-  code?: string
+  code: string
   description?: string
-  file_path: string
-  file_size?: number
+  model_path: string
   model_type: string
-  framework?: string
   version?: string
-  input_shape?: any
-  output_shape?: any
   classes?: string[]
-  class_count?: number
+  gpu_memory_mb?: number
+  inference_ms?: number
+  input_width?: number
+  input_height?: number
   is_enabled?: boolean
 }
 
@@ -49,15 +48,14 @@ export interface UpdateModelRequest {
   name?: string
   code?: string
   description?: string
-  file_path?: string
-  file_size?: number
+  model_path?: string
   model_type?: string
-  framework?: string
   version?: string
-  input_shape?: any
-  output_shape?: any
   classes?: string[]
-  class_count?: number
+  gpu_memory_mb?: number
+  inference_ms?: number
+  input_width?: number
+  input_height?: number
   is_enabled?: boolean
 }
 

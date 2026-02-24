@@ -4,13 +4,16 @@
 
 提供摄像头 CRUD 和流媒体控制接口
 """
+from pathlib import Path
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config.settings import settings
 from app.core.database import get_db
 from app.api.deps import get_current_user
 from app.models import User, Camera, Area, CameraAlgorithm
@@ -25,8 +28,17 @@ from app.schemas.camera import (
 )
 from app.schemas.common import MessageResponse, success_response, page_response
 from app.services.config_publisher import get_config_publisher
+from app.services.stream_probe import probe_stream
+from app.services.snapshot import save_snapshot
 from common.media import get_stream_manager
 from common.logging import logger
+
+
+class ProbeStreamRequest(BaseModel):
+    """流通性测试请求"""
+    rtsp_url: str = Field(..., description="RTSP 流地址")
+    rtsp_username: Optional[str] = Field(None, description="RTSP 用户名")
+    rtsp_password: Optional[str] = Field(None, description="RTSP 密码")
 
 
 router = APIRouter()
@@ -95,6 +107,7 @@ async def get_cameras(
         )
         algo_count = algo_count_result.scalar() or 0
         
+        snapshot_url = f"/static/{camera.last_snapshot_path}" if getattr(camera, "last_snapshot_path", None) else None
         data.append({
             "id": camera.id,
             "name": camera.name,
@@ -114,11 +127,39 @@ async def get_cameras(
             "is_enabled": camera.is_enabled,
             "status": camera.status,
             "algorithm_count": algo_count,
+            "snapshot_url": snapshot_url,
             "created_at": camera.created_at.isoformat(),
             "updated_at": camera.updated_at.isoformat()
         })
     
     return page_response(data, page, page_size, total)
+
+
+@router.post("/probe-stream", summary="流通性测试（获取宽高、帧率）")
+async def probe_stream_info(
+    body: ProbeStreamRequest = Body(...),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    使用 OpenCV/ffprobe 探测 RTSP 流，返回宽、高、帧率等信息
+    """
+    result = probe_stream(
+        body.rtsp_url,
+        username=body.rtsp_username,
+        password=body.rtsp_password,
+        timeout_sec=10
+    )
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get("error", "流探测失败")
+        )
+    return success_response({
+        "width": result["width"],
+        "height": result["height"],
+        "fps": result["fps"],
+        "resolution": result["resolution"]
+    })
 
 
 @router.get("/{camera_id}", summary="获取摄像头详情")
@@ -150,6 +191,7 @@ async def get_camera(
     )
     algo_count = algo_count_result.scalar() or 0
     
+    snapshot_url = f"/static/{camera.last_snapshot_path}" if getattr(camera, "last_snapshot_path", None) else None
     return success_response({
         "id": camera.id,
         "name": camera.name,
@@ -159,6 +201,7 @@ async def get_camera(
         "area_name": camera.area.name if camera.area else None,
         "rtsp_url": camera.rtsp_url,
         "rtsp_username": camera.rtsp_username,
+        "rtsp_password": camera.rtsp_password,
         "manufacturer": camera.manufacturer,
         "device_model": camera.device_model,
         "ip_address": camera.ip_address,
@@ -170,6 +213,7 @@ async def get_camera(
         "is_enabled": camera.is_enabled,
         "status": camera.status,
         "algorithm_count": algo_count,
+        "snapshot_url": snapshot_url,
         "created_at": camera.created_at.isoformat(),
         "updated_at": camera.updated_at.isoformat()
     })
@@ -424,3 +468,42 @@ async def get_play_url(
         "rtsp_url": urls.get("rtsp"),
         "hls_url": urls.get("hls")
     })
+
+
+@router.post("/{camera_id}/snapshot", summary="抓拍")
+async def camera_snapshot(
+    camera_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    从摄像头 RTSP 流抓拍一帧，保存为最新抓拍图，列表页将显示此图
+    """
+    result = await db.execute(
+        select(Camera).where(Camera.id == camera_id)
+    )
+    camera = result.scalar_one_or_none()
+    if camera is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="摄像头不存在"
+        )
+    save_dir = Path(settings.LOCAL_STORAGE_PATH) / "snapshots"
+    ok, relative_path = save_snapshot(
+        camera_id,
+        camera.rtsp_url,
+        username=camera.rtsp_username,
+        password=camera.rtsp_password,
+        save_dir=save_dir,
+    )
+    if not ok or not relative_path:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="抓拍失败，请检查 RTSP 是否可达"
+        )
+    camera.last_snapshot_path = relative_path
+    camera.updated_by = current_user.id
+    await db.commit()
+    snapshot_url = f"/static/{relative_path}"
+    logger.info(f"摄像头抓拍已保存: {camera_id} -> {relative_path}")
+    return success_response({"snapshot_url": snapshot_url}, "抓拍成功")

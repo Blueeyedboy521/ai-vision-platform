@@ -23,6 +23,7 @@ from app.schemas.algorithm import (
 )
 from app.schemas.common import success_response, page_response
 from app.services.config_publisher import get_config_publisher
+from app.services.model_sync import sync_model_classes_from_algorithms
 from common.logging import logger
 
 
@@ -194,6 +195,8 @@ async def create_algorithm(
     await db.commit()
     await db.refresh(algo)
     
+    await sync_model_classes_from_algorithms(db, algo.model_id)
+    
     config_publisher = get_config_publisher()
     await config_publisher.publish_algorithm_add({
         "algorithm_id": algo.id,
@@ -241,6 +244,8 @@ async def update_algorithm(
     
     await db.commit()
     
+    await sync_model_classes_from_algorithms(db, algo.model_id)
+    
     config_publisher = get_config_publisher()
     await config_publisher.publish_algorithm_update({
         "algorithm_id": algo.id,
@@ -284,8 +289,11 @@ async def delete_algorithm(
             detail="存在关联的摄像头配置，无法删除"
         )
     
+    model_id = algo.model_id
     await db.delete(algo)
     await db.commit()
+    
+    await sync_model_classes_from_algorithms(db, model_id)
     
     config_publisher = get_config_publisher()
     await config_publisher.publish_algorithm_delete(algorithm_id)

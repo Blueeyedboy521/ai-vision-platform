@@ -32,27 +32,26 @@ export interface AlgorithmConfig {
   custom?: Record<string, any>
 }
 
-// 创建算法请求
+// 创建算法请求（与后端一致：model_id、target_classes、default_confidence、alert_config）
 export interface CreateAlgorithmRequest {
   name: string
-  code?: string
+  code: string
   description?: string
-  algorithm_type: AlgorithmType
-  model_id?: string
-  config?: AlgorithmConfig
-  default_threshold?: number
+  model_id: string
+  target_classes: string[]
+  default_confidence?: number
+  alert_config?: Record<string, unknown>
   is_enabled?: boolean
 }
 
 // 更新算法请求
 export interface UpdateAlgorithmRequest {
   name?: string
-  code?: string
   description?: string
-  algorithm_type?: AlgorithmType
   model_id?: string
-  config?: AlgorithmConfig
-  default_threshold?: number
+  target_classes?: string[]
+  default_confidence?: number
+  alert_config?: Record<string, unknown>
   is_enabled?: boolean
 }
 
@@ -106,4 +105,40 @@ export function deleteAlgorithm(id: string) {
  */
 export function getAlgorithmClasses(id: string) {
   return request.get<string[]>(`/algorithms/${id}/classes`)
+}
+
+// ==================== 摄像头-算法配置 ====================
+
+export interface CameraAlgorithmConfig {
+  id: string
+  camera_id: string
+  algorithm_id: string
+  algorithm_name?: string
+  model_id: string
+  confidence: number | null
+  effective_confidence: number
+  is_enabled: boolean
+}
+
+export interface AddCameraAlgorithmRequest {
+  camera_id: string
+  algorithm_id: string
+  model_id: string
+  confidence?: number
+  is_enabled?: boolean
+}
+
+/** 获取某摄像头的算法配置列表 */
+export function getCameraAlgorithmConfigs(cameraId: string) {
+  return request.get<CameraAlgorithmConfig[]>(`/algorithms/camera/${cameraId}/configs`)
+}
+
+/** 为摄像头添加算法配置 */
+export function addCameraAlgorithmConfig(cameraId: string, data: AddCameraAlgorithmRequest) {
+  return request.post<{ id: string }>(`/algorithms/camera/${cameraId}/configs`, data)
+}
+
+/** 删除摄像头某条算法配置 */
+export function deleteCameraAlgorithmConfig(cameraId: string, configId: string) {
+  return request.delete(`/algorithms/camera/${cameraId}/configs/${configId}`)
 }

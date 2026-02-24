@@ -70,6 +70,21 @@
                 </n-button>
               </div>
             </div>
+            <div class="form-field form-field--row">
+              <div class="form-field form-field--flex">
+                <label class="form-field__label">RTSP 用户名</label>
+                <n-input v-model:value="formData.username" placeholder="可选" />
+              </div>
+              <div class="form-field form-field--flex">
+                <label class="form-field__label">RTSP 密码</label>
+                <n-input v-model:value="formData.password" type="password" show-password-on="click" placeholder="可选" />
+              </div>
+            </div>
+            <div v-if="streamInfo" class="stream-info">
+              <span>宽 {{ streamInfo.width }} × 高 {{ streamInfo.height }}</span>
+              <span v-if="streamInfo.fps"> · {{ streamInfo.fps }} fps</span>
+              <span v-if="streamInfo.resolution"> · {{ streamInfo.resolution }}</span>
+            </div>
           </div>
         </section>
 
@@ -117,6 +132,38 @@
 
       <!-- Right Column -->
       <div class="add-camera-page__right">
+        <!-- 已配置算法（编辑时显示，从后端加载） -->
+        <section v-if="cameraId" class="config-card">
+          <div class="config-card__header">
+            <h3 class="config-card__title">
+              <span class="config-card__indicator"></span>
+              已配置算法
+            </h3>
+            <n-button size="small" type="primary" @click="openAddAlgorithmModal">
+              添加算法
+            </n-button>
+          </div>
+          <div v-if="cameraAlgorithmConfigs.length === 0" class="algo-config-empty">
+            <n-empty description="暂无配置" size="small" />
+          </div>
+          <ul v-else class="algo-config-list">
+            <li
+              v-for="cfg in cameraAlgorithmConfigs"
+              :key="cfg.id"
+              class="algo-config-item"
+            >
+              <span class="algo-config-name">{{ cfg.algorithm_name || cfg.algorithm_id }}</span>
+              <span class="algo-config-confidence">置信度 {{ (cfg.effective_confidence * 100).toFixed(0) }}%</span>
+              <n-tag :type="cfg.is_enabled ? 'success' : 'default'" size="small">
+                {{ cfg.is_enabled ? '启用' : '停用' }}
+              </n-tag>
+              <n-button text type="error" size="small" @click="removeCameraAlgorithmConfig(cfg.id)">
+                移除
+              </n-button>
+            </li>
+          </ul>
+        </section>
+
         <!-- Algorithm Config -->
         <section class="config-card">
           <div class="config-card__header">
@@ -226,6 +273,47 @@
       </div>
     </div>
 
+    <!-- 添加算法 Modal -->
+    <n-modal
+      v-model:show="showAddAlgorithmModal"
+      preset="card"
+      title="为摄像头添加算法"
+      :style="{ width: '480px' }"
+      @after-enter="loadAlgorithmListForAdd"
+    >
+      <n-form label-placement="left" label-width="80">
+        <n-form-item label="选择算法">
+          <n-select
+            v-model:value="addAlgorithmSelectedId"
+            :options="algorithmOptionsForAdd"
+            placeholder="请选择算法"
+            filterable
+            clearable
+          />
+        </n-form-item>
+        <n-form-item label="置信度">
+          <n-input-number
+            v-model:value="addAlgorithmConfidence"
+            :min="0"
+            :max="1"
+            :step="0.05"
+            :precision="2"
+            placeholder="0.9"
+            style="width: 100%"
+          />
+          <template #feedback> 检测置信度≥此值时触发告警，建议 0.8～0.95 </template>
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showAddAlgorithmModal = false">取消</n-button>
+          <n-button type="primary" :loading="addAlgorithmSubmitting" @click="submitAddAlgorithm">
+            添加
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
     <!-- Draw Region Modal -->
     <DrawRegionModal
       v-model:show="showDrawRegionModal"
@@ -239,10 +327,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import {
   NInput, NTreeSelect, NButton, NIcon, NSwitch,
-  NSlider, NPopover, NTimePicker
+  NSlider, NPopover, NTimePicker, NModal, NForm, NFormItem, NSelect, NInputNumber, NSpace, NEmpty, NTag
 } from 'naive-ui'
 import type { TreeSelectOption } from 'naive-ui'
 import {
@@ -253,6 +341,15 @@ import {
   TimeOutline
 } from '@vicons/ionicons5'
 import DrawRegionModal from './DrawRegionModal.vue'
+import { getCamera, probeStream, snapshotCamera } from '@/api/camera'
+import {
+  getCameraAlgorithmConfigs,
+  addCameraAlgorithmConfig,
+  deleteCameraAlgorithmConfig,
+  getAlgorithmList,
+  type CameraAlgorithmConfig
+} from '@/api/algorithm'
+import { useMessage } from 'naive-ui'
 
 interface Region {
   points: { x: number; y: number }[]
@@ -274,6 +371,7 @@ interface Algorithm {
 }
 
 const props = defineProps<{
+  cameraId?: string | null
   areaTreeData?: any[]
 }>()
 
@@ -286,13 +384,28 @@ const emit = defineEmits<{
 const formData = ref({
   name: '',
   location: null as string | null,
-  rtspUrl: ''
+  rtspUrl: '',
+  username: '',
+  password: '',
+  fps: null as number | null,
+  resolution: null as string | null
 })
 
+const message = useMessage()
 const connectionStatus = ref<'online' | 'offline'>('offline')
 const testingConnection = ref(false)
+const streamInfo = ref<{ width: number; height: number; fps: number | null; resolution: string | null } | null>(null)
 const previewImage = ref('/camera-warehouse-01.jpg')
 const snapshots = ref<string[]>([])
+
+// 已配置算法（编辑时从后端加载）
+const cameraAlgorithmConfigs = ref<CameraAlgorithmConfig[]>([])
+const showAddAlgorithmModal = ref(false)
+const algorithmOptionsForAdd = ref<{ label: string; value: string }[]>([])
+const algorithmIdToModelId = ref<Record<string, string>>({})
+const addAlgorithmSelectedId = ref<string | null>(null)
+const addAlgorithmConfidence = ref(0.9)
+const addAlgorithmSubmitting = ref(false)
 
 // Draw Region Modal
 const showDrawRegionModal = ref(false)
@@ -348,17 +461,62 @@ const enabledAlgorithmCount = computed(() =>
   algorithms.value.filter(a => a.enabled).length
 )
 
-function testConnection() {
+async function testConnection() {
+  if (!formData.value.rtspUrl?.trim()) {
+    message.warning('请先填写 RTSP 流地址')
+    return
+  }
   testingConnection.value = true
-  setTimeout(() => {
-    connectionStatus.value = 'online'
+  streamInfo.value = null
+  try {
+    const res = await probeStream({
+      rtsp_url: formData.value.rtspUrl,
+      rtsp_username: formData.value.username || undefined,
+      rtsp_password: formData.value.password || undefined
+    })
+    const data = (res.data as any)?.data ?? res.data
+    if (data?.width != null && data?.height != null) {
+      streamInfo.value = {
+        width: data.width,
+        height: data.height,
+        fps: data.fps ?? null,
+        resolution: data.resolution ?? null
+      }
+      formData.value.fps = data.fps ?? null
+      formData.value.resolution = data.resolution ?? null
+      connectionStatus.value = 'online'
+      message.success('流通性测试成功')
+    } else {
+      connectionStatus.value = 'offline'
+      message.error((res.data as any)?.detail || '探测失败')
+    }
+  } catch (e: any) {
+    connectionStatus.value = 'offline'
+    message.error(e?.response?.data?.detail || e?.message || '流通性测试失败')
+  } finally {
     testingConnection.value = false
-  }, 1500)
+  }
 }
 
-function captureSnapshot() {
-  if (snapshots.value.length < 4) {
-    snapshots.value.push(previewImage.value || '/camera-lobby-01.jpg')
+async function captureSnapshot() {
+  if (props.cameraId) {
+    try {
+      const res = await snapshotCamera(props.cameraId)
+      const data = (res.data as any)?.data ?? res.data
+      const url = data?.snapshot_url
+      if (url) {
+        const base = import.meta.env.VITE_API_BASE_URL || ''
+        previewImage.value = base + url
+        snapshots.value = [previewImage.value]
+        message.success('抓拍已保存，列表将显示为缩略图')
+      }
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e?.message || '抓拍失败')
+    }
+  } else {
+    if (snapshots.value.length < 4) {
+      snapshots.value.push(previewImage.value || '/camera-lobby-01.jpg')
+    }
   }
 }
 
@@ -431,6 +589,139 @@ function confirmTimeSelection(algo: Algorithm) {
   activeTimePopover.value = null
 }
 
+async function loadCameraDetail(id: string) {
+  try {
+    const res = await getCamera(id)
+    const c = (res.data as any)?.data ?? res.data
+    if (!c) return
+    formData.value = {
+      name: c.name ?? '',
+      location: c.area_id ?? null,
+      rtspUrl: c.rtsp_url ?? '',
+      username: c.rtsp_username ?? '',
+      password: c.rtsp_password ?? '',
+      fps: c.fps ?? null,
+      resolution: c.resolution ?? null
+    }
+    if (c.snapshot_url) {
+      const base = import.meta.env.VITE_API_BASE_URL || ''
+      previewImage.value = base + c.snapshot_url
+    }
+    if (c.fps != null || c.resolution) {
+      streamInfo.value = {
+        width: 0,
+        height: 0,
+        fps: c.fps ?? null,
+        resolution: c.resolution ?? null
+      }
+      if (c.resolution && typeof c.resolution === 'string' && c.resolution.includes('x')) {
+        const [w, h] = c.resolution.split('x').map(Number)
+        if (!isNaN(w) && !isNaN(h)) {
+          streamInfo.value!.width = w
+          streamInfo.value!.height = h
+        }
+      }
+    }
+    if (props.cameraId) await loadCameraAlgorithmConfigs(props.cameraId)
+  } catch (e) {
+    console.error('加载摄像头详情失败', e)
+  }
+}
+
+async function loadCameraAlgorithmConfigs(cameraId: string) {
+  try {
+    const res = await getCameraAlgorithmConfigs(cameraId)
+    const data = (res.data as any)?.data ?? res.data
+    cameraAlgorithmConfigs.value = Array.isArray(data) ? data : []
+  } catch (e) {
+    console.error('加载摄像头算法配置失败', e)
+    cameraAlgorithmConfigs.value = []
+  }
+}
+
+function openAddAlgorithmModal() {
+  addAlgorithmSelectedId.value = null
+  addAlgorithmConfidence.value = 0.9
+  showAddAlgorithmModal.value = true
+}
+
+async function loadAlgorithmListForAdd() {
+  try {
+    const res = await getAlgorithmList({ page: 1, page_size: 100 })
+    const raw = res.data as any
+    const list = Array.isArray(raw?.data) ? raw.data : raw?.data?.items ?? []
+    const map: Record<string, string> = {}
+    algorithmOptionsForAdd.value = list.map((a: any) => {
+      if (a.model_id) map[a.id] = a.model_id
+      return { label: `${a.name} (${a.code || a.id})`, value: a.id }
+    })
+    algorithmIdToModelId.value = map
+  } catch (e) {
+    console.error('加载算法列表失败', e)
+    algorithmOptionsForAdd.value = []
+  }
+}
+
+async function submitAddAlgorithm() {
+  const cameraId = props.cameraId
+  const algorithmId = addAlgorithmSelectedId.value
+  if (!cameraId || !algorithmId) {
+    message.warning('请选择算法')
+    return
+  }
+  const modelId = algorithmIdToModelId.value[algorithmId]
+  if (!modelId) {
+    message.error('未获取到该算法的模型 ID')
+    return
+  }
+  addAlgorithmSubmitting.value = true
+  try {
+    await addCameraAlgorithmConfig(cameraId, {
+      camera_id: cameraId,
+      algorithm_id: algorithmId,
+      model_id: modelId,
+      confidence: addAlgorithmConfidence.value,
+      is_enabled: true
+    })
+    message.success('已添加算法配置')
+    showAddAlgorithmModal.value = false
+    await loadCameraAlgorithmConfigs(cameraId)
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || e?.message || '添加失败')
+  } finally {
+    addAlgorithmSubmitting.value = false
+  }
+}
+
+async function removeCameraAlgorithmConfig(configId: string) {
+  const cameraId = props.cameraId
+  if (!cameraId) return
+  try {
+    await deleteCameraAlgorithmConfig(cameraId, configId)
+    message.success('已移除')
+    await loadCameraAlgorithmConfigs(cameraId)
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || e?.message || '移除失败')
+  }
+}
+
+onMounted(() => {
+  if (props.cameraId) {
+    loadCameraDetail(props.cameraId)
+  }
+})
+
+watch(() => props.cameraId, (id) => {
+  if (id) loadCameraDetail(id)
+  else {
+    formData.value = { name: '', location: null, rtspUrl: '', username: '', password: '', fps: null, resolution: null }
+    streamInfo.value = null
+    previewImage.value = '/camera-warehouse-01.jpg'
+    snapshots.value = []
+    cameraAlgorithmConfigs.value = []
+  }
+})
+
 function handleCancel() {
   emit('cancel')
 }
@@ -438,7 +729,15 @@ function handleCancel() {
 function handleSave() {
   const data = {
     ...formData.value,
+    rtspUrl: formData.value.rtspUrl,
+    username: formData.value.username || undefined,
+    password: formData.value.password || undefined,
+    fps: formData.value.fps ?? undefined,
+    resolution: formData.value.resolution ?? undefined,
     algorithms: algorithms.value.filter(a => a.enabled)
+  }
+  if (props.cameraId) {
+    (data as any).id = props.cameraId
   }
   emit('save', data)
 }
@@ -554,6 +853,15 @@ function handleSave() {
   font-weight: var(--font-weight-medium);
 }
 
+.form-field--row { display: flex; gap: 1rem; flex-wrap: wrap; }
+.form-field--flex { flex: 1; min-width: 120px; }
+.stream-info { margin-top: 0.5rem; font-size: 12px; color: var(--text-muted, #666); }
+.algo-config-empty { padding: 12px 0; }
+.algo-config-list { list-style: none; margin: 0; padding: 0; }
+.algo-config-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border-color, #eee); }
+.algo-config-item:last-child { border-bottom: none; }
+.algo-config-name { flex: 1; font-weight: 500; }
+.algo-config-confidence { font-size: 12px; color: var(--text-muted, #666); }
 .config-card__body {
   display: flex;
   flex-direction: column;

@@ -14,6 +14,7 @@ from app.core.database import get_db
 from app.api.deps import get_current_user, get_current_admin
 from app.models import User, Model, Algorithm
 from app.models.base import generate_uuid
+from app.services.model_sync import sync_model_classes_from_algorithms
 from app.schemas.model import ModelCreate, ModelUpdate, ModelResponse
 from app.schemas.common import success_response, page_response
 from app.services.config_publisher import get_config_publisher
@@ -184,6 +185,34 @@ async def create_model(
     await db.commit()
     await db.refresh(model)
     
+    # 根据检测类别自动生成算法列表（每个类别一条算法能力，去重）
+    raw_classes = model_data.classes or []
+    classes = sorted({c for c in raw_classes if c and isinstance(c, str)})
+    for cls in classes:
+        code = f"{model.code}_{cls}".strip()
+        name = f"检测-{cls}"
+        algo = Algorithm(
+            id=generate_uuid(),
+            name=name,
+            code=code,
+            model_id=model.id,
+            default_confidence=0.5,
+            is_enabled=True,
+            created_by=current_user.id,
+            updated_by=current_user.id,
+        )
+        algo.target_classes = [cls]
+        algo.alert_config = {
+            "trigger_type": "instant",
+            "duration_seconds": 0,
+            "count_threshold": 0,
+            "cooldown_seconds": 30,
+            "alert_level": "warning",
+        }
+        db.add(algo)
+    if classes:
+        await db.commit()
+    
     # 发布配置变更
     config_publisher = get_config_publisher()
     await config_publisher.publish_model_add({
@@ -193,7 +222,7 @@ async def create_model(
         "model_path": model.model_path
     })
     
-    logger.info(f"模型已创建: {model.id} - {model.name}")
+    logger.info(f"模型已创建: {model.id} - {model.name}，已自动生成 {len(classes)} 条算法")
     
     return success_response({"id": model.id}, "创建成功")
 

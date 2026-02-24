@@ -1,10 +1,11 @@
 <template>
   <div class="camera-management">
-    <!-- Add Camera Page (covers entire layout when active) -->
+    <!-- Add/Edit Camera Page -->
     <AddCameraPage
       v-if="showAddPage"
+      :camera-id="editingCameraId"
       :area-tree-data="areaTreeData"
-      @cancel="showAddPage = false"
+      @cancel="handleCancelCameraPage"
       @save="handleSaveCamera"
     />
 
@@ -48,7 +49,7 @@
                   </n-icon>
                 </button>
               </div>
-              <n-button type="primary" @click="showAddPage = true">
+              <n-button type="primary" @click="openAddCamera()">
                 <template #icon>
                   <n-icon>
                     <AddOutline />
@@ -198,8 +199,11 @@
                   </n-tag>
                 </div>
                 <div class="camera-table__col camera-table__col--action">
-                  <n-button text type="primary" size="small" @click="handleDetail(cam)">
-                    详情配置
+                  <n-button text type="primary" size="small" @click="openEditCamera(cam)">
+                    编辑
+                  </n-button>
+                  <n-button text size="small" @click="handleDetail(cam)">
+                    详情
                   </n-button>
                 </div>
               </div>
@@ -256,7 +260,7 @@ import CameraCard from '@/components/CameraCard.vue'
 import PointStatCard from '@/components/PointStatCard.vue'
 import AddCameraPage from '@/components/AddCameraPage.vue'
 import type { CameraInfo } from '@/components/CameraCard.vue'
-import { getCameraList, createCamera, type Camera } from '@/api/camera'
+import { getCameraList, createCamera, updateCamera, type Camera } from '@/api/camera'
 
 const appStore = useAppStore()
 const message = useMessage()
@@ -270,6 +274,7 @@ const searchQuery = ref('')
 const selectedAreaKey = ref<string | null>(null)
 const currentAreaLabel = ref('全部区域')
 const showAddPage = ref(false)
+const editingCameraId = ref<string | null>(null)
 const loading = ref(false)
 
 // Pagination
@@ -286,20 +291,24 @@ const allCameras = ref<CameraInfo[]>([])
 // Area key to label mapping
 const areaKeyLabelMap = ref<Record<string, string>>({})
 
-// 将后端摄像头数据转换为组件格式
+// 将后端摄像头数据转换为组件格式（缩略图优先使用最新抓拍）
 function convertCamera(camera: Camera): CameraInfo {
+  const base = import.meta.env.VITE_API_BASE_URL || ''
+  const thumb = (camera as any).snapshot_url
+    ? (base + (camera as any).snapshot_url)
+    : '/camera-lobby-01.jpg'
   return {
     id: camera.id,
     name: camera.name,
     location: camera.area_name || '未分配',
     ip: camera.ip_address || '-',
-    thumbnail: '/camera-lobby-01.jpg', // 默认缩略图
+    thumbnail: thumb,
     online: camera.status === 'online',
-    algorithmEnabled: camera.is_enabled
+    algorithmEnabled: ((camera as any).algorithm_count ?? 0) > 0
   }
 }
 
-// 加载摄像头列表
+// 加载摄像头列表（后端返回 data 为数组，分页在 page_info）
 async function loadCameras() {
   loading.value = true
   try {
@@ -309,14 +318,14 @@ async function loadCameras() {
       area_id: selectedAreaKey.value || undefined,
       keyword: searchQuery.value || undefined
     })
-    
-    if (response.data.data) {
-      const pageData = response.data.data
-      allCameras.value = pageData.items.map(convertCamera)
-      totalCount.value = pageData.total
-    }
+    const res = response.data as any
+    const list = Array.isArray(res.data) ? res.data : res.data?.items ?? []
+    const pageInfo = res.page_info || {}
+    allCameras.value = list.map(convertCamera)
+    totalCount.value = pageInfo.total ?? list.length
   } catch (error: any) {
     console.error('加载摄像头列表失败:', error)
+    message.error(error?.response?.data?.detail || error.message || '加载摄像头列表失败')
   } finally {
     loading.value = false
   }
@@ -368,9 +377,23 @@ function updateAreaKeyLabelMap(nodes: any[], map: Record<string, string> = {}) {
   areaKeyLabelMap.value = map
 }
 
+function openAddCamera() {
+  editingCameraId.value = null
+  showAddPage.value = true
+}
+
+function openEditCamera(cam: CameraInfo) {
+  editingCameraId.value = cam.id
+  showAddPage.value = true
+}
+
+function handleCancelCameraPage() {
+  showAddPage.value = false
+  editingCameraId.value = null
+}
+
 function handleDetail(camera: CameraInfo) {
-  // TODO: Open detail modal or navigate to detail page
-  console.log('View details:', camera)
+  openEditCamera(camera)
 }
 
 function handleExport() {
@@ -394,27 +417,33 @@ watch(currentPage, () => {
 
 async function handleSaveCamera(data: any) {
   try {
-    // 提取 IP 地址
     const ipMatch = data.rtspUrl?.match(/\d+\.\d+\.\d+\.\d+/)
-    
-    const response = await createCamera({
+    const areaId = data.location || selectedAreaKey.value || undefined
+    const isUuid = areaId && /^[0-9a-f]{32}$/i.test(String(areaId))
+    const payload = {
       name: data.name || '新摄像头',
-      area_id: data.location || selectedAreaKey.value || undefined,
+      area_id: isUuid ? areaId : undefined,
       rtsp_url: data.rtspUrl,
       rtsp_username: data.username || undefined,
       rtsp_password: data.password || undefined,
       ip_address: ipMatch ? ipMatch[0] : undefined,
-      is_enabled: true
-    })
-    
-    if (response.data.data) {
-      message.success('摄像头添加成功')
-      showAddPage.value = false
-      // 重新加载列表
-      await loadCameras()
+      is_enabled: true,
+      ...(data.fps != null && { fps: data.fps }),
+      ...(data.resolution && { resolution: data.resolution })
     }
+    if (data.id) {
+      await updateCamera(data.id, payload)
+      message.success('摄像头已更新')
+    } else {
+      await createCamera(payload)
+      message.success('摄像头添加成功')
+    }
+    showAddPage.value = false
+    editingCameraId.value = null
+    await loadCameras()
   } catch (error: any) {
-    message.error(error.message || '添加摄像头失败')
+    const msg = error?.response?.data?.detail || error.message || (data.id ? '更新失败' : '添加摄像头失败')
+    message.error(Array.isArray(msg) ? msg.join(', ') : msg)
   }
 }
 </script>

@@ -229,9 +229,20 @@ export class WebSocketClient {
   }
 }
 
+// 开发环境用同源（Vite 代理），生产用配置的 WS 地址
+function getWsBaseUrl(): string {
+  const env = import.meta.env.VITE_WS_BASE_URL
+  if (env) return env
+  if (typeof window !== 'undefined') {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${protocol}//${window.location.host}`
+  }
+  return 'ws://127.0.0.1:8000'
+}
+
 // 检测结果 WebSocket 连接
 export function createDetectionWebSocket(cameraId: string, onMessage: MessageHandler): WebSocketClient {
-  const baseUrl = import.meta.env.VITE_WS_BASE_URL || 'ws://127.0.0.1:8000'
+  const baseUrl = getWsBaseUrl()
   const client = new WebSocketClient({
     url: `${baseUrl}/ws/detections/${cameraId}`,
     onMessage
@@ -241,7 +252,7 @@ export function createDetectionWebSocket(cameraId: string, onMessage: MessageHan
 
 // 告警 WebSocket 连接
 export function createAlarmWebSocket(onMessage: MessageHandler): WebSocketClient {
-  const baseUrl = import.meta.env.VITE_WS_BASE_URL || 'ws://127.0.0.1:8000'
+  const baseUrl = getWsBaseUrl()
   const client = new WebSocketClient({
     url: `${baseUrl}/ws/alarms`,
     onMessage

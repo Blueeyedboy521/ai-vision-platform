@@ -55,13 +55,17 @@ async def lifespan(app: FastAPI):
     logger.info("初始化 Redis...")
     await init_redis()
     
-    # 启动 WebSocket 处理器
-    logger.info("启动 WebSocket 处理器...")
-    await websocket_handler.start()
-    
-    # 启动告警消费者线程池
-    logger.info("启动告警消费者线程池...")
-    alarm_worker_pool.start(num_workers=settings.ALARM_CONSUMER_WORKERS)
+    # 启动 WebSocket 与告警消费者（依赖 Redis，任一步失败则跳过后续，不阻塞应用启动）
+    redis_ok = False
+    try:
+        logger.info("启动 WebSocket 处理器...")
+        await websocket_handler.start()
+        redis_ok = True
+        logger.info("启动告警消费者线程池...")
+        alarm_worker_pool.start(num_workers=settings.ALARM_CONSUMER_WORKERS)
+    except Exception as e:
+        logger.warning("Redis/WebSocket 启动失败，实时推送与告警不可用: %s", e)
+        logger.warning("请确认 Redis 已启动（如 docker run -p 6379:6379 redis），然后重启本服务")
     
     logger.info("应用启动完成")
     logger.info("=" * 50)
@@ -72,15 +76,11 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 50)
     logger.info("正在关闭应用...")
     
-    # 停止告警消费者
-    logger.info("停止告警消费者线程池...")
-    alarm_worker_pool.stop(timeout=5.0)
-    
-    # 停止 WebSocket 处理器
-    logger.info("停止 WebSocket 处理器...")
-    await websocket_handler.stop()
-    
-    # 关闭 Redis
+    if redis_ok:
+        logger.info("停止告警消费者线程池...")
+        alarm_worker_pool.stop(timeout=5.0)
+        logger.info("停止 WebSocket 处理器...")
+        await websocket_handler.stop()
     logger.info("关闭 Redis 连接...")
     await close_redis()
     
@@ -106,7 +106,8 @@ app = FastAPI(
 
 # ==================== 中间件配置 ====================
 
-# CORS 中间件
+# CORS 中间件（.env 中 CORS_ORIGINS 支持 JSON 数组格式）
+logger.info(f"CORS Origins: {settings.CORS_ORIGINS}")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,

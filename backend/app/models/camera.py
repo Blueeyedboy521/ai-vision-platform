@@ -152,6 +152,13 @@ class Camera(Base, AuditMixin):
         comment="分辨率 (如 1920x1080)"
     )
     
+    # ==================== 抓拍 ====================
+    last_snapshot_path: Mapped[Optional[str]] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="最新抓拍图片相对路径 (如 snapshots/{id}.jpg)"
+    )
+    
     # ==================== 关系 ====================
     # 所属区域
     area: Mapped[Optional["Area"]] = relationship(

@@ -11,8 +11,8 @@ import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosResponse 
 import { useUserStore } from '@/stores/user'
 import router from '@/router'
 
-// API 基础配置
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+// API 基础配置：开发环境用空字符串走 Vite 代理（同源），生产环境用完整后端地址
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 const API_PREFIX = '/api/v1'
 
 // 统一响应结构

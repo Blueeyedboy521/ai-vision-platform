@@ -242,8 +242,15 @@ class Settings(BaseSettings):
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):
-        """解析 CORS_ORIGINS，支持逗号分隔的字符串"""
+        """解析 CORS_ORIGINS，支持 JSON 数组或逗号分隔的字符串"""
         if isinstance(v, str):
+            v = v.strip()
+            if v.startswith("["):
+                import json
+                try:
+                    return json.loads(v)
+                except json.JSONDecodeError:
+                    pass
             return [origin.strip() for origin in v.split(",") if origin.strip()]
         return v
     

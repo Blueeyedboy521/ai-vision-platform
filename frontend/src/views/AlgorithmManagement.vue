@@ -416,6 +416,8 @@
 
 <script setup lang="ts">
 import { ref, computed, markRaw, onMounted } from 'vue'
+import { getModelList, createModel, updateModel, deleteModel } from '@/api/model'
+import { getAlgorithmList, createAlgorithm, updateAlgorithm, deleteAlgorithm as apiDeleteAlgorithm } from '@/api/algorithm'
 import type { Component } from 'vue'
 import { 
   NButton, NIcon, NDropdown, NModal, NForm, NFormItem, 
@@ -472,40 +474,80 @@ interface Model {
 
 const message = useMessage()
 
-// Models data
-const models = ref<Model[]>([
-  {
-    id: '10000000000000000000000000000001',
-    name: '安全生产检测模型',
-    code: 'yolo_safety_v1',
-    model_type: 'yolo',
-    model_path: 'models/yolo_safety_v1.pt',
-    classes: ['person', 'helmet', 'no_helmet', 'vest', 'no_vest'],
-    version: 'V1.2.0',
-    gpu_memory_mb: 500,
-    inference_ms: 30,
-    description: '检测人员、安全帽、反光衣',
-    is_enabled: true,
-    algorithm_count: 3
-  },
-  {
-    id: '10000000000000000000000000000002',
-    name: '烟火检测模型',
-    code: 'fire_smoke_v1',
-    model_type: 'yolo',
-    model_path: 'models/fire_smoke_v1.pt',
-    classes: ['fire', 'smoke'],
-    version: 'V1.4.0',
-    gpu_memory_mb: 300,
-    inference_ms: 25,
-    description: '检测明火和烟雾',
-    is_enabled: true,
-    algorithm_count: 1
+// Models data（从后端加载）
+const models = ref<Model[]>([])
+const modelsLoading = ref(false)
+
+// 后端返回 data 为数组，分页在 page_info
+async function loadModels() {
+  modelsLoading.value = true
+  try {
+    const response = await getModelList({ page: 1, page_size: 100 })
+    const res = response.data as any
+    const list = Array.isArray(res.data) ? res.data : res.data?.items ?? []
+    models.value = list.map((m: any) => ({
+      id: m.id,
+      name: m.name,
+      code: m.code ?? '',
+      model_type: m.model_type ?? 'yolo',
+      model_path: m.model_path ?? '',
+      classes: Array.isArray(m.classes) ? m.classes : [],
+      version: m.version ?? '',
+      gpu_memory_mb: m.gpu_memory_mb ?? undefined,
+      inference_ms: m.inference_ms ?? undefined,
+      description: m.description ?? '',
+      is_enabled: m.is_enabled ?? true,
+      algorithm_count: m.algorithm_count ?? 0
+    }))
+    // 若当前在配置算法弹窗内，同步选中模型（检测类别等与后端一致）
+    if (selectedModel.value) {
+      const m = models.value.find(x => x.id === selectedModel.value!.id)
+      if (m) selectedModel.value = m
+    }
+  } catch (e: any) {
+    console.error('加载模型列表失败:', e)
+    message.error(e?.response?.data?.detail || e?.message || '加载模型列表失败')
+  } finally {
+    modelsLoading.value = false
   }
-])
+}
 
 // Algorithms for selected model
 const algorithms = ref<Algorithm[]>([])
+const algorithmsLoading = ref(false)
+
+/** 从后台加载当前选中模型的算法列表 */
+async function loadAlgorithmsForModel(model: Model) {
+  if (!model?.id) return
+  algorithmsLoading.value = true
+  try {
+    const response = await getAlgorithmList({ model_id: model.id, page_size: 100 })
+    const res = response.data as any
+    const list = Array.isArray(res?.data) ? res.data : res?.data?.items ?? []
+    algorithms.value = list.map((a: any) => ({
+      id: a.id,
+      name: a.name,
+      code: a.code ?? '',
+      model_id: a.model_id ?? model.id,
+      target_classes: Array.isArray(a.target_classes) ? a.target_classes : [],
+      default_confidence: typeof a.default_confidence === 'number' ? a.default_confidence : 0.5,
+      alert_config: a.alert_config ?? {
+        trigger_type: 'instant',
+        duration_seconds: 3,
+        count_threshold: 1,
+        cooldown_seconds: 30,
+        alert_level: 'warning'
+      },
+      description: a.description ?? '',
+      is_enabled: a.is_enabled ?? true
+    }))
+  } catch (e: any) {
+    console.error('加载算法列表失败:', e)
+    message.error(e?.response?.data?.detail || e?.message || '加载算法列表失败')
+  } finally {
+    algorithmsLoading.value = false
+  }
+}
 
 // Model Modal
 const showModelModal = ref(false)
@@ -678,8 +720,10 @@ function openModelModal(model?: Model) {
 }
 
 function handleFileUpload(options: any) {
-  if (options.file?.name) {
-    modelForm.value.model_path = `models/${options.file.name}`
+  const file = options.file?.file || options.file
+  if (file?.name) {
+    modelForm.value.model_path = `models/${file.name}`
+    message.info(`已选择文件: ${file.name}（提交时仅保存路径，实际文件需由管理员上传到服务器）`)
   }
 }
 
@@ -687,132 +731,77 @@ async function handleModelSubmit() {
   try {
     await modelFormRef.value?.validate()
     modelSubmitting.value = true
-    
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 500))
-    
+
     if (editingModel.value) {
-      // Update existing model
-      const idx = models.value.findIndex(m => m.id === editingModel.value!.id)
-      if (idx !== -1) {
-        models.value[idx] = {
-          ...models.value[idx],
-          name: modelForm.value.name,
-          code: modelForm.value.code,
-          model_type: modelForm.value.model_type || models.value[idx].model_type,
-          model_path: modelForm.value.model_path,
-          classes: modelForm.value.classes,
-          version: modelForm.value.version,
-          gpu_memory_mb: modelForm.value.gpu_memory_mb || undefined,
-          inference_ms: modelForm.value.inference_ms || undefined,
-          description: modelForm.value.description
-        }
-      }
+      await updateModel(editingModel.value.id, {
+        name: modelForm.value.name,
+        code: modelForm.value.code,
+        model_type: modelForm.value.model_type ?? undefined,
+        model_path: modelForm.value.model_path,
+        classes: modelForm.value.classes,
+        version: modelForm.value.version || undefined,
+        gpu_memory_mb: modelForm.value.gpu_memory_mb ?? undefined,
+        inference_ms: modelForm.value.inference_ms ?? undefined,
+        description: modelForm.value.description || undefined
+      })
       message.success('模型更新成功')
     } else {
-      // Create new model
-      const newModel: Model = {
-        id: Date.now().toString().padStart(32, '0'),
+      await createModel({
         name: modelForm.value.name,
         code: modelForm.value.code,
         model_type: modelForm.value.model_type!,
         model_path: modelForm.value.model_path,
         classes: modelForm.value.classes,
-        version: modelForm.value.version,
-        gpu_memory_mb: modelForm.value.gpu_memory_mb || undefined,
-        inference_ms: modelForm.value.inference_ms || undefined,
-        description: modelForm.value.description,
-        is_enabled: true,
-        algorithm_count: 0
-      }
-      models.value.push(newModel)
+        version: modelForm.value.version || undefined,
+        gpu_memory_mb: modelForm.value.gpu_memory_mb ?? undefined,
+        inference_ms: modelForm.value.inference_ms ?? undefined,
+        description: modelForm.value.description || undefined,
+        is_enabled: true
+      })
       message.success('模型上架成功')
     }
-    
+
     showModelModal.value = false
-  } catch (e) {
-    // Validation failed
+    await loadModels()
+  } catch (e: any) {
+    if (e?.message) message.error(e.message)
   } finally {
     modelSubmitting.value = false
   }
 }
 
-function handleMoreAction(key: string, model: Model) {
+async function handleMoreAction(key: string, model: Model) {
   switch (key) {
     case 'toggle':
-      model.is_enabled = !model.is_enabled
-      message.success(model.is_enabled ? '模型已启用' : '模型已停用')
+      try {
+        await updateModel(model.id, { is_enabled: !model.is_enabled })
+        model.is_enabled = !model.is_enabled
+        message.success(model.is_enabled ? '模型已启用' : '模型已停用')
+      } catch (e: any) {
+        message.error(e?.response?.data?.detail || e?.message || '操作失败')
+      }
       break
     case 'detail':
       openAlgorithmConfig(model)
       break
     case 'delete':
-      const idx = models.value.findIndex(m => m.id === model.id)
-      if (idx !== -1) {
-        models.value.splice(idx, 1)
+      try {
+        await deleteModel(model.id)
         message.success('模型已删除')
+        await loadModels()
+      } catch (e: any) {
+        message.error(e?.response?.data?.detail || e?.message || '删除失败')
       }
       break
   }
 }
 
-// Algorithm operations
-function openAlgorithmConfig(model: Model) {
+// Algorithm operations：从后台读取该模型的算法列表
+async function openAlgorithmConfig(model: Model) {
   selectedModel.value = model
-  // Load algorithms for this model (mock data)
-  const mockAlgorithms: Algorithm[] = [
-    {
-      id: '20000000000000000000000000000001',
-      name: '人员入侵检测',
-      code: 'person_intrusion',
-      model_id: model.id,
-      target_classes: ['person'],
-      default_confidence: 0.5,
-      alert_config: {
-        trigger_type: 'instant' as const,
-        duration_seconds: 0,
-        count_threshold: 0,
-        cooldown_seconds: 30,
-        alert_level: 'danger' as const
-      },
-      is_enabled: true
-    },
-    {
-      id: '20000000000000000000000000000002',
-      name: '安全帽检测',
-      code: 'helmet_detection',
-      model_id: model.id,
-      target_classes: ['no_helmet'],
-      default_confidence: 0.6,
-      alert_config: {
-        trigger_type: 'duration' as const,
-        duration_seconds: 3,
-        count_threshold: 0,
-        cooldown_seconds: 60,
-        alert_level: 'danger' as const
-      },
-      is_enabled: true
-    },
-    {
-      id: '20000000000000000000000000000003',
-      name: '反光衣检测',
-      code: 'vest_detection',
-      model_id: model.id,
-      target_classes: ['no_vest'],
-      default_confidence: 0.6,
-      alert_config: {
-        trigger_type: 'instant' as const,
-        duration_seconds: 0,
-        count_threshold: 0,
-        cooldown_seconds: 60,
-        alert_level: 'warning' as const
-      },
-      is_enabled: true
-    }
-  ]
-  algorithms.value = mockAlgorithms.filter(algo => algo.model_id === model.id)
-  
+  algorithms.value = []
   showAlgorithmModal.value = true
+  await loadAlgorithmsForModel(model)
 }
 
 function openAlgorithmForm(algo?: Algorithm) {
@@ -848,76 +837,69 @@ function openAlgorithmForm(algo?: Algorithm) {
 async function handleAlgorithmSubmit() {
   try {
     await algorithmFormRef.value?.validate()
+    if (!selectedModel.value) return
     algorithmSubmitting.value = true
-    
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 500))
-    
+
     if (editingAlgorithm.value) {
-      // Update existing
-      const idx = algorithms.value.findIndex(a => a.id === editingAlgorithm.value!.id)
-      if (idx !== -1) {
-        algorithms.value[idx] = {
-          ...algorithms.value[idx],
-          ...algorithmForm.value
-        }
-      }
-      message.success('检测能力更新成功')
-    } else {
-      // Create new
-      const newAlgo: Algorithm = {
-        id: Date.now().toString().padStart(32, '0'),
+      await updateAlgorithm(editingAlgorithm.value.id, {
         name: algorithmForm.value.name,
-        code: algorithmForm.value.code,
-        model_id: selectedModel.value!.id,
         target_classes: algorithmForm.value.target_classes,
         default_confidence: algorithmForm.value.default_confidence,
         alert_config: algorithmForm.value.alert_config,
-        description: algorithmForm.value.description,
+        description: algorithmForm.value.description || undefined
+      })
+      message.success('检测能力更新成功')
+    } else {
+      await createAlgorithm({
+        name: algorithmForm.value.name,
+        code: algorithmForm.value.code,
+        model_id: selectedModel.value.id,
+        target_classes: algorithmForm.value.target_classes,
+        default_confidence: algorithmForm.value.default_confidence,
+        alert_config: algorithmForm.value.alert_config,
+        description: algorithmForm.value.description || undefined,
         is_enabled: true
-      }
-      algorithms.value.push(newAlgo)
-      
-      // Update model's algorithm count
-      const modelIdx = models.value.findIndex(m => m.id === selectedModel.value!.id)
-      if (modelIdx !== -1) {
-        models.value[modelIdx].algorithm_count++
-      }
-      
+      })
       message.success('检测能力添加成功')
     }
-    
+
+    await loadAlgorithmsForModel(selectedModel.value)
+    await loadModels()
     showAlgorithmFormModal.value = false
-  } catch (e) {
-    // Validation failed
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || e?.message || (editingAlgorithm.value ? '更新失败' : '添加失败'))
   } finally {
     algorithmSubmitting.value = false
   }
 }
 
-function toggleAlgorithm(algo: Algorithm) {
-  algo.is_enabled = !algo.is_enabled
-  message.success(algo.is_enabled ? '检测能力已启用' : '检测能力已停用')
+async function toggleAlgorithm(algo: Algorithm) {
+  if (!selectedModel.value) return
+  try {
+    await updateAlgorithm(algo.id, { is_enabled: !algo.is_enabled })
+    message.success(!algo.is_enabled ? '检测能力已启用' : '检测能力已停用')
+    await loadAlgorithmsForModel(selectedModel.value)
+    await loadModels()
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || e?.message || '操作失败')
+  }
 }
 
-function deleteAlgorithm(algo: Algorithm) {
-  const idx = algorithms.value.findIndex(a => a.id === algo.id)
-  if (idx !== -1) {
-    algorithms.value.splice(idx, 1)
-    
-    // Update model's algorithm count
-    const modelIdx = models.value.findIndex(m => m.id === selectedModel.value!.id)
-    if (modelIdx !== -1) {
-      models.value[modelIdx].algorithm_count = Math.max(0, models.value[modelIdx].algorithm_count - 1)
-    }
-    
+async function deleteAlgorithm(algo: Algorithm) {
+  if (!selectedModel.value) return
+  try {
+    await apiDeleteAlgorithm(algo.id)
     message.success('检测能力已删除')
+    await loadAlgorithmsForModel(selectedModel.value)
+    await loadModels()
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || e?.message || '删除失败')
   }
 }
 
 // Init
 onMounted(() => {
-  // Load models from API
+  loadModels()
 })
 </script>
 
