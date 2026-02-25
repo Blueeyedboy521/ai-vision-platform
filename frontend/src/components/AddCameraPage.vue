@@ -110,6 +110,15 @@
                 alt="Preview"
                 class="preview__image"
               />
+              <div
+                v-if="props.cameraId && previewImage"
+                class="preview__play-overlay"
+                @click.stop="playLive"
+              >
+                <span class="preview__play-text">
+                  {{ livePlaying ? '停止' : '播放' }}
+                </span>
+              </div>
               <div v-else class="preview__placeholder">
                 <n-icon :size="48" class="preview__placeholder-icon">
                   <VideocamOffOutline />
@@ -341,7 +350,7 @@ import {
   TimeOutline
 } from '@vicons/ionicons5'
 import DrawRegionModal from './DrawRegionModal.vue'
-import { getCamera, probeStream, snapshotCamera } from '@/api/camera'
+import { getCamera, probeStream, snapshotCamera, getCameraPlayUrls, cameraLiveHeartbeat, startCamera, stopCamera } from '@/api/camera'
 import {
   getCameraAlgorithmConfigs,
   addCameraAlgorithmConfig,
@@ -397,6 +406,8 @@ const testingConnection = ref(false)
 const streamInfo = ref<{ width: number; height: number; fps: number | null; resolution: string | null } | null>(null)
 const previewImage = ref('/camera-warehouse-01.jpg')
 const snapshots = ref<string[]>([])
+const livePlaying = ref(false)
+let liveHeartbeatTimer: number | null = null
 
 // 已配置算法（编辑时从后端加载）
 const cameraAlgorithmConfigs = ref<CameraAlgorithmConfig[]>([])
@@ -506,7 +517,11 @@ async function captureSnapshot() {
       const url = data?.snapshot_url
       if (url) {
         const base = import.meta.env.VITE_API_BASE_URL || ''
-        previewImage.value = base + url
+        if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
+          previewImage.value = url
+        } else {
+          previewImage.value = base + url
+        }
         snapshots.value = [previewImage.value]
         message.success('抓拍已保存，列表将显示为缩略图')
       }
@@ -517,6 +532,47 @@ async function captureSnapshot() {
     if (snapshots.value.length < 4) {
       snapshots.value.push(previewImage.value || '/camera-lobby-01.jpg')
     }
+  }
+}
+
+async function playLive() {
+  if (!props.cameraId) return
+  try {
+    if (livePlaying.value) {
+      await stopCamera(props.cameraId)
+      livePlaying.value = false
+      if (liveHeartbeatTimer !== null) {
+        window.clearInterval(liveHeartbeatTimer)
+        liveHeartbeatTimer = null
+      }
+      message.success('已停止直播')
+      return
+    }
+
+    // 启动摄像头 Pipeline
+    await startCamera(props.cameraId)
+    const res = await getCameraPlayUrls(props.cameraId)
+    const data = (res.data as any)?.data ?? res.data
+    const flvUrl = (data as any)?.flv_url || (data as any)?.http_flv
+    if (!flvUrl) {
+      message.error('未获取到播放地址')
+      return
+    }
+    window.open(flvUrl, '_blank')
+    livePlaying.value = true
+
+    // 启动心跳
+    if (liveHeartbeatTimer !== null) {
+      window.clearInterval(liveHeartbeatTimer)
+    }
+    liveHeartbeatTimer = window.setInterval(() => {
+      if (!props.cameraId) return
+      cameraLiveHeartbeat(props.cameraId).catch(() => {
+        // 心跳失败暂时忽略
+      })
+    }, 60000)
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || e?.message || '启动播放失败')
   }
 }
 
@@ -605,7 +661,12 @@ async function loadCameraDetail(id: string) {
     }
     if (c.snapshot_url) {
       const base = import.meta.env.VITE_API_BASE_URL || ''
-      previewImage.value = base + c.snapshot_url
+      const raw = c.snapshot_url as string
+      if (raw.startsWith('http://') || raw.startsWith('https://')) {
+        previewImage.value = raw
+      } else {
+        previewImage.value = base + raw
+      }
     }
     if (c.fps != null || c.resolution) {
       streamInfo.value = {

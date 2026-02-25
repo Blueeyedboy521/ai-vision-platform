@@ -11,6 +11,7 @@
 """
 from typing import Optional, BinaryIO, Union
 from io import BytesIO
+from datetime import timedelta
 
 import cv2
 import numpy as np
@@ -190,8 +191,17 @@ class MinIOStorage(StorageInterface):
 
     def get_url(self, path: str) -> str:
         """
-        获取对象的访问 URL（直连 MinIO HTTP 地址）
+        获取对象的访问 URL，使用 MinIO 预签名地址，避免直接暴露对象
         """
-        scheme = "https" if self.secure else "http"
-        return f"{scheme}://{self.endpoint}/{self.bucket}/{path}"
+        try:
+            return self.client.presigned_get_object(
+                self.bucket,
+                path,
+                expires=timedelta(hours=1)
+            )
+        except S3Error as e:
+            logger.error(f"生成 MinIO 预签名 URL 失败: {path}, 错误: {e}")
+            # 回退到直连地址
+            scheme = "https" if self.secure else "http"
+            return f"{scheme}://{self.endpoint}/{self.bucket}/{path}"
 

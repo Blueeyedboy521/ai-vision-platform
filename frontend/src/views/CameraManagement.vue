@@ -135,8 +135,10 @@
               v-for="cam in paginatedCameras"
               :key="cam.id"
               :camera="cam"
+              :is-playing="livePlayingId === cam.id"
               class="camera-card--animated"
               @detail="handleDetail"
+              @play="handlePlayCamera"
             />
             <div v-if="searchedCameras.length === 0" class="camera-grid__empty">
               <n-empty description="暂无匹配的摄像头设备">
@@ -168,7 +170,12 @@
                 <div class="camera-table__col camera-table__col--name">
                   <div class="camera-table__name-cell">
                     <div class="camera-table__avatar">
-                      <img :src="cam.thumbnail" :alt="cam.name" />
+                      <div class="camera-table__thumb-wrapper">
+                        <img :src="cam.thumbnail" :alt="cam.name" />
+                        <div class="camera-table__thumb-play" @click.stop="handlePlayCamera(cam)">
+                          <n-icon :size="20"><VideocamOffOutline /></n-icon>
+                        </div>
+                      </div>
                     </div>
                     <div class="camera-table__name-info">
                       <span class="camera-table__name">{{ cam.name }}</span>
@@ -260,7 +267,7 @@ import CameraCard from '@/components/CameraCard.vue'
 import PointStatCard from '@/components/PointStatCard.vue'
 import AddCameraPage from '@/components/AddCameraPage.vue'
 import type { CameraInfo } from '@/components/CameraCard.vue'
-import { getCameraList, createCamera, updateCamera, type Camera } from '@/api/camera'
+import { getCameraList, createCamera, updateCamera, type Camera, getCameraPlayUrls, cameraLiveHeartbeat, startCamera, stopCamera } from '@/api/camera'
 
 const appStore = useAppStore()
 const message = useMessage()
@@ -291,12 +298,22 @@ const allCameras = ref<CameraInfo[]>([])
 // Area key to label mapping
 const areaKeyLabelMap = ref<Record<string, string>>({})
 
+// Live play state
+const livePlayingId = ref<string | null>(null)
+let liveHeartbeatTimer: number | null = null
+
 // 将后端摄像头数据转换为组件格式（缩略图优先使用最新抓拍）
 function convertCamera(camera: Camera): CameraInfo {
   const base = import.meta.env.VITE_API_BASE_URL || ''
-  const thumb = (camera as any).snapshot_url
-    ? (base + (camera as any).snapshot_url)
-    : '/camera-lobby-01.jpg'
+  const raw = (camera as any).snapshot_url as string | null | undefined
+  let thumb = '/camera-lobby-01.jpg'
+  if (raw) {
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      thumb = raw
+    } else {
+      thumb = base + raw
+    }
+  }
   return {
     id: camera.id,
     name: camera.name,
@@ -328,6 +345,42 @@ async function loadCameras() {
     message.error(error?.response?.data?.detail || error.message || '加载摄像头列表失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function handlePlayCamera(cam: CameraInfo) {
+  const id = cam.id
+  try {
+    if (livePlayingId.value === id) {
+      await stopCamera(id)
+      livePlayingId.value = null
+      if (liveHeartbeatTimer !== null) {
+        window.clearInterval(liveHeartbeatTimer)
+        liveHeartbeatTimer = null
+      }
+      message.success('已停止直播')
+      return
+    }
+
+    await startCamera(id)
+    const res = await getCameraPlayUrls(id)
+    const data = (res.data as any)?.data ?? res.data
+    const flvUrl = (data as any)?.flv_url || (data as any)?.http_flv
+    if (!flvUrl) {
+      message.error('未获取到播放地址')
+      return
+    }
+    window.open(flvUrl, '_blank')
+    livePlayingId.value = id
+
+    if (liveHeartbeatTimer !== null) {
+      window.clearInterval(liveHeartbeatTimer)
+    }
+    liveHeartbeatTimer = window.setInterval(() => {
+      cameraLiveHeartbeat(id).catch(() => {})
+    }, 60000)
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || e?.message || '播放失败')
   }
 }
 

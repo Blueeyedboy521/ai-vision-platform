@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import settings
 from app.core.database import get_db
+from app.core.redis import get_redis
 from app.api.deps import get_current_user
 from app.models import User, Camera, Area, CameraAlgorithm
 from app.models.base import generate_uuid
@@ -32,6 +33,8 @@ from app.services.stream_probe import probe_stream
 from app.services.snapshot import save_snapshot
 from common.media import get_stream_manager
 from common.logging import logger
+from common.storage import get_storage
+from common.redis import RedisKeys
 
 
 class ProbeStreamRequest(BaseModel):
@@ -106,8 +109,14 @@ async def get_cameras(
             .where(CameraAlgorithm.camera_id == camera.id)
         )
         algo_count = algo_count_result.scalar() or 0
-        
-        snapshot_url = f"/static/{camera.last_snapshot_path}" if getattr(camera, "last_snapshot_path", None) else None
+
+        snapshot_url = None
+        if getattr(camera, "last_snapshot_path", None):
+            storage = get_storage()
+            try:
+                snapshot_url = storage.get_url(camera.last_snapshot_path)
+            except Exception as e:
+                logger.error(f"构建摄像头快照 URL 失败: {e}")
         data.append({
             "id": camera.id,
             "name": camera.name,
@@ -190,8 +199,14 @@ async def get_camera(
         .where(CameraAlgorithm.camera_id == camera.id)
     )
     algo_count = algo_count_result.scalar() or 0
-    
-    snapshot_url = f"/static/{camera.last_snapshot_path}" if getattr(camera, "last_snapshot_path", None) else None
+
+    snapshot_url = None
+    if getattr(camera, "last_snapshot_path", None):
+        storage = get_storage()
+        try:
+            snapshot_url = storage.get_url(camera.last_snapshot_path)
+        except Exception as e:
+            logger.error(f"构建摄像头快照 URL 失败: {e}")
     return success_response({
         "id": camera.id,
         "name": camera.name,
@@ -397,7 +412,7 @@ async def start_camera(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="摄像头不存在"
         )
-    
+
     # 发布启动命令
     config_publisher = get_config_publisher()
     await config_publisher.publish_camera_start(camera_id)
@@ -426,7 +441,7 @@ async def stop_camera(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="摄像头不存在"
         )
-    
+
     # 发布停止命令
     config_publisher = get_config_publisher()
     await config_publisher.publish_camera_stop(camera_id)
@@ -434,6 +449,23 @@ async def stop_camera(
     logger.info(f"摄像头停止命令已发送: {camera_id}")
     
     return success_response(None, "停止命令已发送")
+
+
+@router.post("/{camera_id}/live-heartbeat", summary="摄像头直播心跳")
+async def camera_live_heartbeat(
+    camera_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    前端播放摄像头直播流时每 60 秒调用一次，用于保活。
+    后端仅记录心跳时间，后续可由后台任务检测超时并通知 Engine 停止推流/管道。
+    """
+    redis = get_redis()
+    import time
+    ts = int(time.time())
+    key = RedisKeys.camera_live_heartbeat(camera_id)
+    await redis.client.set(key, str(ts))
+    return success_response({"camera_id": camera_id, "timestamp": ts}, "心跳已更新")
 
 
 @router.get("/{camera_id}/play-url", summary="获取播放地址")
@@ -489,21 +521,22 @@ async def camera_snapshot(
             detail="摄像头不存在"
         )
     save_dir = Path(settings.LOCAL_STORAGE_PATH) / "snapshots"
-    ok, relative_path = save_snapshot(
+    ok, storage_key = save_snapshot(
         camera_id,
         camera.rtsp_url,
         username=camera.rtsp_username,
         password=camera.rtsp_password,
         save_dir=save_dir,
     )
-    if not ok or not relative_path:
+    if not ok or not storage_key:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="抓拍失败，请检查 RTSP 是否可达"
         )
-    camera.last_snapshot_path = relative_path
+    camera.last_snapshot_path = storage_key
     camera.updated_by = current_user.id
     await db.commit()
-    snapshot_url = f"/static/{relative_path}"
-    logger.info(f"摄像头抓拍已保存: {camera_id} -> {relative_path}")
+    storage = get_storage()
+    snapshot_url = storage.get_url(storage_key)
+    logger.info(f"摄像头抓拍已保存: {camera_id} -> {storage_key}")
     return success_response({"snapshot_url": snapshot_url}, "抓拍成功")

@@ -53,8 +53,6 @@ def probe_stream_opencv(
     cap = None
     try:
         cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MS, timeout_sec * 1000)
-        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MS, timeout_sec * 1000)
         
         if not cap.isOpened():
             result["error"] = "无法打开流，请检查地址或网络"

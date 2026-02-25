@@ -155,3 +155,26 @@ class StorageInterface(ABC):
         date_path = dt.strftime("%Y/%m/%d")
         filename = f"{camera_id}_{int(timestamp * 1000)}.{extension}"
         return f"videos/{date_path}/{filename}"
+
+    def generate_snapshot_path(
+        self,
+        camera_id: str,
+        timestamp: float,
+        extension: str = "jpg"
+    ) -> str:
+        """
+        生成摄像头快照存储路径
+        
+        Args:
+            camera_id: 摄像头ID
+            timestamp: 时间戳
+            extension: 文件扩展名
+            
+        Returns:
+            存储路径
+        """
+        from datetime import datetime
+        dt = datetime.fromtimestamp(timestamp)
+        date_path = dt.strftime("%Y/%m/%d")
+        filename = f"{camera_id}_{int(timestamp * 1000)}.{extension}"
+        return f"snapshots/{date_path}/{filename}"

@@ -142,6 +142,13 @@ export function stopCamera(id: string) {
 }
 
 /**
+ * 摄像头直播心跳（播放时每 60 秒调用一次）
+ */
+export function cameraLiveHeartbeat(id: string) {
+  return request.post(`/cameras/${id}/live-heartbeat`)
+}
+
+/**
  * 获取播放地址
  */
 export function getCameraPlayUrls(id: string) {

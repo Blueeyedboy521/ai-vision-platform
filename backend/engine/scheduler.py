@@ -231,6 +231,26 @@ class Scheduler:
                     logger.info(f"Engine 读取摄像头算法配置: {cfg}")
             except Exception as e:
                 logger.error(f"Engine 读取摄像头算法配置失败: {e}")
+        
+        # 摄像头启动/停止：控制 Pipeline
+        if action == "camera_start":
+            camera_id = data.get("camera_id")
+            if not camera_id:
+                return
+            logger.info(f"Engine 收到摄像头启动命令: {camera_id}")
+            self._start_pipeline(camera_id)
+        
+        if action == "camera_stop":
+            camera_id = data.get("camera_id")
+            if not camera_id:
+                return
+            logger.info(f"Engine 收到摄像头停止命令: {camera_id}")
+            process = self.pipeline_processes.get(camera_id)
+            if process and process.is_alive():
+                logger.info(f"停止 Pipeline 进程: {camera_id}")
+                process.terminate()
+                process.join(timeout=5)
+            self.pipeline_processes.pop(camera_id, None)
     
     def health_check(self):
         """健康检查"""

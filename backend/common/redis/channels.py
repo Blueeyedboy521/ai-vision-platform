@@ -116,3 +116,11 @@ class RedisKeys:
     def alarm_dedup(camera_id: str, algorithm_id: str) -> str:
         """获取告警去重的 Key"""
         return f"{RedisKeys.ALARM_DEDUP_PREFIX}{camera_id}:{algorithm_id}"
+
+    # ==================== 摄像头直播心跳 ====================
+    CAMERA_LIVE_HEARTBEAT_PREFIX = "camera:live:heartbeat:"
+
+    @staticmethod
+    def camera_live_heartbeat(camera_id: str) -> str:
+        """获取摄像头直播心跳的 Key"""
+        return f"{RedisKeys.CAMERA_LIVE_HEARTBEAT_PREFIX}{camera_id}"

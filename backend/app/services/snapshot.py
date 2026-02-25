@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from common.logging import logger
+from common.storage import get_storage
 
 
 def capture_frame(
@@ -34,11 +35,19 @@ def capture_frame(
     cap = None
     try:
         cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MS, timeout_sec * 1000)
         if not cap.isOpened():
             return None
-        ret, frame = cap.read()
-        if not ret or frame is None:
+        frame = None
+        # 读取一段时间的帧，取稍后的第 50 帧，避免第一帧是空黑画面
+        for i in range(60):
+            ret, f = cap.read()
+            if not ret or f is None:
+                continue
+            if i < 49:
+                continue
+            frame = f
+            break
+        if frame is None:
             return None
         _, jpeg = cv2.imencode(".jpg", frame)
         return jpeg.tobytes()
@@ -56,27 +65,23 @@ def capture_frame(
 def save_snapshot(
     camera_id: str,
     rtsp_url: str,
-    save_dir: Path,
+    save_dir: Path,  # 保留参数以兼容旧调用，不再直接使用磁盘路径
     username: Optional[str] = None,
     password: Optional[str] = None,
 ) -> Tuple[bool, Optional[str]]:
     """
-    抓拍并保存到文件，返回 (成功, 相对路径或 None)
-    
-    保存路径: save_dir / f"{camera_id}.jpg"
-    相对路径返回: snapshots/{camera_id}.jpg
+    抓拍并保存到存储（本地或 MinIO），返回 (成功, 存储 key 或 None)
     """
-    save_dir.mkdir(parents=True, exist_ok=True)
     jpeg = capture_frame(rtsp_url, username, password)
     if not jpeg:
         return False, None
-    
-    filename = f"{camera_id}.jpg"
-    filepath = save_dir / filename
+
+    storage = get_storage()
+    import time
+    key = storage.generate_snapshot_path(camera_id, time.time(), extension="jpg")
     try:
-        filepath.write_bytes(jpeg)
-        relative = f"snapshots/{filename}"
-        return True, relative
+        storage.save_file(jpeg, key, content_type="image/jpeg")
+        return True, key
     except Exception as e:
         logger.exception("保存抓拍失败: %s", e)
         return False, None

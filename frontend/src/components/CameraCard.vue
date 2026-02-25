@@ -15,8 +15,11 @@
         {{ camera.online ? 'ONLINE' : 'OFFLINE' }}
       </span>
       <!-- Play Icon on Hover -->
-      <div class="camera-card__play">
-        <n-icon :size="32"><PlayCircleOutline /></n-icon>
+      <div class="camera-card__play" @click.stop="emit('play', camera)">
+        <n-icon :size="32">
+          <PlayCircleOutline v-if="!props.isPlaying" />
+          <PlayCircleOutline v-else />
+        </n-icon>
       </div>
     </div>
     
@@ -75,12 +78,14 @@ export interface CameraInfo {
   algorithmEnabled: boolean
 }
 
-defineProps<{
+const props = defineProps<{
   camera: CameraInfo
+  isPlaying?: boolean
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'detail', camera: CameraInfo): void
+  (e: 'play', camera: CameraInfo): void
 }>()
 </script>
 

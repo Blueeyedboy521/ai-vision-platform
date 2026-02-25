@@ -241,6 +241,8 @@ backend/
     - `camera_id`, `algorithm_id`, `model_id`, `confidence`（生效置信度）, `alert_config`（生效告警配置）, `regions`, `is_enabled`。
 - **告警去重**
   - `alarm:dedup:{camera_id}:{algorithm_id}`：按摄像头 + 算法维度的去重 Key。
+- **摄像头直播心跳**
+  - `camera:live:heartbeat:{camera_id}`：前端播放直播流时每 60 秒上报一次心跳，便于后台任务判断超时并通知 Engine 关闭无观众的推流或 Pipeline。
 
 整体约定：
 

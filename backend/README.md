@@ -191,3 +191,13 @@ ruff check app/ --fix
 ```bash
 pytest
 ```
+
+### 摄像头联调小贴士
+
+- **连通性测试**：前端“流通性测试”按钮会调用 `POST /api/v1/cameras/probe-stream`，后端通过 OpenCV/ffprobe 获取 RTSP 流的宽高、帧率并回填表单。
+- **抓拍快照**：`POST /api/v1/cameras/{id}/snapshot` 使用第 50 帧避免黑屏，通过统一存储接口写入本地或 MinIO，并将存储 key 写入 `camera.last_snapshot_path`。
+- **缩略图展示**：摄像头列表与编辑页读取 `snapshot_url`（由存储层生成的 URL），无快照时使用默认占位图。
+- **实时预览与心跳**：
+  - `POST /api/v1/cameras/{id}/start` / `/stop`：通过 Redis 通知 Engine 启动/停止该摄像头的 Pipeline。
+  - `GET /api/v1/cameras/{id}/play-url`：返回 ZLMediaKit 的播放地址（HTTP-FLV 等），前端用 flv.js 播放。
+  - `POST /api/v1/cameras/{id}/live-heartbeat`：前端播放时每 60 秒调用一次，后端记录到 Redis，后续可用于自动关闭长期无观众的推流。
