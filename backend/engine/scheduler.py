@@ -20,6 +20,8 @@ from loguru import logger
 from engine.inference.service import InferenceService
 from engine.pipeline.pipeline import Pipeline
 from engine.queue.memory_queue import MemoryQueue
+from common.redis import get_redis_client, RedisChannels, RedisKeys
+import json
 
 
 @dataclass
@@ -74,6 +76,10 @@ class Scheduler:
         self.start_time: Optional[float] = None
         self.processed_frames = 0
         self.generated_alarms = 0
+        
+        # 配置监听线程（通过 Redis 接收 FastAPI 的配置变更）
+        self._config_thread: Optional[threading.Thread] = None
+        self._config_running: bool = False
     
     def start(self):
         """启动调度器"""
@@ -93,6 +99,9 @@ class Scheduler:
             
             # 4. 启动所有 Pipeline
             self._start_pipelines()
+            
+            # 5. 启动 Redis 配置监听（Engine 订阅 engine:config_update）
+            self._start_config_listener()
             
             logger.info(f"引擎启动完成: {len(self.cameras)} 路摄像头, "
                        f"{len(self.models)} 个模型")
@@ -121,7 +130,107 @@ class Scheduler:
             self.inference_process.terminate()
             self.inference_process.join(timeout=10)
         
+        # 停止配置监听线程
+        self._stop_config_listener()
+        
         logger.info("调度器已停止")
+
+    def _start_config_listener(self):
+        """启动配置监听线程，从 Redis 订阅配置变更事件"""
+        if self._config_thread and self._config_thread.is_alive():
+            return
+        self._config_running = True
+        
+        def _worker():
+            client = get_redis_client()
+            try:
+                client.connect_sync()
+                pubsub = client.sync_client.pubsub()
+                pubsub.subscribe(RedisChannels.ENGINE_CONFIG_UPDATE)
+                logger.info(f"Engine 已订阅 Redis 频道: {RedisChannels.ENGINE_CONFIG_UPDATE}" )
+                
+                while self._config_running:
+                    message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    if not message:
+                        time.sleep(0.1)
+                        continue
+                    try:
+                        data = json.loads(message.get("data") or "{}")
+                        action = data.get("action")
+                        payload = data.get("data") or {}
+                        self._handle_config_event(action, payload)
+                    except Exception as e:
+                        logger.error(f"解析配置更新消息失败: {e}")
+                        time.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Engine 配置监听线程启动失败: {e}")
+        
+        self._config_thread = threading.Thread(target=_worker, daemon=True)
+        self._config_thread.start()
+
+    def _stop_config_listener(self):
+        """停止配置监听线程"""
+        self._config_running = False
+        if self._config_thread and self._config_thread.is_alive():
+            self._config_thread.join(timeout=2)
+
+    def _handle_config_event(self, action: Optional[str], data: dict):
+        """
+        处理来自 FastAPI 的配置事件。
+        当前版本主要负责从 Redis 读取最新配置并打印日志，后续可在此处热更新 self.cameras/self.models。
+        """
+        if not action:
+            return
+        
+        logger.info(f"Engine 收到配置事件: {action} - {data}")
+        
+        # 模型相关：从 Redis 读取最新模型配置
+        if action in ("model_add", "model_update"):
+            model_id = data.get("model_id")
+            if not model_id:
+                return
+            try:
+                client = get_redis_client()
+                client.connect_sync()
+                raw = client.sync_client.get(RedisKeys.model_config(model_id))
+                if raw:
+                    cfg = json.loads(raw)
+                    logger.info(f"Engine 读取模型配置: {cfg}")
+            except Exception as e:
+                logger.error(f"Engine 读取模型配置失败: {e}")
+        
+        # 算法相关：从 Redis 读取最新算法配置
+        if action in ("algorithm_add", "algorithm_update"):
+            algorithm_id = data.get("algorithm_id")
+            if not algorithm_id:
+                return
+            try:
+                client = get_redis_client()
+                client.connect_sync()
+                raw = client.sync_client.get(RedisKeys.algorithm_config(algorithm_id))
+                if raw:
+                    cfg = json.loads(raw)
+                    logger.info(f"Engine 读取算法配置: {cfg}")
+            except Exception as e:
+                logger.error(f"Engine 读取算法配置失败: {e}")
+        
+        # 摄像头-算法绑定：从 Redis 读取最新绑定配置
+        if action in ("camera_algorithm_add", "camera_algorithm_update"):
+            camera_id = data.get("camera_id")
+            algorithm_id = data.get("algorithm_id")
+            if not camera_id or not algorithm_id:
+                return
+            try:
+                client = get_redis_client()
+                client.connect_sync()
+                raw = client.sync_client.get(
+                    RedisKeys.camera_algorithm_config(camera_id, algorithm_id)
+                )
+                if raw:
+                    cfg = json.loads(raw)
+                    logger.info(f"Engine 读取摄像头算法配置: {cfg}")
+            except Exception as e:
+                logger.error(f"Engine 读取摄像头算法配置失败: {e}")
     
     def health_check(self):
         """健康检查"""
@@ -144,41 +253,127 @@ class Scheduler:
                         f"生成告警: {self.generated_alarms}")
     
     def _load_config(self):
-        """从数据库加载配置"""
-        logger.info("加载配置...")
+        """从 Redis 加载配置（FastAPI 预先写入的快照）"""
+        logger.info("从 Redis 加载引擎配置...")
         
-        # TODO: 从数据库读取实际配置
-        # 这里使用示例配置
+        self.cameras = {}
+        self.models = {}
         
-        # 示例摄像头配置
-        self.cameras = {
-            "camera_001": CameraConfig(
-                id="camera_001",
-                name="测试摄像头1",
-                rtsp_url="rtsp://localhost:554/live/test1",
-                fps=25,
-                skip_frames=3,
-                algorithms=[
-                    {"id": "alg_001", "model_id": "model_001", "config": {}}
-                ]
-            )
-        }
+        client = get_redis_client()
+        try:
+            client.connect_sync()
+            r = client.sync_client
+        except Exception as e:
+            logger.error(f"连接 Redis 失败，无法加载配置: {e}")
+            return
         
-        # 示例模型配置
-        self.models = {
-            "model_001": ModelConfig(
-                id="model_001",
-                name="YOLOv8-安全帽检测",
-                path="models/yolov8_safety.pt",
-                model_type="yolo",
-                input_size=(640, 640),
-                inference_time_ms=30.0,
-                gpu_memory_mb=500
-            )
-        }
+        # 1. 加载模型配置
+        try:
+            for key in r.scan_iter(f"{RedisKeys.MODEL_CONFIG_PREFIX}*"):
+                raw = r.get(key)
+                if not raw:
+                    continue
+                try:
+                    cfg = json.loads(raw)
+                except Exception:
+                    logger.error(f"解析模型配置失败: key={key}")
+                    continue
+                
+                if not cfg.get("is_enabled", True):
+                    continue
+                
+                model_id = cfg.get("id") or str(key).split(":")[-1]
+                self.models[model_id] = ModelConfig(
+                    id=model_id,
+                    name=cfg.get("name", model_id),
+                    path=cfg.get("model_path", ""),
+                    model_type=cfg.get("model_type", "yolo"),
+                    input_size=(
+                        int(cfg.get("input_width", 640)),
+                        int(cfg.get("input_height", 640)),
+                    ),
+                    inference_time_ms=float(cfg.get("inference_ms", 30.0)),
+                    gpu_memory_mb=int(cfg.get("gpu_memory_mb", 500)),
+                )
+        except Exception as e:
+            logger.error(f"从 Redis 加载模型配置失败: {e}")
         
-        logger.info(f"加载配置完成: {len(self.cameras)} 个摄像头, "
-                   f"{len(self.models)} 个模型")
+        # 2. 加载摄像头基础配置
+        try:
+            for key in r.scan_iter(f"{RedisKeys.CAMERA_CONFIG_PREFIX}*"):
+                raw = r.get(key)
+                if not raw:
+                    continue
+                try:
+                    cfg = json.loads(raw)
+                except Exception:
+                    logger.error(f"解析摄像头配置失败: key={key}")
+                    continue
+                
+                if not cfg.get("is_enabled", True):
+                    continue
+                
+                camera_id = cfg.get("id") or str(key).split(":")[-1]
+                self.cameras[camera_id] = CameraConfig(
+                    id=camera_id,
+                    name=cfg.get("name", camera_id),
+                    rtsp_url=cfg.get("rtsp_url", ""),
+                    fps=int(cfg.get("fps", 25)),
+                    skip_frames=int(cfg.get("skip_frames", 3)),
+                    algorithms=[],
+                )
+        except Exception as e:
+            logger.error(f"从 Redis 加载摄像头配置失败: {e}")
+        
+        # 3. 加载摄像头-算法绑定配置
+        try:
+            for key in r.scan_iter(f"{RedisKeys.CAMERA_ALGORITHM_CONFIG_PREFIX}*"):
+                raw = r.get(key)
+                if not raw:
+                    continue
+                try:
+                    cfg = json.loads(raw)
+                except Exception:
+                    logger.error(f"解析摄像头算法配置失败: key={key}")
+                    continue
+                
+                if not cfg.get("is_enabled", True):
+                    continue
+                
+                camera_id = cfg.get("camera_id") or str(key).split(":")[-2]
+                algorithm_id = cfg.get("algorithm_id") or str(key).split(":")[-1]
+                model_id = cfg.get("model_id")
+                if not camera_id or not model_id:
+                    continue
+                
+                # 如果摄像头基础配置还不存在，创建一个占位配置
+                if camera_id not in self.cameras:
+                    self.cameras[camera_id] = CameraConfig(
+                        id=camera_id,
+                        name=camera_id,
+                        rtsp_url="",
+                        fps=int(cfg.get("fps", 25)),
+                        skip_frames=int(cfg.get("skip_frames", 3)),
+                        algorithms=[],
+                    )
+                
+                algo_entry = {
+                    "id": algorithm_id,
+                    "model_id": model_id,
+                    "config": {
+                        "confidence": cfg.get("confidence"),
+                        "alert_config": cfg.get("alert_config"),
+                        "regions": cfg.get("regions") or [],
+                    },
+                }
+                self.cameras[camera_id].algorithms.append(algo_entry)
+        except Exception as e:
+            logger.error(f"从 Redis 加载摄像头算法绑定配置失败: {e}")
+        
+        logger.info(
+            f"从 Redis 加载配置完成: {len(self.cameras)} 个摄像头, "
+            f"{len(self.models)} 个模型"
+        )
     
     def _create_queues(self):
         """创建所有队列"""

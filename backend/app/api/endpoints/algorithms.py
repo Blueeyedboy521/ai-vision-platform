@@ -5,6 +5,7 @@
 提供算法 CRUD 和摄像头-算法配置接口
 """
 from typing import Optional
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select, func
@@ -12,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.redis import get_redis
 from app.api.deps import get_current_user, get_current_admin
 from app.models import User, Algorithm, Model, CameraAlgorithm, Camera
 from app.models.base import generate_uuid
@@ -25,6 +27,7 @@ from app.schemas.common import success_response, page_response
 from app.services.config_publisher import get_config_publisher
 from app.services.model_sync import sync_model_classes_from_algorithms
 from common.logging import logger
+from common.redis import RedisKeys
 
 
 router = APIRouter()
@@ -197,6 +200,28 @@ async def create_algorithm(
     
     await sync_model_classes_from_algorithms(db, algo.model_id)
     
+    # 写入算法配置到 Redis
+    try:
+        redis = get_redis()
+        await redis.client.set(
+            RedisKeys.algorithm_config(algo.id),
+            json.dumps(
+                {
+                    "id": algo.id,
+                    "code": algo.code,
+                    "name": algo.name,
+                    "model_id": algo.model_id,
+                    "target_classes": list(algo.target_classes or []),
+                    "default_confidence": algo.default_confidence,
+                    "alert_config": algo.alert_config,
+                    "is_enabled": algo.is_enabled,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    except Exception as e:
+        logger.error(f"写入算法配置到 Redis 失败: {e}")
+    
     config_publisher = get_config_publisher()
     await config_publisher.publish_algorithm_add({
         "algorithm_id": algo.id,
@@ -246,6 +271,28 @@ async def update_algorithm(
     
     await sync_model_classes_from_algorithms(db, algo.model_id)
     
+    # 更新 Redis 中的算法配置
+    try:
+        redis = get_redis()
+        await redis.client.set(
+            RedisKeys.algorithm_config(algo.id),
+            json.dumps(
+                {
+                    "id": algo.id,
+                    "code": algo.code,
+                    "name": algo.name,
+                    "model_id": algo.model_id,
+                    "target_classes": list(algo.target_classes or []),
+                    "default_confidence": algo.default_confidence,
+                    "alert_config": algo.alert_config,
+                    "is_enabled": algo.is_enabled,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    except Exception as e:
+        logger.error(f"更新算法配置到 Redis 失败: {e}")
+    
     config_publisher = get_config_publisher()
     await config_publisher.publish_algorithm_update({
         "algorithm_id": algo.id,
@@ -294,6 +341,13 @@ async def delete_algorithm(
     await db.commit()
     
     await sync_model_classes_from_algorithms(db, model_id)
+    
+    # 从 Redis 中删除算法配置
+    try:
+        redis = get_redis()
+        await redis.client.delete(RedisKeys.algorithm_config(algorithm_id))
+    except Exception as e:
+        logger.error(f"从 Redis 删除算法配置失败: {e}")
     
     config_publisher = get_config_publisher()
     await config_publisher.publish_algorithm_delete(algorithm_id)
@@ -397,6 +451,27 @@ async def create_camera_algorithm_config(
     db.add(config)
     await db.commit()
     
+    # 写入摄像头-算法配置到 Redis
+    try:
+        redis = get_redis()
+        await redis.client.set(
+            RedisKeys.camera_algorithm_config(camera_id, config_data.algorithm_id),
+            json.dumps(
+                {
+                    "camera_id": camera_id,
+                    "algorithm_id": config_data.algorithm_id,
+                    "model_id": config.model_id,
+                    "confidence": config.get_effective_confidence(),
+                    "alert_config": config.get_effective_alert_config(),
+                    "regions": config.regions,
+                    "is_enabled": config.is_enabled,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    except Exception as e:
+        logger.error(f"写入摄像头算法配置到 Redis 失败: {e}")
+    
     config_publisher = get_config_publisher()
     await config_publisher.publish_camera_algorithm_add(
         camera_id,
@@ -442,6 +517,13 @@ async def delete_camera_algorithm_config(
     
     await db.delete(config)
     await db.commit()
+    
+    # 从 Redis 中删除摄像头-算法配置
+    try:
+        redis = get_redis()
+        await redis.client.delete(RedisKeys.camera_algorithm_config(camera_id, algorithm_id))
+    except Exception as e:
+        logger.error(f"从 Redis 删除摄像头算法配置失败: {e}")
     
     config_publisher = get_config_publisher()
     await config_publisher.publish_camera_algorithm_delete(camera_id, algorithm_id)

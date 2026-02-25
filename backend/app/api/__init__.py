@@ -14,7 +14,8 @@ from .endpoints import (
     algorithms,
     alarms,
     system,
-    media_hooks
+    media_hooks,
+    files,
 )
 
 
@@ -62,6 +63,12 @@ api_router.include_router(
     system.router,
     prefix="/system",
     tags=["系统"]
+)
+
+api_router.include_router(
+    files.router,
+    prefix="/files",
+    tags=["文件"]
 )
 
 api_router.include_router(

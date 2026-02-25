@@ -22,6 +22,7 @@ class WebSocketHandler:
     
     def __init__(self):
         """初始化处理器"""
+        # 这个实例变量的类型，既可以是 RedisPubSub 类的实例，也可以是 None
         self._pubsub: Optional[RedisPubSub] = None
         self._running = False
     
@@ -35,6 +36,7 @@ class WebSocketHandler:
             return
         
         self._pubsub = RedisPubSub()
+        
         await self._pubsub.start()
         self._running = True
         
@@ -44,7 +46,7 @@ class WebSocketHandler:
             self._handle_detection_message
         )
         
-        # 订阅告警频道
+        # 订阅告警频道（精准匹配）
         await self._pubsub.subscribe(
             RedisChannels.ALARMS_REALTIME,
             self._handle_alarm_message

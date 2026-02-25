@@ -152,8 +152,9 @@
           <n-input-group>
             <n-input 
               v-model:value="modelForm.model_path" 
-              placeholder="模型文件路径，如: models/yolo_v8.pt"
+              placeholder="请选择或上传模型文件"
               style="flex: 1"
+              disabled
             />
             <n-upload
               :show-file-list="false"
@@ -168,7 +169,23 @@
                 上传
               </n-button>
             </n-upload>
+            <n-button
+              v-if="modelForm.model_path"
+              style="margin-left: 8px"
+              @click="downloadModelFile"
+            >
+              下载
+            </n-button>
           </n-input-group>
+        </n-form-item>
+        <n-form-item label="模型存储Key">
+          <n-input
+            v-model:value="modelForm.model_path"
+            disabled
+          />
+          <template #feedback>
+            <span class="form-tip">当前模型文件在存储中的完整 key（仅调试用）</span>
+          </template>
         </n-form-item>
         <n-form-item label="检测类别" path="classes">
           <n-dynamic-tags v-model:value="modelForm.classes" />
@@ -434,6 +451,7 @@ import {
   HardwareChipOutline,
   SpeedometerOutline
 } from '@vicons/ionicons5'
+import { request } from '@/api'
 
 // Types
 interface AlertConfig {
@@ -719,11 +737,38 @@ function openModelModal(model?: Model) {
   showModelModal.value = true
 }
 
-function handleFileUpload(options: any) {
+async function handleFileUpload(options: any) {
   const file = options.file?.file || options.file
-  if (file?.name) {
-    modelForm.value.model_path = `models/${file.name}`
-    message.info(`已选择文件: ${file.name}（提交时仅保存路径，实际文件需由管理员上传到服务器）`)
+  if (!file) return
+
+  try {
+    const formData = new FormData()
+    formData.append('file', file as File)
+    formData.append('category', 'model')
+
+    const res = await request.post<{ key: string; url: string }>(
+      '/files/temp',
+      formData,
+      {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      }
+    )
+
+    const data = res.data?.data
+    if (data?.key) {
+      modelForm.value.model_path = data.key
+      message.success(`模型文件已上传到临时存储，可在保存上架时转为正式文件`)
+    } else {
+      message.error('上传模型文件失败：返回数据为空')
+    }
+  } catch (e: any) {
+    console.error('上传模型文件失败:', e)
+    message.error(e?.response?.data?.detail || e?.message || '上传模型文件失败')
+  } finally {
+    // 告知 naive-ui 上传流程结束
+    if (typeof options.onFinish === 'function') {
+      options.onFinish()
+    }
   }
 }
 
@@ -767,6 +812,29 @@ async function handleModelSubmit() {
     if (e?.message) message.error(e.message)
   } finally {
     modelSubmitting.value = false
+  }
+}
+
+async function downloadModelFile() {
+  const key = modelForm.value.model_path
+  if (!key) return
+
+  try {
+    const res = await request.get<{ key: string; url: string }>('/files', {
+      params: { key }
+    })
+
+    const data = res.data?.data
+    if (!data?.url) {
+      message.error('未获取到文件地址')
+      return
+    }
+
+    // 直接打开存储层提供的 URL（MinIO 或 /static/ 路径）
+    window.open(data.url, '_blank')
+  } catch (e: any) {
+    console.error('下载模型文件失败:', e)
+    message.error(e?.response?.data?.detail || e?.message || '下载模型文件失败')
   }
 }
 

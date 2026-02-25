@@ -97,6 +97,14 @@ class Settings(BaseSettings):
     )
     
     # ==================== ZLMediaKit 流媒体配置 ====================
+    ZLM_HOST: str = Field(
+        default="localhost",
+        description="ZLMediaKit 主机地址"
+    )
+    ZLM_RTMP_PORT: int = Field(
+        default=1935,
+        description="ZLMediaKit 端口"
+    )
     ZLM_API_URL: str = Field(
         default="http://localhost:80",
         description="ZLMediaKit API 地址"

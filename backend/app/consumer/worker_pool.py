@@ -14,6 +14,8 @@ from common.logging import logger
 from config.settings import settings
 from common.redis.channels import RedisKeys
 
+from common.redis.client import get_redis_client
+
 
 class AlarmWorkerPool:
     """
@@ -43,10 +45,15 @@ class AlarmWorkerPool:
         self.running = True
         
         # 创建同步 Redis 客户端
-        self.redis_client = redis.from_url(
-            settings.REDIS_URL,
-            decode_responses=True
-        )
+        redis_wrapper = get_redis_client()
+        try:
+            redis_wrapper.connect_sync()
+        except Exception as e:
+            logger.error(f"告警线程池初始化 Redis 连接失败: {e}")
+            self.running = False
+            return
+        # 使用底层同步客户端，便于在线程中阻塞 blpop
+        self.redis_client = redis_wrapper.sync_client
         
         # 创建 Worker 线程
         for i in range(num_workers):

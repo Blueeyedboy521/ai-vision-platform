@@ -197,6 +197,159 @@ backend/
 
 ---
 
+## 三、Redis 使用与约定
+
+### 3.1 Pub/Sub 频道
+
+- **检测结果推送**
+  - `detections:{camera_id}`：Engine 推送单路摄像头实时检测框，FastAPI 订阅并转发到 WebSocket。
+- **告警推送**
+  - `alarms:realtime`：告警消费者发布实时告警，WebSocket 处理器订阅并推送给前端。
+- **配置更新（FastAPI → Engine）**
+  - `engine:config_update`：Engine 配置更新总线，消息结构：
+    - `action`: 配置动作类型（字符串）
+    - `data`: 具体内容（字典）
+    - `timestamp`: ISO 时间
+  - `action` 取值与 `ConfigAction` 枚举一致：
+    - 摄像头：`camera_add` / `camera_update` / `camera_delete` / `camera_start` / `camera_stop`
+    - 模型：`model_add` / `model_update` / `model_delete`
+    - 算法：`algorithm_add` / `algorithm_update` / `algorithm_delete`
+    - 摄像头-算法绑定：`camera_algorithm_add` / `camera_algorithm_update` / `camera_algorithm_delete`
+- **系统状态**
+  - `engine:heartbeat`：引擎心跳（预留）
+  - `pipeline:status:{camera_id}`：单路 Pipeline 状态（预留）
+
+### 3.2 Redis Key 设计
+
+统一由 `common.redis.RedisKeys` 管理，避免硬编码：
+
+- **告警队列**
+  - `alarm_queue`：Engine 写入告警消息，AlarmConsumer 从队列消费并入库 / 推送。
+- **Token 黑名单 / 用户缓存**
+  - `token:blacklist:{token_hash}`：JWT 黑名单。
+  - `user:cache:{user_id}`：用户信息缓存。
+- **摄像头配置（FastAPI → Engine）**
+  - `camera:config:{camera_id}`：摄像头基础配置，包含 RTSP 地址、帧率、启用状态等。
+- **模型配置（FastAPI → Engine）**
+  - `model:config:{model_id}`：单个模型配置快照，例如：
+    - `id`, `code`, `name`, `model_type`, `model_path`, `classes`, `is_enabled` 等。
+- **算法配置（FastAPI → Engine）**
+  - `algorithm:config:{algorithm_id}`：单个算法能力配置快照，例如：
+    - `id`, `code`, `name`, `model_id`, `target_classes`, `default_confidence`, `alert_config`, `is_enabled` 等。
+- **摄像头-算法绑定配置（FastAPI → Engine）**
+  - `camera:algorithm:config:{camera_id}:{algorithm_id}`：某摄像头与某算法的一条配置：
+    - `camera_id`, `algorithm_id`, `model_id`, `confidence`（生效置信度）, `alert_config`（生效告警配置）, `regions`, `is_enabled`。
+- **告警去重**
+  - `alarm:dedup:{camera_id}:{algorithm_id}`：按摄像头 + 算法维度的去重 Key。
+
+整体约定：
+
+- **DB 是主数据源**：所有摄像头、模型、算法与绑定配置均以 MySQL 为准。
+- **Redis 存快照 + 事件**：
+  - FastAPI 在增删改配置成功后，写/删对应 Redis Key。
+  - 同时通过 `engine:config_update` 发布一条事件，让 Engine 感知变更。
+- **Engine 仅依赖 Redis**：
+  - 启动时从各类 `config:*` Key 拉取快照。
+  - 运行过程中订阅 `engine:config_update`，根据事件类型到 Redis 读取最新配置并更新内存（当前版本先以日志为主，后续可在此基础上实现真正的热更新）。
+
+---
+
+## 四、存储设计（本地 / MinIO / S3）
+
+### 4.1 存储接口与实现
+
+- 抽象接口：`common.storage.StorageInterface`
+  - `save_file` / `save_image` / `get_file` / `delete_file` / `exists` / `get_url`
+  - `generate_alarm_path` / `generate_video_path` 等辅助方法。
+- 实现：
+  - `LocalStorage`：本地磁盘目录（用于开发环境）。
+  - `MinIOStorage`：基于 MinIO 的 S3 协议实现。
+- 工厂方法：`common.storage.get_storage()` 根据配置返回对应实现。
+
+### 4.2 目录规划（正式文件）
+
+所有正式文件在存储根（本地目录或 MinIO bucket）下按业务划分子目录：
+
+- `models/`：AI 模型文件
+  - 例如：`models/{model_id}/{filename}.onnx`
+- `alarms/`：告警截图（由 `generate_alarm_path` 生成）
+  - 例如：`alarms/2026/02/11/camera_001_1739260800000.jpg`
+- `videos/`：告警视频片段（由 `generate_video_path` 生成）
+  - 例如：`videos/2026/02/11/camera_001_1739260800000.mp4`
+- `avatars/`：用户头像
+  - 例如：`avatars/{user_id}/avatar.jpg`
+- 其他业务文件可继续在根下扩展：`reports/`、`exports/` 等。
+
+### 4.3 临时文件与正式文件
+
+为避免前端上传但最终取消保存导致存储浪费，存储分为：
+
+- **临时文件**：
+  - 路径统一加前缀 `tmp/`：
+    - `tmp/{category}/{user_prefix}/{filename}`
+    - 示例：`tmp/model/user_123456/model.onnx`
+  - 前端在“选择文件但还没点击业务保存”时，调用统一的文件上传 API，将文件写入 `tmp/` 下。
+  - 可以通过定时任务或后台脚本清理过期的临时文件。
+- **正式文件**：
+  - 路径不包含 `tmp/`，直接放在业务目录，如：
+    - `models/{model_id}/{filename}`
+    - `avatars/{user_id}/avatar.jpg`
+  - 一旦对应业务对象（模型 / 用户等）在数据库中创建成功，即视为正式文件。
+
+### 4.4 文件 API 设计
+
+统一的文件 API（`app/api/endpoints/files.py`，前缀 `/api/v1/files`）：
+
+- **上传临时文件**
+  - `POST /files/temp`
+  - 入参：
+    - `file`: multipart 上传文件
+    - `category`: 业务分类（如 `model` / `avatar` / `snapshot` / `video` 等）
+  - 行为：
+    - 使用 `get_storage()` 选择当前存储实现。
+    - 将文件写入 `tmp/{category}/{user_prefix}/{filename}`。
+  - 返回：
+    - `key`: 存储 key（例如 `tmp/model/user_xxx/model.onnx`）
+    - `url`: 存储实现返回的访问 URL（MinIO 下为 HTTP 地址，本地存储为 `/static/...` 相对路径）。
+
+- **临时文件删除 / 下载**
+  - `DELETE /files/temp?key=...`：删除临时文件。
+  - `GET /files/temp?key=...`：直接下载临时文件内容（调试/预览用途）。
+
+- **正式文件下载 / 删除**
+  - `GET /files?key=...`：下载正式文件（`models/...`、`avatars/...` 等）。
+  - `DELETE /files?key=...`：删除正式文件（通常通过业务逻辑间接调用）。
+
+以上接口统一封装了 storage 访问逻辑，业务侧只关心 key，而不关心底层是本地还是 MinIO。
+
+### 4.5 模型文件上架流程
+
+模型上架时，前后端配合采用“**先临时，后转正**”的策略：
+
+1. **前端选择模型文件时**：
+   - 先调用 `POST /files/temp` 上传模型文件到 `tmp/model/...`。
+   - 表单中只暂存返回的 `key`（临时路径）和预览 URL，不直接写入模型表。
+2. **点击“保存上架”时**：
+   - 前端将临时文件 `key` 一并提交给模型创建接口 `/models`，写入 `ModelCreate.model_path` 字段。
+3. **后端创建模型（`create_model`）时**：
+   - 模型记录插入成功后，检查 `model.model_path` 是否以 `tmp/` 开头：
+     - 如果是，则视为临时路径：
+       - 调用 `storage.get_file(temp_key)` 读取临时文件。
+       - 生成正式路径：`models/{model_id}/{filename}`。
+       - 调用 `storage.save_file(..., final_key)` 写入正式存储。
+       - 更新 `model.model_path = final_key` 并提交事务。
+       - 删除临时文件：`storage.delete_file(temp_key)`。
+     - 如果不是（例如手工指定了已存在的 models/ 路径），则直接使用原值。
+4. **后续使用**：
+   - 前端通过模型详情中的 `model_path` 字段（或后端包装好的 URL）展示 / 下载模型文件。
+
+这样可以保证：
+
+- 上传中断或取消时，只占用 `tmp/` 空间，可由后台任务定期清理。
+- 模型一旦上架成功，文件转存到 `models/{model_id}/...`，路径与业务 ID 绑定，便于管理与备份。
+
+---
+
 ## 三、两大独立服务
 
 后端由**两个独立服务**组成，可以分别启动：
@@ -286,6 +439,8 @@ FastAPI 服务提供业务 API，相对简单：
 
 ```
 启动命令: python engine/main.py
+# 用这个
+python -m engine.main
 
 启动流程:
 ┌─────────────────────────────────────────────────────────────────────┐

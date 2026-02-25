@@ -76,13 +76,37 @@ class RedisKeys:
         """获取用户缓存的 Key"""
         return f"{RedisKeys.USER_CACHE_PREFIX}{user_id}"
     
-    # 摄像头配置缓存
+    # 摄像头配置缓存 (FastAPI -> Engine)
     CAMERA_CONFIG_PREFIX = "camera:config:"
     
     @staticmethod
     def camera_config(camera_id: str) -> str:
         """获取摄像头配置缓存的 Key"""
         return f"{RedisKeys.CAMERA_CONFIG_PREFIX}{camera_id}"
+    
+    # 模型配置缓存 (FastAPI -> Engine)
+    MODEL_CONFIG_PREFIX = "model:config:"
+    
+    @staticmethod
+    def model_config(model_id: str) -> str:
+        """获取模型配置缓存的 Key"""
+        return f"{RedisKeys.MODEL_CONFIG_PREFIX}{model_id}"
+    
+    # 算法配置缓存 (FastAPI -> Engine)
+    ALGORITHM_CONFIG_PREFIX = "algorithm:config:"
+    
+    @staticmethod
+    def algorithm_config(algorithm_id: str) -> str:
+        """获取算法配置缓存的 Key"""
+        return f"{RedisKeys.ALGORITHM_CONFIG_PREFIX}{algorithm_id}"
+    
+    # 摄像头-算法绑定配置缓存 (FastAPI -> Engine)
+    CAMERA_ALGORITHM_CONFIG_PREFIX = "camera:algorithm:config:"
+    
+    @staticmethod
+    def camera_algorithm_config(camera_id: str, algorithm_id: str) -> str:
+        """获取摄像头-算法配置缓存的 Key"""
+        return f"{RedisKeys.CAMERA_ALGORITHM_CONFIG_PREFIX}{camera_id}:{algorithm_id}"
     
     # ==================== 去重 ====================
     # 告警去重 Key 前缀

@@ -6,6 +6,7 @@ AI 视觉平台后端服务
 """
 import sys
 from pathlib import Path
+import traceback
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
@@ -26,6 +27,7 @@ from app.websocket.handlers import websocket_handler
 from app.consumer.worker_pool import alarm_worker_pool
 
 
+# 这段代码是 FastAPI（0.92.0+ 版本）中异步生命周期管理的标准写法，核心作用是：
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -64,7 +66,18 @@ async def lifespan(app: FastAPI):
         logger.info("启动告警消费者线程池...")
         alarm_worker_pool.start(num_workers=settings.ALARM_CONSUMER_WORKERS)
     except Exception as e:
-        logger.warning("Redis/WebSocket 启动失败，实时推送与告警不可用: %s", e)
+        # 提取完整堆栈信息（字符串格式）
+        exc_traceback = traceback.format_exc()
+        # 自定义打印内容
+        logger.warning(
+            "Redis/WebSocket 启动失败，实时推送与告警不可用:\n"
+            "异常类型: %s\n"
+            "错误描述: %s\n"
+            "完整堆栈:\n%s",
+            type(e).__name__,
+            str(e),
+            exc_traceback
+        )
         logger.warning("请确认 Redis 已启动（如 docker run -p 6379:6379 redis），然后重启本服务")
     
     logger.info("应用启动完成")
