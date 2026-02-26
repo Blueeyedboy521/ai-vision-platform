@@ -117,6 +117,9 @@ export interface CameraAlgorithmConfig {
   model_id: string
   confidence: number | null
   effective_confidence: number
+  alert_config?: Record<string, unknown> | null
+  effective_alert_config?: Record<string, unknown>
+  regions?: number[][][]
   is_enabled: boolean
 }
 
@@ -126,6 +129,8 @@ export interface AddCameraAlgorithmRequest {
   model_id: string
   confidence?: number
   is_enabled?: boolean
+  regions?: number[][][]
+  alert_config?: Record<string, unknown>
 }
 
 /** 获取某摄像头的算法配置列表 */
@@ -141,4 +146,18 @@ export function addCameraAlgorithmConfig(cameraId: string, data: AddCameraAlgori
 /** 删除摄像头某条算法配置 */
 export function deleteCameraAlgorithmConfig(cameraId: string, configId: string) {
   return request.delete(`/algorithms/camera/${cameraId}/configs/${configId}`)
+}
+
+/** 更新摄像头某条算法配置 */
+export function updateCameraAlgorithmConfig(
+  cameraId: string,
+  configId: string,
+  data: Partial<{
+    confidence: number
+    is_enabled: boolean
+    regions: number[][][]
+    alert_config: Record<string, unknown>
+  }>
+) {
+  return request.put(`/algorithms/camera/${cameraId}/configs/${configId}`, data)
 }

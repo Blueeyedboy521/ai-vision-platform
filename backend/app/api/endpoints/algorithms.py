@@ -488,6 +488,83 @@ async def create_camera_algorithm_config(
     return success_response({"id": config.id}, "添加成功")
 
 
+@router.put("/camera/{camera_id}/configs/{config_id}", summary="更新摄像头算法配置")
+async def update_camera_algorithm_config(
+    camera_id: str,
+    config_id: str,
+    config_data: CameraAlgorithmUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    更新摄像头算法配置（置信度 / 区域 / 启用状态等）
+    """
+    result = await db.execute(
+        select(CameraAlgorithm)
+        .where(
+            CameraAlgorithm.id == config_id,
+            CameraAlgorithm.camera_id == camera_id
+        )
+    )
+    config = result.scalar_one_or_none()
+    
+    if config is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="配置不存在"
+        )
+    
+    update_data = config_data.model_dump(exclude_unset=True)
+    
+    for field, value in update_data.items():
+        if field == "regions":
+            config.regions = value
+        else:
+            setattr(config, field, value)
+    
+    config.updated_by = current_user.id
+    
+    await db.commit()
+    await db.refresh(config)
+    
+    # 更新 Redis 中的摄像头-算法配置
+    try:
+        redis = get_redis()
+        await redis.client.set(
+            RedisKeys.camera_algorithm_config(camera_id, config.algorithm_id),
+            json.dumps(
+                {
+                    "camera_id": camera_id,
+                    "algorithm_id": config.algorithm_id,
+                    "model_id": config.model_id,
+                    "confidence": config.get_effective_confidence(),
+                    "alert_config": config.get_effective_alert_config(),
+                    "regions": config.regions,
+                    "is_enabled": config.is_enabled,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    except Exception as e:
+        logger.error(f"更新摄像头算法配置到 Redis 失败: {e}")
+    
+    config_publisher = get_config_publisher()
+    await config_publisher.publish_camera_algorithm_update(
+        camera_id,
+        config.algorithm_id,
+        {
+            "confidence": config.get_effective_confidence(),
+            "regions": config.regions,
+            "alert_config": config.get_effective_alert_config(),
+            "is_enabled": config.is_enabled,
+        },
+    )
+    
+    logger.info(f"摄像头算法配置已更新: {camera_id} - {config.algorithm_id}")
+    
+    return success_response(None, "更新成功")
+
+
 @router.delete("/camera/{camera_id}/configs/{config_id}", summary="删除摄像头算法配置")
 async def delete_camera_algorithm_config(
     camera_id: str,

@@ -2,28 +2,73 @@
 """
 拉流线程
 
-从 RTSP 源读取视频帧，进行预处理并发送到推理队列
+从 RTSP 源读取视频帧，支持 OpenCV 或 FFmpeg 子进程（FFmpeg 更稳定，推荐）。
 """
+import subprocess
 import threading
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 from queue import Full
-import cv2
+
+import numpy as np
 from loguru import logger
+
+# 可选：OpenCV 仅作备用
+try:
+    import cv2
+    _CV2_AVAILABLE = True
+except ImportError:
+    _CV2_AVAILABLE = False
+
+
+def _probe_rtsp_resolution(rtsp_url: str, timeout_sec: int = 10) -> Tuple[int, int]:
+    """
+    使用 ffprobe 获取 RTSP 流宽高。
+    PS D:\software\ffmpeg-5.1.2\bin> ffprobe -v error -rtsp_transport tcp -timeout 10000000 -select_streams v:0 -show_entries stream=width,height -of csv=p=0 rtsp://172.21.68.125:8554/live/camera_local
+1280,720
+    Returns:
+        (width, height)，失败时返回 (1920, 1080) 作为默认。
+    """
+    try:
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=p=0",
+            "-rtsp_transport", "tcp",
+            "-timeout", str(timeout_sec * 1000000),
+            rtsp_url,
+        ]
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec + 5)
+        if out.returncode != 0:
+            logger.warning(f"ffprobe 失败: {out.stderr or out.stdout}")
+            return 1920, 1080
+        line = (out.stdout or "").strip()
+        if not line:
+            return 1920, 1080
+        parts = line.split(",")
+        if len(parts) >= 2:
+            w, h = int(parts[0].strip()), int(parts[1].strip())
+            if w > 0 and h > 0:
+                return w, h
+    except FileNotFoundError:
+        logger.warning("未找到 ffprobe，将使用默认分辨率 1920x1080")
+    except Exception as e:
+        logger.warning(f"ffprobe 异常: {e}")
+    return 1920, 1080
 
 
 class StreamReader:
     """
     拉流线程
     
-    负责:
-    - 连接 RTSP 源
-    - 按帧率读取视频帧
-    - 跳帧处理
-    - 发送到推理队列
+    支持两种后端：
+    - FFmpeg 子进程：从 stdin 读 rawvideo(BGR24)，RTSP 长连更稳定，推荐。
+    - OpenCV VideoCapture：部分环境下读一段时间后 read() 易失败。
     """
-    
+
     def __init__(
         self,
         camera_id: str,
@@ -32,20 +77,9 @@ class StreamReader:
         skip_frames: int = 3,
         frame_queue: Optional[Any] = None,
         request_queue: Optional[Any] = None,
-        result_queue: Optional[Any] = None
+        result_queue: Optional[Any] = None,
+        use_ffmpeg: bool = True,
     ):
-        """
-        初始化 StreamReader
-        
-        Args:
-            camera_id: 摄像头 ID
-            rtsp_url: RTSP 地址
-            fps: 视频帧率
-            skip_frames: 跳帧数 (每 N 帧推理一次)
-            frame_queue: 原始帧队列 (用于结果处理)
-            request_queue: 推理请求队列
-            result_queue: 推理结果队列
-        """
         self.camera_id = camera_id
         self.rtsp_url = rtsp_url
         self.fps = fps
@@ -53,93 +87,188 @@ class StreamReader:
         self.frame_queue = frame_queue
         self.request_queue = request_queue
         self.result_queue = result_queue
-        
+        self.use_ffmpeg = bool(use_ffmpeg)
+
         self.cap = None
+        self._ffmpeg_process: Optional[subprocess.Popen] = None
+        self._ffmpeg_width = 0
+        self._ffmpeg_height = 0
         self.thread: Optional[threading.Thread] = None
         self.running = False
-        
-        # 统计
+
         self.total_frames = 0
         self.inference_frames = 0
         self.dropped_frames = 0
         self.reconnect_count = 0
-    
+
     def start(self):
         """启动拉流"""
-        logger.info(f"StreamReader 启动: {self.camera_id},rtsp_url: {self.rtsp_url}")
+        logger.info(
+            f"StreamReader 启动: {self.camera_id}, rtsp_url={self.rtsp_url[:60]}..., use_ffmpeg={self.use_ffmpeg}"
+        )
         self.running = True
-        # 判断如果rtsp_url为空，则不启动
         if not self.rtsp_url:
             logger.warning(f"摄像头{self.camera_id} RTSP 地址为空，不启动")
             return
-        # 连接 RTSP
         if not self._connect():
             logger.warning(f"StreamReader 连接失败，将在后台重试: {self.camera_id}")
-        
-        # 启动线程
         self.thread = threading.Thread(target=self._read_loop, daemon=True)
         self.thread.start()
-    
+
     def stop(self):
         """停止拉流"""
         self.running = False
-        if self.thread:
+        if self.thread and self.thread.is_alive():
             self.thread.join(timeout=5)
-        if self.cap:
-            self.cap.release()
+        self._close_opencv()
+        self._close_ffmpeg()
         logger.info(f"StreamReader 已停止: {self.camera_id}")
-    
-    def _connect(self) -> bool:
-        """连接 RTSP 源"""
-        try:
-            import cv2
-            
-            # 释放旧连接
-            if self.cap:
+
+    def _close_opencv(self):
+        if self.cap is not None:
+            try:
                 self.cap.release()
-            
-            # 创建新连接
-            # 关键：RTSP URL 后直接加 TCP 传输参数（兼容所有 OpenCV 版本）
+            except Exception:
+                pass
+            self.cap = None
+
+    def _close_ffmpeg(self):
+        if self._ffmpeg_process is None:
+            return
+        try:
+            self._ffmpeg_process.terminate()
+            self._ffmpeg_process.wait(timeout=3)
+        except Exception:
+            try:
+                self._ffmpeg_process.kill()
+            except Exception:
+                pass
+        self._ffmpeg_process = None
+
+    def _connect(self) -> bool:
+        """建立连接：优先 FFmpeg，否则 OpenCV"""
+        if self.use_ffmpeg:
+            return self._connect_ffmpeg()
+        return self._connect_opencv()
+
+    def _connect_ffmpeg(self) -> bool:
+        """使用 FFmpeg 子进程拉 RTSP，输出 rawvideo BGR24 到 pipe"""
+        try:
+            self._close_ffmpeg()
+            width, height = _probe_rtsp_resolution(self.rtsp_url)
+            self._ffmpeg_width = width
+            self._ffmpeg_height = height
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-rtsp_transport", "tcp",
+                "-timeout", "5000000",
+                "-i", self.rtsp_url,
+                "-f", "rawvideo",
+                "-pix_fmt", "bgr24",
+                "-s", f"{width}x{height}",
+                "-r", str(self.fps),
+                "pipe:1",
+            ]
+            # 将cmd拼接成可执行命令打印出来
+            cmd_str = " ".join(cmd)
+            logger.info(f"摄像头{self.camera_id} FFmpeg 拉流启动命令: {cmd_str}")
+            self._ffmpeg_process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=width * height * 3 * 2,
+            )
+            time.sleep(3)
+            # 获取启动返回值，判断是否真的启动
+            if self._ffmpeg_process.poll() is not None:
+                logger.error(f"摄像头{self.camera_id} FFmpeg 拉流启动失败，命令: {cmd_str}")
+                return False
+            else:
+                logger.info(f"摄像头{self.camera_id} FFmpeg 拉流启动成功，命令: {cmd_str}")
+                return True
+        except FileNotFoundError:
+            logger.error(f"摄像头{self.camera_id} 未找到 ffmpeg，请安装并加入 PATH")
+            return False
+        except Exception as e:
+            logger.error(f"摄像头{self.camera_id} FFmpeg 拉流启动异常: {e}")
+            return False
+
+    def _connect_opencv(self) -> bool:
+        """使用 OpenCV VideoCapture 拉 RTSP（备用）"""
+        if not _CV2_AVAILABLE:
+            logger.error("OpenCV 未安装，无法使用 OpenCV 拉流")
+            return False
+        try:
+            self._close_opencv()
             rtsp_tcp_url = f"{self.rtsp_url}?transportmode=unicast&tcpflag=1"
             self.cap = cv2.VideoCapture(rtsp_tcp_url)
-            # 强制设置 TCP 传输（双重保障）
             self.cap.set(cv2.CAP_PROP_RTSP_TRANSPORT, cv2.CAP_RTSP_TRANSPORT_TCP)
-            # 超时配置（必须）
             self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
             self.cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000)
-            # 设置缓冲区大小
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            
             if self.cap.isOpened():
-                logger.info(f"摄像头{self.camera_id} RTSP 连接成功")
+                logger.info(f"摄像头{self.camera_id} OpenCV RTSP 连接成功")
                 return True
-            else:
-                logger.warning(f"摄像头{self.camera_id} RTSP 连接失败: {self.rtsp_url}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"摄像头{self.camera_id} RTSP 连接异常: {e}")
+            logger.warning(f"摄像头{self.camera_id} OpenCV RTSP 连接失败: {self.rtsp_url}")
             return False
-    
+        except Exception as e:
+            logger.error(f"摄像头{self.camera_id} OpenCV 拉流异常: {e}")
+            return False
+
+    def _read_frame_ffmpeg(self) -> Optional[np.ndarray]:
+        """从 FFmpeg 子进程读一帧 BGR24，失败返回 None"""
+        if self._ffmpeg_process is None or self._ffmpeg_process.poll() is not None:
+            return None
+        w, h = self._ffmpeg_width, self._ffmpeg_height
+        n = w * h * 3
+        try:
+            buf = self._ffmpeg_process.stdout.read(n)
+        except Exception:
+            return None
+        if not buf or len(buf) != n:
+            return None
+        return np.frombuffer(buf, dtype=np.uint8).reshape((h, w, 3))
+
+    def _read_frame_opencv(self) -> Optional[np.ndarray]:
+        """OpenCV 读一帧，失败返回 None"""
+        if self.cap is None or not self.cap.isOpened():
+            return None
+        ret, frame = self.cap.read()
+        if not ret or frame is None:
+            return None
+        return frame
+
     def _read_loop(self):
-        """读取循环：按目标 fps 墙钟节流，避免拉流过快导致下游推流/推理过快"""
-        logger.debug(f"摄像头{self.camera_id} StreamReader 进入读取循环")
-        
+        """读取循环：按目标 fps 墙钟节流"""
         frame_interval = 1.0 / self.fps
-        next_read_time = 0.0  # 下一帧允许读取的墙钟时间（首次不等待）
-        
+        next_read_time = 0.0
+
         while self.running:
             try:
-                # 检查连接状态
-                if self.cap is None or not self.cap.isOpened():
-                    logger.warning(f"摄像头{self.camera_id} RTSP 断开，尝试重连: {self.rtsp_url}")
+                # 检查连接
+                if self.use_ffmpeg:
+                    proc = self._ffmpeg_process
+                    if proc is None:
+                        connected = False
+                        logger.warning(f"摄像头{self.camera_id} 拉流进程不存在 (_ffmpeg_process is None)")
+                    else:
+                        connected = proc.poll() is None
+                else:
+                    connected = self.cap is not None and self.cap.isOpened()
+
+                if not connected:
+                    logger.warning(
+                        f"摄像头{self.camera_id} 拉流断开，尝试重连 (use_ffmpeg={self.use_ffmpeg})"
+                    )
                     time.sleep(1)
                     if self._connect():
                         self.reconnect_count += 1
                         next_read_time = 0.0
                     continue
-                sleep_duration = 0.0
-                # 按墙钟时间节流：未到下一帧允许读取时间则 sleep 剩余时长
+
+                # 墙钟节流
                 now = time.perf_counter()
                 if next_read_time > 0 and now < next_read_time:
                     sleep_duration = next_read_time - now
@@ -147,64 +276,65 @@ class StreamReader:
                         time.sleep(sleep_duration)
                     now = time.perf_counter()
                 next_read_time = now + frame_interval
-                # 读取帧
-                ret, frame = self.cap.read()
-                if not ret:
-                    # 获取 OpenCV 内部错误码和描述
-                    err_code = self.cap.getExceptionMode()  # 或直接打印底层信息
-                    # 打印失败原因
-                    logger.warning(f"摄像头{self.camera_id} 读取帧失败,isOpened: {self.cap.isOpened()},当前缓存区帧数: {self.cap.get(cv2.CAP_PROP_FRAME_COUNT)},错误码: {err_code}")
+
+                # 读一帧
+                if self.use_ffmpeg:
+                    frame = self._read_frame_ffmpeg()
+                else:
+                    frame = self._read_frame_opencv()
+
+                if frame is None:
+                    if self.use_ffmpeg:
+                        self._close_ffmpeg()
                     time.sleep(0.1)
                     continue
-                
+
                 self.total_frames += 1
-                # 打印每个时间
-                logger.error(f"摄像头{self.camera_id} StreamReader1 读取帧{self.total_frames} 时间: {now}，next_read_time: {next_read_time}，sleep_duration: {sleep_duration}，frame_interval: {frame_interval}")
-                
-                
-                # 放入原始帧队列
+
                 if self.frame_queue:
                     try:
                         self.frame_queue.put_nowait({
                             "frame_id": self.total_frames,
                             "frame": frame,
-                            "timestamp": now
+                            "timestamp": now,
                         })
                     except Full:
                         self.dropped_frames += 1
-                        logger.error(f"摄像头{self.camera_id} StreamReader 读取帧{self.total_frames} 队列满{self.frame_queue.qsize()}，dropped_frames: {self.dropped_frames}")              
-                        
-                logger.error(f"摄像头{self.camera_id} StreamReader2 读取帧{self.total_frames} 时间: {now}，next_read_time: {next_read_time}，sleep_duration: {sleep_duration}，frame_interval: {frame_interval}")
-                    
-                # 跳帧检查
+
                 if self.total_frames % (self.skip_frames + 1) != 0:
                     continue
-                else:
-                    # 发送到推理队列（不再携带结果队列对象，避免跨进程传递 Queue）
-                    if self.request_queue:
-                        request = {
-                            "request_id": str(uuid.uuid4()),
-                            "camera_id": self.camera_id,
-                            "frame_id": self.total_frames,
-                            "frame": frame,
-                            "timestamp": now,
-                        }
-                        try:
-                            self.request_queue.put_nowait(request)
-                            self.inference_frames += 1
-                        except Full:
-                            self.dropped_frames += 1
-                
+
+                if self.request_queue:
+                    request = {
+                        "request_id": str(uuid.uuid4()),
+                        "camera_id": self.camera_id,
+                        "frame_id": self.total_frames,
+                        "frame": frame,
+                        "timestamp": now,
+                    }
+                    try:
+                        self.request_queue.put_nowait(request)
+                        self.inference_frames += 1
+                    except Full:
+                        self.dropped_frames += 1
+
             except Exception as e:
                 logger.error(f"摄像头{self.camera_id} StreamReader 异常: {e}")
                 time.sleep(0.1)
-    
+
     def get_stats(self) -> dict:
-        """获取统计信息"""
+        if self.use_ffmpeg:
+            connected = (
+                self._ffmpeg_process is not None
+                and self._ffmpeg_process.poll() is None
+            )
+        else:
+            connected = self.cap is not None and self.cap.isOpened()
         return {
             "total_frames": self.total_frames,
             "inference_frames": self.inference_frames,
             "dropped_frames": self.dropped_frames,
             "reconnect_count": self.reconnect_count,
-            "connected": self.cap is not None and self.cap.isOpened()
+            "connected": connected,
+            "use_ffmpeg": self.use_ffmpeg,
         }

@@ -11,7 +11,7 @@ export default defineConfig({
   },
   server: {
     port: 3000,
-    host: true,
+    host: '127.0.0.1',
     // 开发时把 /api 代理到后端，避免浏览器跨域
     proxy: {
       '/api': {
@@ -25,6 +25,12 @@ export default defineConfig({
       '/static': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true
+      },
+      // 开发时通过 /flv 代理到 ZLMediaKit，避免 HTTP-FLV 跨域
+      '/flv': {
+        target: 'http://127.0.0.1:8080',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/flv/, ''),
       }
     }
   }

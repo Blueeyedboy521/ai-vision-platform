@@ -12,7 +12,7 @@
           <template #icon>
             <n-icon><SaveOutline /></n-icon>
           </template>
-          保存并启动
+          保存
         </n-button>
       </div>
     </div>
@@ -141,38 +141,6 @@
 
       <!-- Right Column -->
       <div class="add-camera-page__right">
-        <!-- 已配置算法（编辑时显示，从后端加载） -->
-        <section v-if="cameraId" class="config-card">
-          <div class="config-card__header">
-            <h3 class="config-card__title">
-              <span class="config-card__indicator"></span>
-              已配置算法
-            </h3>
-            <n-button size="small" type="primary" @click="openAddAlgorithmModal">
-              添加算法
-            </n-button>
-          </div>
-          <div v-if="cameraAlgorithmConfigs.length === 0" class="algo-config-empty">
-            <n-empty description="暂无配置" size="small" />
-          </div>
-          <ul v-else class="algo-config-list">
-            <li
-              v-for="cfg in cameraAlgorithmConfigs"
-              :key="cfg.id"
-              class="algo-config-item"
-            >
-              <span class="algo-config-name">{{ cfg.algorithm_name || cfg.algorithm_id }}</span>
-              <span class="algo-config-confidence">置信度 {{ (cfg.effective_confidence * 100).toFixed(0) }}%</span>
-              <n-tag :type="cfg.is_enabled ? 'success' : 'default'" size="small">
-                {{ cfg.is_enabled ? '启用' : '停用' }}
-              </n-tag>
-              <n-button text type="error" size="small" @click="removeCameraAlgorithmConfig(cfg.id)">
-                移除
-              </n-button>
-            </li>
-          </ul>
-        </section>
-
         <!-- Algorithm Config -->
         <section class="config-card">
           <div class="config-card__header">
@@ -180,7 +148,19 @@
               <span class="config-card__indicator"></span>
               算法能力与阈值配置
             </h3>
-            <span class="config-card__badge">ACTIVE: {{ enabledAlgorithmCount }} / {{ algorithms.length }}</span>
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <span class="config-card__badge">
+                ACTIVE: {{ enabledAlgorithmCount }} / {{ algorithms.length }}
+              </span>
+              <n-button
+                v-if="cameraId"
+                size="small"
+                type="primary"
+                @click="openAddAlgorithmModal"
+              >
+                添加算法
+              </n-button>
+            </div>
           </div>
 
           <div class="algorithm-list">
@@ -190,6 +170,7 @@
               <span class="algorithm-list__col algorithm-list__col--confidence">置信度 (%)</span>
               <span class="algorithm-list__col algorithm-list__col--region">检测范围</span>
               <span class="algorithm-list__col algorithm-list__col--time">时间计划</span>
+              <span class="algorithm-list__col algorithm-list__col--action">操作</span>
             </div>
             <div class="algorithm-list__body">
               <div
@@ -275,6 +256,18 @@
                   </template>
                   <span v-else class="algorithm-list__disabled">—</span>
                 </div>
+                <div class="algorithm-list__col algorithm-list__col--action">
+                  <n-button
+                    v-if="algo.configId && cameraId"
+                    text
+                    type="error"
+                    size="small"
+                    @click="removeCameraAlgorithmConfig(algo.configId)"
+                  >
+                    移除
+                  </n-button>
+                  <span v-else class="algorithm-list__disabled">—</span>
+                </div>
               </div>
             </div>
           </div>
@@ -332,6 +325,19 @@
       :existing-regions="currentAlgorithm?.regions"
       @save="handleSaveRegions"
     />
+
+    <!-- 实时预览弹窗 -->
+    <n-modal
+      v-model:show="showLivePlayer"
+      preset="card"
+      title="实时预览"
+      :style="{ width: '960px' }"
+      @after-leave="livePlayUrl = null"
+    >
+      <div style="width: 100%; aspect-ratio: 16 / 9;">
+        <FlvPlayer v-if="livePlayUrl" :url="livePlayUrl" />
+      </div>
+    </n-modal>
   </div>
 </template>
 
@@ -339,7 +345,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import {
   NInput, NTreeSelect, NButton, NIcon, NSwitch,
-  NSlider, NPopover, NTimePicker, NModal, NForm, NFormItem, NSelect, NInputNumber, NSpace, NEmpty, NTag
+  NSlider, NPopover, NTimePicker, NModal, NForm, NFormItem, NSelect, NInputNumber, NSpace
 } from 'naive-ui'
 import type { TreeSelectOption } from 'naive-ui'
 import {
@@ -351,11 +357,13 @@ import {
 } from '@vicons/ionicons5'
 import { useUserStore } from '@/stores/user'
 import DrawRegionModal from './DrawRegionModal.vue'
+import FlvPlayer from './FlvPlayer.vue'
 import { getCamera, probeStream, snapshotCamera, getCameraPlayUrls, cameraLiveHeartbeat, startCamera, stopCamera } from '@/api/camera'
 import {
   getCameraAlgorithmConfigs,
   addCameraAlgorithmConfig,
   deleteCameraAlgorithmConfig,
+  updateCameraAlgorithmConfig,
   getAlgorithmList,
   type CameraAlgorithmConfig
 } from '@/api/algorithm'
@@ -378,6 +386,8 @@ interface Algorithm {
   startTime?: number
   endTime?: number
   regions?: Region[]
+  configId?: string      // 后端 CameraAlgorithm 配置 ID（与 id 相同）
+  algorithmId?: string   // 算法 ID（与后端一致）
 }
 
 const props = defineProps<{
@@ -409,6 +419,8 @@ const streamInfo = ref<{ width: number; height: number; fps: number | null; reso
 const previewImage = ref('/camera-warehouse-01.jpg')
 const snapshots = ref<string[]>([])
 const livePlaying = ref(false)
+const showLivePlayer = ref(false)
+const livePlayUrl = ref<string | null>(null)
 let liveHeartbeatTimer: number | null = null
 
 // 已配置算法（编辑时从后端加载）
@@ -461,7 +473,7 @@ function convertToTreeSelectOptions(nodes: any[]): TreeSelectOption[] {
   }))
 }
 
-// Algorithms
+// Algorithms：默认示例，编辑已有摄像头时会被后端配置覆盖
 const algorithms = ref<Algorithm[]>([
   { id: 'face', name: '人脸识别', nameEn: 'Face ID', enabled: true, confidence: 85, regionCount: 0, timeRange: '00:00 - 23:59', startTime: 0, endTime: 86340000 },
   { id: 'intrusion', name: '区域入侵检测', enabled: true, confidence: 70, regionCount: 2, timeRange: '18:00 - 06:00', startTime: 64800000, endTime: 21600000 },
@@ -543,6 +555,8 @@ async function playLive() {
     if (livePlaying.value) {
       await stopCamera(props.cameraId)
       livePlaying.value = false
+      showLivePlayer.value = false
+      livePlayUrl.value = null
       if (liveHeartbeatTimer !== null) {
         window.clearInterval(liveHeartbeatTimer)
         liveHeartbeatTimer = null
@@ -564,7 +578,12 @@ async function playLive() {
     if (token) {
       flvUrl += flvUrl.includes('?') ? `&token=${encodeURIComponent(token)}` : `?token=${encodeURIComponent(token)}`
     }
-    window.open(flvUrl, '_blank')
+    // 开发环境通过 Vite 代理避免跨域，将后端完整地址替换为 /flv 前缀
+    if (flvUrl.startsWith('http://127.0.0.1:8080')) {
+      flvUrl = flvUrl.replace('http://127.0.0.1:8080', '/flv')
+    }
+    livePlayUrl.value = flvUrl
+    showLivePlayer.value = true
     livePlaying.value = true
 
     // 启动心跳
@@ -591,6 +610,19 @@ function handleSaveRegions(regions: Region[]) {
   if (currentAlgorithm.value) {
     currentAlgorithm.value.regions = regions
     currentAlgorithm.value.regionCount = regions.length
+    // 将前端 Region 转成后端期望的二维点数组并持久化
+    const cameraId = props.cameraId
+    const configId = currentAlgorithm.value.configId || currentAlgorithm.value.id
+    if (cameraId && configId) {
+      const payloadRegions: number[][][] = regions.map((r) =>
+        r.points.map((p) => [p.x, p.y])
+      )
+      updateCameraAlgorithmConfig(cameraId, configId, {
+        regions: payloadRegions,
+      }).catch(() => {
+        // 若更新失败，先不打断前端体验
+      })
+    }
   }
 }
 
@@ -700,9 +732,12 @@ async function loadCameraAlgorithmConfigs(cameraId: string) {
     const res = await getCameraAlgorithmConfigs(cameraId)
     const data = (res.data as any)?.data ?? res.data
     cameraAlgorithmConfigs.value = Array.isArray(data) ? data : []
+    // 同步到下方算法能力列表，让每个已配置算法在下面出现一行
+    syncAlgorithmsFromConfigs()
   } catch (e) {
     console.error('加载摄像头算法配置失败', e)
     cameraAlgorithmConfigs.value = []
+    // 加载失败保持现有 algorithms 配置
   }
 }
 
@@ -770,6 +805,42 @@ async function removeCameraAlgorithmConfig(configId: string) {
   } catch (e: any) {
     message.error(e?.response?.data?.detail || e?.message || '移除失败')
   }
+}
+
+// 根据后端返回的摄像头算法配置，刷新下方算法能力列表
+function syncAlgorithmsFromConfigs() {
+  if (!props.cameraId) return
+  const configs = cameraAlgorithmConfigs.value
+  if (!configs || configs.length === 0) {
+    // 没有配置算法时，保持现有列表（可选：也可以清空）
+    return
+  }
+  algorithms.value = configs.map((cfg, idx) => {
+    const rawRegions = (cfg as any).regions as number[][][] | undefined
+    // 将后端 regions 转成前端 Region 结构（颜色和类型在前端生成）
+    const uiRegions: Region[] = (rawRegions || []).map((poly, polyIndex) => ({
+      points: poly.map((p) => ({ x: p[0], y: p[1] })),
+      color: ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899'][polyIndex % 6],
+      type: polyIndex % 2 === 0 ? '入侵区' : '排查区',
+    }))
+    const conf =
+      (cfg as any).effective_confidence ??
+      (cfg as any).confidence ??
+      0.9
+    return {
+      id: cfg.id,                      // 配置 ID
+      configId: cfg.id,
+      algorithmId: cfg.algorithm_id,
+      name: cfg.algorithm_name || cfg.algorithm_id,
+      enabled: cfg.is_enabled,
+      confidence: Math.round(conf * 100),
+      regionCount: uiRegions.length,
+      timeRange: '00:00 - 23:59',
+      startTime: 0,
+      endTime: getDefaultTime('23:59'),
+      regions: uiRegions,
+    } as Algorithm
+  })
 }
 
 onMounted(() => {
@@ -1118,6 +1189,12 @@ function handleSave() {
 
 .algorithm-list__col--time {
   flex: 1;
+}
+
+.algorithm-list__col--action {
+  width: 80px;
+  flex-shrink: 0;
+  justify-content: flex-end;
 }
 
 .algorithm-list__name {

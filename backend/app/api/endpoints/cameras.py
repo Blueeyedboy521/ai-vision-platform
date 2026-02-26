@@ -363,6 +363,17 @@ async def update_camera(
     await db.commit()
     await db.refresh(camera)
     
+    # 若摄像头被禁用，从“直播已启动”集合移除并通知 Engine 停止推流
+    if not camera.is_enabled:
+        try:
+            redis = get_redis()
+            await redis.client.srem(RedisKeys.CAMERAS_LIVE_STARTED, camera.id)
+        except Exception as e:
+            logger.error(f"更新摄像头时清理直播集合失败: {camera.id}, 错误: {e}")
+        config_publisher = get_config_publisher()
+        await config_publisher.publish_camera_stop(camera.id)
+        logger.info(f"摄像头已禁用，已发送停止命令: {camera.id}")
+    
     # 更新 Redis 缓存
     try:
         redis = get_redis()
@@ -424,9 +435,10 @@ async def delete_camera(
     await db.delete(camera)
     await db.commit()
     
-    # 删除 Redis 缓存
+    # 从直播集合与缓存中移除
     try:
         redis = get_redis()
+        await redis.client.srem(RedisKeys.CAMERAS_LIVE_STARTED, camera_id)
         await redis.client.delete(RedisKeys.camera_config(camera_id))
     except Exception as e:
         logger.error(f"摄像头删除后清理 Redis 失败: {camera_id}, 错误: {e}")
@@ -451,7 +463,7 @@ async def start_camera(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    启动摄像头 (开始分析)
+    启动摄像头（开始拉流/推流/分析）。仅当摄像头启用状态下允许启动。
     """
     result = await db.execute(
         select(Camera).where(Camera.id == camera_id)
@@ -463,6 +475,18 @@ async def start_camera(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="摄像头不存在"
         )
+    if not camera.is_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="摄像头未启用，请先在编辑页启用后再播放"
+        )
+
+    # 加入“直播已启动”集合，供心跳超时检测使用
+    try:
+        redis = get_redis()
+        await redis.client.sadd(RedisKeys.CAMERAS_LIVE_STARTED, camera_id)
+    except Exception as e:
+        logger.error(f"记录直播启动集合失败: {camera_id}, 错误: {e}")
 
     # 发布启动命令
     config_publisher = get_config_publisher()
@@ -480,7 +504,7 @@ async def stop_camera(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    停止摄像头 (停止分析)
+    停止摄像头（停止拉流/推流）。同时从“直播已启动”集合移除，不再参与心跳超时检测。
     """
     result = await db.execute(
         select(Camera).where(Camera.id == camera_id)
@@ -493,6 +517,13 @@ async def stop_camera(
             detail="摄像头不存在"
         )
 
+    # 从“直播已启动”集合移除
+    try:
+        redis = get_redis()
+        await redis.client.srem(RedisKeys.CAMERAS_LIVE_STARTED, camera_id)
+    except Exception as e:
+        logger.error(f"从直播集合移除失败: {camera_id}, 错误: {e}")
+
     # 发布停止命令
     config_publisher = get_config_publisher()
     await config_publisher.publish_camera_stop(camera_id)
@@ -502,20 +533,24 @@ async def stop_camera(
     return success_response(None, "停止命令已发送")
 
 
+# 直播心跳超时秒数：前端约 60s 上报一次，后端超过此时长未收到则视为断线并通知 Engine 关闭推流
+LIVE_HEARTBEAT_TIMEOUT_SEC = 90
+
+
 @router.post("/{camera_id}/live-heartbeat", summary="摄像头直播心跳")
 async def camera_live_heartbeat(
     camera_id: str,
     current_user: User = Depends(get_current_user),
 ):
     """
-    前端播放摄像头直播流时每 60 秒调用一次，用于保活。
-    后端仅记录心跳时间，后续可由后台任务检测超时并通知 Engine 停止推流/管道。
+    前端播放摄像头直播流时每 60 秒调用一次。后端刷新心跳 Key 的 TTL；
+    若超时未收到心跳，后台任务会通知 Engine 关闭该路推流。
     """
     redis = get_redis()
     import time
     ts = int(time.time())
     key = RedisKeys.camera_live_heartbeat(camera_id)
-    await redis.client.set(key, str(ts))
+    await redis.client.set(key, str(ts), ex=LIVE_HEARTBEAT_TIMEOUT_SEC)
     return success_response({"camera_id": camera_id, "timestamp": ts}, "心跳已更新")
 
 

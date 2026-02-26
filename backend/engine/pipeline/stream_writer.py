@@ -110,8 +110,13 @@ class StreamWriter:
                 "-r", str(self.fps),
                 "-i", "pipe:0",
                 "-c:v", "libx264",
-                "-preset", "fast",
+                "-preset", "ultrafast",          # 更激进一点
                 "-tune", "zerolatency",
+                "-g", str(self.fps),             # 1 秒一个关键帧，例如 25fps -> g=25
+                "-keyint_min", str(self.fps),
+                "-sc_threshold", "0",
+                "-maxrate", "3000k",             # 根据你实际码率需求自己调
+                "-bufsize", "3000k",
                 "-pix_fmt", "yuv420p",
                 "-f", "flv",
                 self.push_url,
@@ -140,12 +145,12 @@ class StreamWriter:
         sleep_duration = 0.0
         while self.running:
             try:
-                logger.debug(f"摄像头{self.camera_id} StreamWriter 推流循环时间1: {time.perf_counter()},队列大小: {self.frame_queue.qsize()}")
+                # logger.debug(f"摄像头{self.camera_id} StreamWriter 推流循环时间1: {time.perf_counter()},队列大小: {self.frame_queue.qsize()}")
                 try:
                     frame_data = self.frame_queue.get(timeout=target_interval)
                 except Empty:
                     continue
-                logger.debug(f"摄像头{self.camera_id} StreamWriter 推流循环时间2: {time.perf_counter()},队列大小: {self.frame_queue.qsize()}，frame_data is None: {frame_data is None}")
+                # logger.debug(f"摄像头{self.camera_id} StreamWriter 推流循环时间2: {time.perf_counter()},队列大小: {self.frame_queue.qsize()}，frame_data is None: {frame_data is None}")
                 
                 if frame_data is None:
                     continue
@@ -165,7 +170,7 @@ class StreamWriter:
                     continue
                 # 按墙钟时间节流：未到下一帧允许发送时间则 sleep
                 now = time.perf_counter()
-                logger.debug(f"摄像头{self.camera_id} StreamWriter 发送帧{frame_id} 时间1: {now}，next_send_time: {next_send_time}，sleep_duration: {sleep_duration}，target_interval: {target_interval}")
+                # logger.debug(f"摄像头{self.camera_id} StreamWriter 发送帧{frame_id} 时间1: {now}，next_send_time: {next_send_time}，sleep_duration: {sleep_duration}，target_interval: {target_interval}")
                 if next_send_time > 0 and now < next_send_time:
                     sleep_duration = next_send_time - now
                     if sleep_duration > 0.001:
@@ -173,7 +178,7 @@ class StreamWriter:
                     now = time.perf_counter()
                 next_send_time = now + target_interval
                 # 打印每个时间
-                logger.debug(f"摄像头{self.camera_id} StreamWriter 发送帧{frame_id} 时间2: {now}，next_send_time: {next_send_time}，sleep_duration: {sleep_duration}，target_interval: {target_interval}")
+                # logger.debug(f"摄像头{self.camera_id} StreamWriter 发送帧{frame_id} 时间2: {now}，next_send_time: {next_send_time}，sleep_duration: {sleep_duration}，target_interval: {target_interval}")
                 import cv2
                 if frame.shape[1] != self.width or frame.shape[0] != self.height:
                     frame = cv2.resize(frame, (self.width, self.height))
@@ -188,7 +193,7 @@ class StreamWriter:
                 except Exception as e:
                     logger.error(f"摄像头{self.camera_id} 写入帧失败: {e}")
                     self._process = None
-                logger.debug(f"摄像头{self.camera_id} StreamWriter 发送帧{frame_id} 时间3: {now}，next_send_time: {next_send_time}，sleep_duration: {sleep_duration}，target_interval: {target_interval}")
+                # logger.debug(f"摄像头{self.camera_id} StreamWriter 发送帧{frame_id} 时间3: {now}，next_send_time: {next_send_time}，sleep_duration: {sleep_duration}，target_interval: {target_interval}")
                     
             except Exception as e:
                 logger.error(f"摄像头{self.camera_id} StreamWriter 异常: {e}")

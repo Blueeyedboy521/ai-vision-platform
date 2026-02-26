@@ -239,13 +239,26 @@
         </div>
       </div>
     </div>
+
+    <!-- 实时预览弹窗 -->
+    <n-modal
+      v-model:show="showPlayer"
+      preset="card"
+      title="实时预览"
+      :style="{ width: '960px' }"
+      @after-leave="currentPlayUrl = null"
+    >
+      <div style="width: 100%; aspect-ratio: 16 / 9;">
+        <FlvPlayer v-if="currentPlayUrl" :url="currentPlayUrl" />
+      </div>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import {
-  NInput, NIcon, NButton, NEmpty, NPagination, NTag, useMessage
+  NInput, NIcon, NButton, NEmpty, NPagination, NTag, NModal, useMessage
 } from 'naive-ui'
 import {
   ListOutline,
@@ -269,6 +282,7 @@ import PointStatCard from '@/components/PointStatCard.vue'
 import AddCameraPage from '@/components/AddCameraPage.vue'
 import type { CameraInfo } from '@/components/CameraCard.vue'
 import { getCameraList, createCamera, updateCamera, type Camera, getCameraPlayUrls, cameraLiveHeartbeat, startCamera, stopCamera } from '@/api/camera'
+import FlvPlayer from '@/components/FlvPlayer.vue'
 
 const appStore = useAppStore()
 const userStore = useUserStore()
@@ -303,6 +317,10 @@ const areaKeyLabelMap = ref<Record<string, string>>({})
 // Live play state
 const livePlayingId = ref<string | null>(null)
 let liveHeartbeatTimer: number | null = null
+
+// 内嵌 FLV 播放弹窗
+const showPlayer = ref(false)
+const currentPlayUrl = ref<string | null>(null)
 
 // 将后端摄像头数据转换为组件格式（缩略图优先使用最新抓拍）
 function convertCamera(camera: Camera): CameraInfo {
@@ -376,7 +394,12 @@ async function handlePlayCamera(cam: CameraInfo) {
     if (token) {
       flvUrl += flvUrl.includes('?') ? `&token=${encodeURIComponent(token)}` : `?token=${encodeURIComponent(token)}`
     }
-    window.open(flvUrl, '_blank')
+    // 开发环境通过 Vite 代理避免跨域，将后端完整地址替换为 /flv 前缀
+    if (flvUrl.startsWith('http://127.0.0.1:8080')) {
+      flvUrl = flvUrl.replace('http://127.0.0.1:8080', '/flv')
+    }
+    currentPlayUrl.value = flvUrl
+    showPlayer.value = true
     livePlayingId.value = id
 
     if (liveHeartbeatTimer !== null) {
