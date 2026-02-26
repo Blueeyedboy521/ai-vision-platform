@@ -9,7 +9,7 @@ import time
 import uuid
 from typing import Any, Optional
 from queue import Full
-
+import cv2
 from loguru import logger
 
 
@@ -66,9 +66,12 @@ class StreamReader:
     
     def start(self):
         """启动拉流"""
-        logger.info(f"StreamReader 启动: {self.camera_id}")
+        logger.info(f"StreamReader 启动: {self.camera_id},rtsp_url: {self.rtsp_url}")
         self.running = True
-        
+        # 判断如果rtsp_url为空，则不启动
+        if not self.rtsp_url:
+            logger.warning(f"摄像头{self.camera_id} RTSP 地址为空，不启动")
+            return
         # 连接 RTSP
         if not self._connect():
             logger.warning(f"StreamReader 连接失败，将在后台重试: {self.camera_id}")
@@ -96,54 +99,68 @@ class StreamReader:
                 self.cap.release()
             
             # 创建新连接
-            self.cap = cv2.VideoCapture(self.rtsp_url)
-            
+            # 关键：RTSP URL 后直接加 TCP 传输参数（兼容所有 OpenCV 版本）
+            rtsp_tcp_url = f"{self.rtsp_url}?transportmode=unicast&tcpflag=1"
+            self.cap = cv2.VideoCapture(rtsp_tcp_url)
+            # 强制设置 TCP 传输（双重保障）
+            self.cap.set(cv2.CAP_PROP_RTSP_TRANSPORT, cv2.CAP_RTSP_TRANSPORT_TCP)
+            # 超时配置（必须）
+            self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+            self.cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000)
             # 设置缓冲区大小
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             
             if self.cap.isOpened():
-                logger.info(f"RTSP 连接成功: {self.camera_id}")
+                logger.info(f"摄像头{self.camera_id} RTSP 连接成功")
                 return True
             else:
-                logger.warning(f"RTSP 连接失败: {self.rtsp_url}")
+                logger.warning(f"摄像头{self.camera_id} RTSP 连接失败: {self.rtsp_url}")
                 return False
                 
         except Exception as e:
-            logger.error(f"RTSP 连接异常: {e}")
+            logger.error(f"摄像头{self.camera_id} RTSP 连接异常: {e}")
             return False
     
     def _read_loop(self):
-        """读取循环"""
-        logger.debug(f"StreamReader 进入读取循环: {self.camera_id}")
+        """读取循环：按目标 fps 墙钟节流，避免拉流过快导致下游推流/推理过快"""
+        logger.debug(f"摄像头{self.camera_id} StreamReader 进入读取循环")
         
         frame_interval = 1.0 / self.fps
-        last_frame_time = time.time()
+        next_read_time = 0.0  # 下一帧允许读取的墙钟时间（首次不等待）
         
         while self.running:
             try:
                 # 检查连接状态
                 if self.cap is None or not self.cap.isOpened():
-                    logger.warning(f"RTSP 断开，尝试重连: {self.camera_id}")
+                    logger.warning(f"摄像头{self.camera_id} RTSP 断开，尝试重连: {self.rtsp_url}")
                     time.sleep(1)
                     if self._connect():
                         self.reconnect_count += 1
+                        next_read_time = 0.0
                     continue
-                
-                # 控制帧率
-                current_time = time.time()
-                if current_time - last_frame_time < frame_interval:
-                    time.sleep(0.001)  # 短暂休眠
-                    continue
-                
+                sleep_duration = 0.0
+                # 按墙钟时间节流：未到下一帧允许读取时间则 sleep 剩余时长
+                now = time.perf_counter()
+                if next_read_time > 0 and now < next_read_time:
+                    sleep_duration = next_read_time - now
+                    if sleep_duration > 0.001:
+                        time.sleep(sleep_duration)
+                    now = time.perf_counter()
+                next_read_time = now + frame_interval
                 # 读取帧
                 ret, frame = self.cap.read()
                 if not ret:
-                    logger.warning(f"读取帧失败: {self.camera_id}")
+                    # 获取 OpenCV 内部错误码和描述
+                    err_code = self.cap.getExceptionMode()  # 或直接打印底层信息
+                    # 打印失败原因
+                    logger.warning(f"摄像头{self.camera_id} 读取帧失败,isOpened: {self.cap.isOpened()},当前缓存区帧数: {self.cap.get(cv2.CAP_PROP_FRAME_COUNT)},错误码: {err_code}")
                     time.sleep(0.1)
                     continue
                 
-                last_frame_time = current_time
                 self.total_frames += 1
+                # 打印每个时间
+                logger.error(f"摄像头{self.camera_id} StreamReader1 读取帧{self.total_frames} 时间: {now}，next_read_time: {next_read_time}，sleep_duration: {sleep_duration}，frame_interval: {frame_interval}")
+                
                 
                 # 放入原始帧队列
                 if self.frame_queue:
@@ -151,34 +168,35 @@ class StreamReader:
                         self.frame_queue.put_nowait({
                             "frame_id": self.total_frames,
                             "frame": frame,
-                            "timestamp": current_time
+                            "timestamp": now
                         })
                     except Full:
                         self.dropped_frames += 1
-                
+                        logger.error(f"摄像头{self.camera_id} StreamReader 读取帧{self.total_frames} 队列满{self.frame_queue.qsize()}，dropped_frames: {self.dropped_frames}")              
+                        
+                logger.error(f"摄像头{self.camera_id} StreamReader2 读取帧{self.total_frames} 时间: {now}，next_read_time: {next_read_time}，sleep_duration: {sleep_duration}，frame_interval: {frame_interval}")
+                    
                 # 跳帧检查
                 if self.total_frames % (self.skip_frames + 1) != 0:
                     continue
-                
-                # 发送到推理队列
-                if self.request_queue:
-                    request = {
-                        "request_id": str(uuid.uuid4()),
-                        "camera_id": self.camera_id,
-                        "frame_id": self.total_frames,
-                        "frame": frame,
-                        "timestamp": current_time,
-                        "result_queue": self.result_queue
-                    }
-                    
-                    try:
-                        self.request_queue.put_nowait(request)
-                        self.inference_frames += 1
-                    except Full:
-                        self.dropped_frames += 1
+                else:
+                    # 发送到推理队列（不再携带结果队列对象，避免跨进程传递 Queue）
+                    if self.request_queue:
+                        request = {
+                            "request_id": str(uuid.uuid4()),
+                            "camera_id": self.camera_id,
+                            "frame_id": self.total_frames,
+                            "frame": frame,
+                            "timestamp": now,
+                        }
+                        try:
+                            self.request_queue.put_nowait(request)
+                            self.inference_frames += 1
+                        except Full:
+                            self.dropped_frames += 1
                 
             except Exception as e:
-                logger.error(f"StreamReader 异常: {e}")
+                logger.error(f"摄像头{self.camera_id} StreamReader 异常: {e}")
                 time.sleep(0.1)
     
     def get_stats(self) -> dict:

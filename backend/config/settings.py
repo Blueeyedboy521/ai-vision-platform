@@ -10,7 +10,7 @@ from functools import lru_cache
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
+from loguru import logger
 
 class Settings(BaseSettings):
     """
@@ -18,7 +18,8 @@ class Settings(BaseSettings):
     
     配置优先级: 环境变量 > .env 文件 > 默认值
     """
-    
+    # 打印初始化日志
+    logger.info("初始化配置...")
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -288,7 +289,9 @@ def get_settings() -> Settings:
     
     使用 lru_cache 确保只创建一次实例
     """
-    return Settings()
+    config = Settings()
+    logger.info(f"配置初始化完成: {config}")
+    return config
 
 
 # 全局配置实例

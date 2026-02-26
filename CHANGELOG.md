@@ -1,5 +1,13 @@
 ## Changelog
 
+### v2.3.0 - 2026-02-25
+
+- **应用启动与 Redis 缓存**：新增 `bootstrap_sync`，FastAPI 启动时将 DB 中模型、算法、摄像头及摄像头-算法绑定全量写入 Redis，并为每路摄像头在 `stream_manager` 中注册流，Engine 冷启动即可从 Redis 读到完整配置；摄像头增/改/删时同步写/删 `camera:config:{id}`，保证与 DB 一致。
+- **点播鉴权**：前端获取播放地址后在 URL 上拼接当前用户 JWT（`?token=...`），ZLMediaKit 通过 Hook `on_play` 回调后端校验 token，鉴权逻辑与 WebHook 地址已写入架构文档。
+- **Engine 跨进程队列**：请求中不再携带 `result_queue`，避免 “Queue objects should only be shared through inheritance”；InferenceService 启动时传入 `result_queues` 映射，Worker 按 `camera_id` 回写结果队列；Worker 兼容 dict 请求。
+- **推流实现**：StreamWriter 改为使用 FFmpeg 子进程从 stdin 接收 rawvideo(BGR24) 推 RTMP，替代 OpenCV VideoWriter，解决部分环境 RTMP 推流失败问题。
+- **拉流/推流帧率**：StreamReader、StreamWriter 均按墙钟时间节流（`next_read_time` / `next_send_time`），严格按配置 fps 间隔取帧/发帧，避免画面过快。
+
 ### v2.2.0 - 2026-02-11
 
 - 摄像头连通性与表单联动：前端“流通性测试”调用 `/cameras/probe-stream`，自动回填宽高、帧率/分辨率并随摄像头保存到数据库。

@@ -32,16 +32,18 @@ class InferenceService:
     作为独立进程运行，管理多个 Worker 线程
     """
     
-    def __init__(self, models_config: Dict[str, dict], request_queues: Dict):
+    def __init__(self, models_config: Dict[str, dict], request_queues: Dict, result_queues: Dict):
         """
         初始化推理服务
         
         Args:
             models_config: 模型配置字典 {model_id: config}
             request_queues: 请求队列字典 {model_id: queue}
+            result_queues: 结果队列字典 {camera_id: queue}
         """
         self.models_config = models_config
         self.request_queues = request_queues
+        self.result_queues = result_queues
         
         self.workers: Dict[str, List[InferenceWorker]] = {}  # model_id -> workers
         self.running = False
@@ -51,9 +53,9 @@ class InferenceService:
         self.total_time_ms = 0
     
     @classmethod
-    def run(cls, models_config: Dict[str, dict], request_queues: Dict):
+    def run(cls, models_config: Dict[str, dict], request_queues: Dict, result_queues: Dict):
         """进程入口函数"""
-        service = cls(models_config, request_queues)
+        service = cls(models_config, request_queues, result_queues)
         service.start()
         
         # 保持进程运行
@@ -109,7 +111,8 @@ class InferenceService:
                 model_path=config.get("path", ""),
                 model_type=config.get("model_type", "yolo"),
                 input_size=config.get("input_size", (640, 640)),
-                request_queue=request_queue
+                request_queue=request_queue,
+                result_queues=self.result_queues,
             )
             worker.start()
             workers.append(worker)

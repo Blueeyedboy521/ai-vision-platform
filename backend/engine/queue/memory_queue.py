@@ -9,7 +9,7 @@ from queue import Empty, Full
 from typing import Any, Optional
 
 from .interface import QueueInterface
-
+from loguru import logger
 
 class MemoryQueue(QueueInterface):
     """
@@ -35,6 +35,9 @@ class MemoryQueue(QueueInterface):
             return True
         except Full:
             return False
+        except Exception as e:
+            logger.error(f"MemoryQueue put 异常: {e}")
+            return False
     
     def put_nowait(self, item: Any) -> bool:
         """非阻塞放入元素"""
@@ -43,14 +46,29 @@ class MemoryQueue(QueueInterface):
             return True
         except Full:
             return False
+        except Exception as e:
+            logger.error(f"MemoryQueue put_nowait 异常: {e}")
+            return False
     
     def get(self, timeout: Optional[float] = None) -> Any:
         """获取元素"""
-        return self._queue.get(block=True, timeout=timeout)
+        try:
+            return self._queue.get(block=True, timeout=timeout)
+        except Empty:
+            return None
+        except Exception as e:
+            logger.error(f"MemoryQueue get 异常: {e}")
+            return None
     
     def get_nowait(self) -> Any:
         """非阻塞获取元素"""
-        return self._queue.get_nowait()
+        try:
+            return self._queue.get_nowait()
+        except Empty:
+            return None
+        except Exception as e:
+            logger.error(f"MemoryQueue get_nowait 异常: {e}")
+            return None
     
     def empty(self) -> bool:
         """检查队列是否为空"""

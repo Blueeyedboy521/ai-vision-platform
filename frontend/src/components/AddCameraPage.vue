@@ -349,6 +349,7 @@ import {
   ScanOutline,
   TimeOutline
 } from '@vicons/ionicons5'
+import { useUserStore } from '@/stores/user'
 import DrawRegionModal from './DrawRegionModal.vue'
 import { getCamera, probeStream, snapshotCamera, getCameraPlayUrls, cameraLiveHeartbeat, startCamera, stopCamera } from '@/api/camera'
 import {
@@ -401,6 +402,7 @@ const formData = ref({
 })
 
 const message = useMessage()
+const userStore = useUserStore()
 const connectionStatus = ref<'online' | 'offline'>('offline')
 const testingConnection = ref(false)
 const streamInfo = ref<{ width: number; height: number; fps: number | null; resolution: string | null } | null>(null)
@@ -553,10 +555,14 @@ async function playLive() {
     await startCamera(props.cameraId)
     const res = await getCameraPlayUrls(props.cameraId)
     const data = (res.data as any)?.data ?? res.data
-    const flvUrl = (data as any)?.flv_url || (data as any)?.http_flv
+    let flvUrl = (data as any)?.flv_url || (data as any)?.http_flv
     if (!flvUrl) {
       message.error('未获取到播放地址')
       return
+    }
+    const token = userStore.token
+    if (token) {
+      flvUrl += flvUrl.includes('?') ? `&token=${encodeURIComponent(token)}` : `?token=${encodeURIComponent(token)}`
     }
     window.open(flvUrl, '_blank')
     livePlaying.value = true

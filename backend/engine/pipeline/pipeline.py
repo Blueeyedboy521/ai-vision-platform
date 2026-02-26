@@ -66,7 +66,7 @@ class Pipeline:
         
         # 内部队列
         from queue import Queue
-        self.frame_queue = Queue(maxsize=30)  # 原始帧队列
+        self.frame_queue = Queue(maxsize=1)  # 原始帧队列
         self.draw_queue = Queue(maxsize=30)   # 绘制帧队列
         
         # 状态
@@ -125,7 +125,7 @@ class Pipeline:
             self.stream_writer = StreamWriter(
                 camera_id=self.config.camera_id,
                 push_url=push_url,
-                frame_queue=self.draw_queue,
+                frame_queue=self.frame_queue,
                 fps=self.config.fps
             )
             self.stream_writer.start()

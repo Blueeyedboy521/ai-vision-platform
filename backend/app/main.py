@@ -24,6 +24,7 @@ from app.core.redis import init_redis, close_redis
 from app.api import api_router
 from app.websocket.manager import connection_manager
 from app.websocket.handlers import websocket_handler
+from app.services.bootstrap_sync import sync_configs_to_redis_and_streams
 from app.consumer.worker_pool import alarm_worker_pool
 
 
@@ -56,6 +57,13 @@ async def lifespan(app: FastAPI):
     # 初始化 Redis
     logger.info("初始化 Redis...")
     await init_redis()
+    
+    # 启动时同步配置到 Redis 并初始化流
+    try:
+        logger.info("启动时同步模型/算法/摄像头配置到 Redis 并初始化流...")
+        await sync_configs_to_redis_and_streams()
+    except Exception as e:
+        logger.warning(f"启动同步 Redis 配置失败: {e}")
     
     # 启动 WebSocket 与告警消费者（依赖 Redis，任一步失败则跳过后续，不阻塞应用启动）
     redis_ok = False

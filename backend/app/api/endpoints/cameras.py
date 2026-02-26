@@ -4,6 +4,7 @@
 
 提供摄像头 CRUD 和流媒体控制接口
 """
+import json
 from pathlib import Path
 from typing import Optional, List
 
@@ -292,6 +293,25 @@ async def create_camera(
     await db.commit()
     await db.refresh(camera)
     
+    # 写入 Redis 缓存，与 Engine 及流管理一致
+    try:
+        redis = get_redis()
+        await redis.client.set(
+            RedisKeys.camera_config(camera.id),
+            json.dumps(
+                {
+                    "id": camera.id,
+                    "name": camera.name,
+                    "rtsp_url": camera.full_rtsp_url,
+                    "fps": camera.fps,
+                    "is_enabled": camera.is_enabled,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    except Exception as e:
+        logger.error(f"摄像头创建后写入 Redis 失败: {camera.id}, 错误: {e}")
+    
     # 注册流
     stream_manager = get_stream_manager()
     stream_manager.register_stream(camera.id, camera.full_rtsp_url)
@@ -341,6 +361,30 @@ async def update_camera(
     camera.updated_by = current_user.id
     
     await db.commit()
+    await db.refresh(camera)
+    
+    # 更新 Redis 缓存
+    try:
+        redis = get_redis()
+        await redis.client.set(
+            RedisKeys.camera_config(camera.id),
+            json.dumps(
+                {
+                    "id": camera.id,
+                    "name": camera.name,
+                    "rtsp_url": camera.full_rtsp_url,
+                    "fps": camera.fps,
+                    "is_enabled": camera.is_enabled,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    except Exception as e:
+        logger.error(f"摄像头更新后写入 Redis 失败: {camera.id}, 错误: {e}")
+    
+    # 重新注册流（地址可能已变更）
+    stream_manager = get_stream_manager()
+    stream_manager.register_stream(camera.id, camera.full_rtsp_url)
     
     # 发布配置变更
     config_publisher = get_config_publisher()
@@ -379,6 +423,13 @@ async def delete_camera(
     
     await db.delete(camera)
     await db.commit()
+    
+    # 删除 Redis 缓存
+    try:
+        redis = get_redis()
+        await redis.client.delete(RedisKeys.camera_config(camera_id))
+    except Exception as e:
+        logger.error(f"摄像头删除后清理 Redis 失败: {camera_id}, 错误: {e}")
     
     # 注销流
     stream_manager = get_stream_manager()

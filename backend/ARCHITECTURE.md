@@ -116,8 +116,8 @@ backend/
 │   ├── pipeline/                     # 流处理管道
 │   │   ├── __init__.py
 │   │   ├── pipeline.py               # Pipeline 进程主类
-│   │   ├── stream_reader.py          # 拉流线程 (RTSP 解码)
-│   │   ├── stream_writer.py          # 推流线程 (RTMP/RTSP 编码)
+│   │   ├── stream_reader.py          # 拉流线程 (RTSP 解码)，按 fps 墙钟节流取帧
+│   │   ├── stream_writer.py          # 推流线程：FFmpeg 子进程推 RTMP，按 fps 墙钟节流发帧
 │   │   └── result_handler.py         # 结果处理线程
 │   │
 │   ├── queue/                        # 队列抽象层
@@ -253,6 +253,7 @@ backend/
 - **Engine 仅依赖 Redis**：
   - 启动时从各类 `config:*` Key 拉取快照。
   - 运行过程中订阅 `engine:config_update`，根据事件类型到 Redis 读取最新配置并更新内存（当前版本先以日志为主，后续可在此基础上实现真正的热更新）。
+- **应用启动全量同步**：FastAPI 启动时通过 `app.services.bootstrap_sync.sync_configs_to_redis_and_streams()` 将当前 DB 中的模型、算法、摄像头及摄像头-算法绑定全量写入 Redis，并调用 `stream_manager.register_stream` 为每个摄像头注册流，保证 Engine 冷启动即可从 Redis 读到完整配置；摄像头增/改/删时 API 同步写/删 `camera:config:{camera_id}`。
 
 ---
 

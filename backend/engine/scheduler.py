@@ -428,7 +428,7 @@ class Scheduler:
         # 创建并启动进程
         self.inference_process = Process(
             target=InferenceService.run,
-            args=(models_config, self.request_queues),
+            args=(models_config, self.request_queues, self.result_queues),
             name="InferenceService"
         )
         self.inference_process.start()
@@ -447,7 +447,10 @@ class Scheduler:
         if not camera:
             logger.error(f"摄像头配置不存在: {camera_id}")
             return
-        
+        # 如果rtsp_url为空，则不启动
+        if not camera.rtsp_url:
+            logger.warning(f"摄像头{camera_id} RTSP 地址为空，不启动")
+            return
         # 准备配置
         pipeline_config = {
             "camera_id": camera.id,

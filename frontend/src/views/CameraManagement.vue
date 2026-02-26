@@ -262,6 +262,7 @@ import {
   LocationOutline
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
+import { useUserStore } from '@/stores/user'
 import AreaTree from '@/components/AreaTree.vue'
 import CameraCard from '@/components/CameraCard.vue'
 import PointStatCard from '@/components/PointStatCard.vue'
@@ -270,6 +271,7 @@ import type { CameraInfo } from '@/components/CameraCard.vue'
 import { getCameraList, createCamera, updateCamera, type Camera, getCameraPlayUrls, cameraLiveHeartbeat, startCamera, stopCamera } from '@/api/camera'
 
 const appStore = useAppStore()
+const userStore = useUserStore()
 const message = useMessage()
 
 // Refs
@@ -365,10 +367,14 @@ async function handlePlayCamera(cam: CameraInfo) {
     await startCamera(id)
     const res = await getCameraPlayUrls(id)
     const data = (res.data as any)?.data ?? res.data
-    const flvUrl = (data as any)?.flv_url || (data as any)?.http_flv
+    let flvUrl = (data as any)?.flv_url || (data as any)?.http_flv
     if (!flvUrl) {
       message.error('未获取到播放地址')
       return
+    }
+    const token = userStore.token
+    if (token) {
+      flvUrl += flvUrl.includes('?') ? `&token=${encodeURIComponent(token)}` : `?token=${encodeURIComponent(token)}`
     }
     window.open(flvUrl, '_blank')
     livePlayingId.value = id

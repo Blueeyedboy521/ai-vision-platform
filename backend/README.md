@@ -115,7 +115,7 @@ python -m engine.main
 
 - FastAPI 负责：
   - 读写 MySQL 中的业务配置（摄像头、模型、算法、摄像头-算法绑定等）
-  - 将「当前生效配置」写入 Redis 对应的 Key
+  - 启动时通过 `bootstrap_sync` 将当前 DB 配置全量写入 Redis，并为每路摄像头在流管理器中注册流；增删改配置时同步写/删 Redis 对应 Key
   - 通过 Redis Pub/Sub 向频道 `engine:config_update` 发布配置变更事件
 - 引擎负责：
   - 启动时从 Redis 读取所需配置快照

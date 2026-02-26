@@ -22,7 +22,6 @@ class InferenceRequest:
     frame_id: int
     frame: Any  # numpy.ndarray
     timestamp: float
-    result_queue: Any  # Queue
 
 
 @dataclass
@@ -50,7 +49,8 @@ class InferenceWorker:
         model_path: str,
         model_type: str,
         input_size: tuple,
-        request_queue: Any
+        request_queue: Any,
+        result_queues: Dict[str, Any]
     ):
         """
         初始化 Worker
@@ -62,6 +62,7 @@ class InferenceWorker:
             model_type: 模型类型 (yolo, onnx, tensorrt)
             input_size: 输入尺寸
             request_queue: 请求队列
+            result_queues: 结果队列映射 {camera_id: queue}
         """
         self.worker_id = worker_id
         self.model_id = model_id
@@ -69,6 +70,7 @@ class InferenceWorker:
         self.model_type = model_type
         self.input_size = input_size
         self.request_queue = request_queue
+        self.result_queues = result_queues
         
         self.model = None
         self.thread: Optional[threading.Thread] = None
@@ -125,25 +127,41 @@ class InferenceWorker:
                 request = self.request_queue.get(timeout=1)
                 if request is None:
                     continue
+
+                # 兼容 dict / InferenceRequest 两种形式
+                if isinstance(request, dict):
+                    frame = request.get("frame")
+                    request_id = request.get("request_id")
+                    camera_id = request.get("camera_id")
+                    frame_id = request.get("frame_id")
+                else:
+                    frame = request.frame
+                    request_id = request.request_id
+                    camera_id = request.camera_id
+                    frame_id = request.frame_id
+                
+                if frame is None:
+                    continue
                 
                 # 执行推理
                 start_time = time.perf_counter()
-                detections = self._inference(request.frame)
+                detections = self._inference(frame)
                 inference_time_ms = (time.perf_counter() - start_time) * 1000
                 
                 # 构建结果
                 result = InferenceResult(
-                    request_id=request.request_id,
-                    camera_id=request.camera_id,
-                    frame_id=request.frame_id,
+                    request_id=request_id,
+                    camera_id=camera_id,
+                    frame_id=frame_id,
                     detections=detections,
                     inference_time_ms=inference_time_ms,
                     timestamp=time.time()
                 )
                 
-                # 放入结果队列
-                if request.result_queue:
-                    request.result_queue.put(result)
+                # 放入结果队列（根据 camera_id 选择对应的结果队列）
+                result_queue = self.result_queues.get(camera_id)
+                if result_queue:
+                    result_queue.put(result)
                 
                 # 更新统计
                 self.processed_frames += 1
