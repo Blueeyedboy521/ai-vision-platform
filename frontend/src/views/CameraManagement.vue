@@ -1,15 +1,6 @@
 <template>
   <div class="camera-management">
-    <!-- Add/Edit Camera Page -->
-    <AddCameraPage
-      v-if="showAddPage"
-      :camera-id="editingCameraId"
-      :area-tree-data="areaTreeData"
-      @cancel="handleCancelCameraPage"
-      @save="handleSaveCamera"
-    />
-
-    <div v-else class="point-layout">
+    <div class="point-layout">
       <!-- Left: Area Tree -->
       <AreaTree 
         ref="areaTreeRef"
@@ -20,6 +11,16 @@
 
       <!-- Right: Main Content -->
       <div class="point-content">
+        <!-- Add/Edit Camera Page -->
+        <AddCameraPage
+          v-if="showAddPage"
+          :camera-id="editingCameraId"
+          :area-tree-data="areaTreeData"
+          @cancel="handleCancelCameraPage"
+          @save="handleSaveCamera"
+        />
+
+        <template v-else>
         <!-- Fixed Top Section -->
         <div class="point-content__fixed-top">
           <!-- Page Header -->
@@ -139,6 +140,7 @@
               class="camera-card--animated"
               @detail="handleDetail"
               @play="handlePlayCamera"
+              @toggleInference="toggleInference"
             />
             <div v-if="searchedCameras.length === 0" class="camera-grid__empty">
               <n-empty description="暂无匹配的摄像头设备">
@@ -206,12 +208,31 @@
                   </n-tag>
                 </div>
                 <div class="camera-table__col camera-table__col--action">
-                  <n-button text type="primary" size="small" @click="openEditCamera(cam)">
-                    编辑
-                  </n-button>
-                  <n-button text size="small" @click="handleDetail(cam)">
-                    详情
-                  </n-button>
+                  <div class="camera-table__actions">
+                    <div class="camera-table__action-buttons">
+                      <n-button text type="primary" size="small" @click="openEditCamera(cam)">
+                        编辑
+                      </n-button>
+                      <n-button text size="small" @click="handleDetail(cam)">
+                        详情
+                      </n-button>
+                      <n-button text ghost size="small" type="primary" @click="toggleInference(cam)">
+                        {{ cam.inferenceStarted ? '停止推理' : '启动推理' }}
+                      </n-button>
+                    </div>
+                    <div class="camera-table__inference-status">
+                      <span
+                        class="inference-badge"
+                        :class="{
+                          'inference-badge--on': cam.inferenceStarted,
+                          'inference-badge--off': !cam.inferenceStarted
+                        }"
+                      >
+                        <span class="inference-badge__dot"></span>
+                        {{ cam.inferenceStarted ? '推理中' : '未启动推理' }}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div v-if="searchedCameras.length === 0" class="camera-table__empty">
@@ -237,6 +258,7 @@
             </template>
           </n-pagination>
         </div>
+        </template>
       </div>
     </div>
 
@@ -246,10 +268,14 @@
       preset="card"
       title="实时预览"
       :style="{ width: '960px' }"
-      @after-leave="currentPlayUrl = null"
+      @after-leave="handlePlayerClosed"
     >
       <div style="width: 100%; aspect-ratio: 16 / 9;">
-        <FlvPlayer v-if="currentPlayUrl" :url="currentPlayUrl" />
+        <FlvPlayer
+          v-if="currentPlayUrl"
+          :url="currentPlayUrl"
+          @fatal="handlePlayFatalError"
+        />
       </div>
     </n-modal>
   </div>
@@ -281,7 +307,7 @@ import CameraCard from '@/components/CameraCard.vue'
 import PointStatCard from '@/components/PointStatCard.vue'
 import AddCameraPage from '@/components/AddCameraPage.vue'
 import type { CameraInfo } from '@/components/CameraCard.vue'
-import { getCameraList, createCamera, updateCamera, type Camera, getCameraPlayUrls, cameraLiveHeartbeat, startCamera, stopCamera } from '@/api/camera'
+import { getCameraList, createCamera, updateCamera, type Camera, getCameraPlayUrls, cameraLiveHeartbeat, startCamera, stopCamera, startCameraInference, stopCameraInference } from '@/api/camera'
 import FlvPlayer from '@/components/FlvPlayer.vue'
 
 const appStore = useAppStore()
@@ -341,7 +367,24 @@ function convertCamera(camera: Camera): CameraInfo {
     ip: camera.ip_address || '-',
     thumbnail: thumb,
     online: camera.status === 'online',
-    algorithmEnabled: ((camera as any).algorithm_count ?? 0) > 0
+    algorithmEnabled: ((camera as any).algorithm_count ?? 0) > 0,
+    inferenceStarted: (camera as any).inference_started ?? (camera as any).inferenceStarted ?? false
+  }
+}
+
+async function toggleInference(cam: CameraInfo) {
+  const id = cam.id
+  try {
+    if (cam.inferenceStarted) {
+      await stopCameraInference(id)
+      message.success('已停止推理')
+    } else {
+      await startCameraInference(id)
+      message.success('已启动推理')
+    }
+    await loadCameras()
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || e?.message || '操作失败')
   }
 }
 
@@ -349,10 +392,14 @@ function convertCamera(camera: Camera): CameraInfo {
 async function loadCameras() {
   loading.value = true
   try {
+    const areaId =
+      selectedAreaKey.value && selectedAreaKey.value !== 'root'
+        ? selectedAreaKey.value
+        : undefined
     const response = await getCameraList({
       page: currentPage.value,
       page_size: pageSize.value,
-      area_id: selectedAreaKey.value || undefined,
+      area_id: areaId,
       keyword: searchQuery.value || undefined
     })
     const res = response.data as any
@@ -413,6 +460,24 @@ async function handlePlayCamera(cam: CameraInfo) {
   }
 }
 
+function handlePlayerClosed() {
+  currentPlayUrl.value = null
+  if (livePlayingId.value) {
+    const id = livePlayingId.value
+    stopCamera(id).catch(() => {})
+    livePlayingId.value = null
+  }
+  if (liveHeartbeatTimer !== null) {
+    window.clearInterval(liveHeartbeatTimer)
+    liveHeartbeatTimer = null
+  }
+}
+
+function handlePlayFatalError() {
+  message.error('30 秒内未能播放该摄像头的流，请稍后重试')
+  showPlayer.value = false
+}
+
 // 搜索时重新加载
 const searchedCameras = computed(() => allCameras.value)
 const paginatedCameras = computed(() => allCameras.value)
@@ -447,6 +512,17 @@ function handleTreeUpdate(treeData: any[]) {
   areaTreeData.value = treeData
   // Update area key label map
   updateAreaKeyLabelMap(treeData)
+
+   // 默认选中根节点（第一个节点），并同步到摄像头列表
+  if (!selectedAreaKey.value && treeData && treeData.length > 0) {
+    const root = treeData[0]
+    if (root && root.key) {
+      selectedAreaKey.value = root.key as string
+      currentAreaLabel.value = root.label as string
+      currentPage.value = 1
+      loadCameras()
+    }
+  }
 }
 
 function updateAreaKeyLabelMap(nodes: any[], map: Record<string, string> = {}) {
@@ -780,6 +856,52 @@ async function handleSaveCamera(data: any) {
 .camera-table__col--action {
   flex: 0.8;
   justify-content: flex-end;
+}
+
+.camera-table__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.camera-table__action-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.camera-table__inference-status {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.inference-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+}
+
+.inference-badge__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.inference-badge--on {
+  border-color: var(--success-color);
+  color: var(--success-color);
+}
+
+.inference-badge--on .inference-badge__dot {
+  background: var(--success-color);
+}
+
+.inference-badge--off {
+  opacity: 0.8;
 }
 
 .camera-table__name-cell {

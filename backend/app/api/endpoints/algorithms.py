@@ -501,6 +501,10 @@ async def update_camera_algorithm_config(
     """
     result = await db.execute(
         select(CameraAlgorithm)
+        .options(
+            selectinload(CameraAlgorithm.algorithm),
+            selectinload(CameraAlgorithm.camera),
+        )
         .where(
             CameraAlgorithm.id == config_id,
             CameraAlgorithm.camera_id == camera_id

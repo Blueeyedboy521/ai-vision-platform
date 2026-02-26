@@ -332,10 +332,14 @@
       preset="card"
       title="实时预览"
       :style="{ width: '960px' }"
-      @after-leave="livePlayUrl = null"
+      @after-leave="handleLivePlayerClosed"
     >
       <div style="width: 100%; aspect-ratio: 16 / 9;">
-        <FlvPlayer v-if="livePlayUrl" :url="livePlayUrl" />
+        <FlvPlayer
+          v-if="livePlayUrl"
+          :url="livePlayUrl"
+          @fatal="handleLivePlayFatalError"
+        />
       </div>
     </n-modal>
   </div>
@@ -473,14 +477,8 @@ function convertToTreeSelectOptions(nodes: any[]): TreeSelectOption[] {
   }))
 }
 
-// Algorithms：默认示例，编辑已有摄像头时会被后端配置覆盖
-const algorithms = ref<Algorithm[]>([
-  { id: 'face', name: '人脸识别', nameEn: 'Face ID', enabled: true, confidence: 85, regionCount: 0, timeRange: '00:00 - 23:59', startTime: 0, endTime: 86340000 },
-  { id: 'intrusion', name: '区域入侵检测', enabled: true, confidence: 70, regionCount: 2, timeRange: '18:00 - 06:00', startTime: 64800000, endTime: 21600000 },
-  { id: 'helmet', name: '安全帽佩戴识别', enabled: true, confidence: 90, regionCount: 0, timeRange: '08:00 - 18:00', startTime: 28800000, endTime: 64800000 },
-  { id: 'fire', name: '烟火检测', enabled: false, confidence: 65, startTime: 0, endTime: 86340000 },
-  { id: 'fall', name: '异常检测', enabled: false, confidence: 50, startTime: 0, endTime: 86340000 }
-])
+// Algorithms：新增摄像头时为空；编辑时从后端摄像头算法配置加载
+const algorithms = ref<Algorithm[]>([])
 
 const enabledAlgorithmCount = computed(() => 
   algorithms.value.filter(a => a.enabled).length
@@ -599,6 +597,23 @@ async function playLive() {
   } catch (e: any) {
     message.error(e?.response?.data?.detail || e?.message || '启动播放失败')
   }
+}
+
+function handleLivePlayerClosed() {
+  livePlayUrl.value = null
+  if (props.cameraId && livePlaying.value) {
+    stopCamera(props.cameraId).catch(() => {})
+  }
+  livePlaying.value = false
+  if (liveHeartbeatTimer !== null) {
+    window.clearInterval(liveHeartbeatTimer)
+    liveHeartbeatTimer = null
+  }
+}
+
+function handleLivePlayFatalError() {
+  message.error('30 秒内未能播放该摄像头的流，请稍后重试')
+  showLivePlayer.value = false
 }
 
 function configRegion(algo: Algorithm) {
@@ -812,7 +827,7 @@ function syncAlgorithmsFromConfigs() {
   if (!props.cameraId) return
   const configs = cameraAlgorithmConfigs.value
   if (!configs || configs.length === 0) {
-    // 没有配置算法时，保持现有列表（可选：也可以清空）
+    algorithms.value = []
     return
   }
   algorithms.value = configs.map((cfg, idx) => {
@@ -857,6 +872,7 @@ watch(() => props.cameraId, (id) => {
     previewImage.value = '/camera-warehouse-01.jpg'
     snapshots.value = []
     cameraAlgorithmConfigs.value = []
+    algorithms.value = []
   }
 })
 
@@ -864,7 +880,7 @@ function handleCancel() {
   emit('cancel')
 }
 
-function handleSave() {
+async function handleSave() {
   const data = {
     ...formData.value,
     rtspUrl: formData.value.rtspUrl,
@@ -874,9 +890,33 @@ function handleSave() {
     resolution: formData.value.resolution ?? undefined,
     algorithms: algorithms.value.filter(a => a.enabled)
   }
-  if (props.cameraId) {
-    (data as any).id = props.cameraId
+
+  // 若是编辑已有摄像头，则在保存前将算法状态/置信度同步到后端 CameraAlgorithm 配置
+  const cameraId = props.cameraId
+  if (cameraId) {
+    const updatePromises: Promise<unknown>[] = []
+    for (const algo of algorithms.value) {
+      if (!algo.configId) continue
+      // 将 0-100 的置信度转换为 0-1 发送给后端
+      const payload: { confidence?: number; is_enabled?: boolean } = {
+        confidence: algo.confidence / 100,
+        is_enabled: algo.enabled
+      }
+      updatePromises.push(
+        updateCameraAlgorithmConfig(cameraId, algo.configId, payload)
+      )
+    }
+    try {
+      if (updatePromises.length > 0) {
+        await Promise.all(updatePromises)
+      }
+    } catch (e) {
+      console.error('更新摄像头算法配置失败', e)
+      // 不中断主流程，仍然继续保存摄像头基本信息
+    }
+    ;(data as any).id = cameraId
   }
+
   emit('save', data)
 }
 </script>

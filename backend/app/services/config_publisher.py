@@ -22,6 +22,8 @@ class ConfigAction(str, Enum):
     CAMERA_DELETE = "camera_delete"
     CAMERA_START = "camera_start"
     CAMERA_STOP = "camera_stop"
+    CAMERA_INFERENCE_START = "camera_inference_start"
+    CAMERA_INFERENCE_STOP = "camera_inference_stop"
     
     # 算法相关
     ALGORITHM_ADD = "algorithm_add"
@@ -111,6 +113,20 @@ class ConfigPublisher:
         """发布摄像头停止"""
         return await self.publish(
             ConfigAction.CAMERA_STOP,
+            {"camera_id": camera_id}
+        )
+
+    async def publish_camera_inference_start(self, camera_id: str) -> bool:
+        """发布摄像头推理启动"""
+        return await self.publish(
+            ConfigAction.CAMERA_INFERENCE_START,
+            {"camera_id": camera_id}
+        )
+
+    async def publish_camera_inference_stop(self, camera_id: str) -> bool:
+        """发布摄像头推理停止"""
+        return await self.publish(
+            ConfigAction.CAMERA_INFERENCE_STOP,
             {"camera_id": camera_id}
         )
     

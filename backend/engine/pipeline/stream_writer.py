@@ -11,6 +11,8 @@ from typing import Any, Optional
 from queue import Empty
 
 from loguru import logger
+from common.redis import get_redis_client
+from common.redis.channels import RedisKeys
 
 
 class StreamWriter:
@@ -56,6 +58,26 @@ class StreamWriter:
         self.pushed_frames = 0
         self.dropped_frames = 0
         self.reconnect_count = 0
+
+        # Redis 客户端（用于标记正在推流的摄像头）
+        self._redis_client = None
+        self._live_started_reported = False
+
+    def _mark_live_started(self):
+        """
+        将当前摄像头加入 cameras:live:started 集合。
+        只在本进程生命周期内上报一次，避免与心跳监控的 SREM 抢状态。
+        """
+        if self._live_started_reported:
+            return
+        try:
+            if self._redis_client is None:
+                self._redis_client = get_redis_client()
+                self._redis_client.connect_sync()
+            self._redis_client.sync_client.sadd(RedisKeys.CAMERAS_LIVE_STARTED, self.camera_id, ex=60)
+            self._live_started_reported = True
+        except Exception as e:
+            logger.warning(f"摄像头{self.camera_id} 标记推流状态到 Redis 失败: {e}")
     
     def start(self):
         """启动推流"""
@@ -143,6 +165,9 @@ class StreamWriter:
         next_send_time = 0.0  # 下一帧允许发送的墙钟时间（首次不等待）
         
         sleep_duration = 0.0
+        # 每隔一段时间打印一次存活日志，便于排查推流是否仍在运行
+        last_alive_log_time = time.time()
+        alive_log_interval = 10.0  # 秒
         while self.running:
             try:
                 # logger.debug(f"摄像头{self.camera_id} StreamWriter 推流循环时间1: {time.perf_counter()},队列大小: {self.frame_queue.qsize()}")
@@ -193,6 +218,19 @@ class StreamWriter:
                 except Exception as e:
                     logger.error(f"摄像头{self.camera_id} 写入帧失败: {e}")
                     self._process = None
+
+                # 周期性打印推流存活日志
+                now_wall = time.time()
+                if now_wall - last_alive_log_time >= alive_log_interval:
+                    last_alive_log_time = now_wall
+                    # 更新 Redis 中的推流状态，便于心跳监控感知当前仍有推流
+                    self._mark_live_started()
+                    logger.info(
+                        f"摄像头{self.camera_id} StreamWriter 仍在推流中，"
+                        f"pushed_frames={self.pushed_frames}, "
+                        f"dropped_frames={self.dropped_frames}, "
+                        f"reconnect_count={self.reconnect_count}"
+                    )
                 # logger.debug(f"摄像头{self.camera_id} StreamWriter 发送帧{frame_id} 时间3: {now}，next_send_time: {next_send_time}，sleep_duration: {sleep_duration}，target_interval: {target_interval}")
                     
             except Exception as e:

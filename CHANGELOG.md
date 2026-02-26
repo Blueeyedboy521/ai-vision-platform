@@ -1,5 +1,16 @@
 ## Changelog
 
+### v2.4.0 - 2026-02-26
+
+- **摄像头实时预览（HTTP-FLV）**：前端新增 `FlvPlayer` 组件，使用 flv.js 在页面内播放 HTTP-FLV 流，摄像头管理页与配置页均支持点击“播放”在弹窗中预览实时画面，避免浏览器直接下载 FLV 文件。
+- **跨域与开发代理优化**：在 ZLMediaKit 保持安全配置的前提下，通过 Vite `/flv` 代理将 `http://127.0.0.1:8080` 映射为同源路径，解决前端开发环境下 HTTP-FLV 的 CORS 限制。
+- **摄像头算法配置统一管理**：后端新增摄像头-算法配置更新接口（支持置信度、启用状态与检测区域 `regions`），前端将“已配置算法”合并进“算法能力与阈值配置”模块，支持在同一列表中添加/删除算法、调节置信度、启用开关与时间计划。
+- **检测区域绘制持久化**：DrawRegionModal 支持绘制多边形检测区域，保存后写入 `camera_algorithms.regions` 字段并同步到 Redis 与 Engine；重新打开摄像头配置页时会从后端加载并在画布上还原已配置区域。
+- **直播心跳与状态监控基础**：补充摄像头直播心跳服务与相关管道日志，Engine 可结合 `/cameras/{id}/live-heartbeat` 与 Redis Key 实现对推流会话的超时回收与在线状态更新，为后续完善摄像头状态管理打基础。
+- **Pipeline 三模式与推理开关**：Engine 支持 `live_only` / `inference_only` / `full` 三种 Pipeline 模式，依据「点播状态 + 启用算法 + 推理开关」自动切换；FastAPI 新增 `/cameras/{id}/start-inference` / `stop-inference` 接口，前端在列表/卡片中可单独控制后台推理启停。
+- **推流状态与心跳联动**：`StreamWriter` 周期性将正在推流的摄像头写入 `cameras:live:started`，`/cameras/{id}/start` 时即时写入首帧心跳，`live_heartbeat_monitor` 依据集合与心跳 Key 精准判断无人观看时自动触发停止推流。
+- **摄像头管理 UI 增强**：摄像头管理页支持区域树默认选中根节点且在新增/编辑后保持展开与选中状态；列表/卡片视图统一展示「推理中 / 未启动推理」状态徽标并提供显式的启停按钮；HTTP-FLV 播放失败时前端会以 5 秒间隔自动重试最多 30 秒，失败后给出友好提示。
+
 ### v2.3.0 - 2026-02-25
 
 - **应用启动与 Redis 缓存**：新增 `bootstrap_sync`，FastAPI 启动时将 DB 中模型、算法、摄像头及摄像头-算法绑定全量写入 Redis，并为每路摄像头在 `stream_manager` 中注册流，Engine 冷启动即可从 Redis 读到完整配置；摄像头增/改/删时同步写/删 `camera:config:{id}`，保证与 DB 一致。

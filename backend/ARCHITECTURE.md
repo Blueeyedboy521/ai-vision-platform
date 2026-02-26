@@ -255,6 +255,120 @@ backend/
   - 运行过程中订阅 `engine:config_update`，根据事件类型到 Redis 读取最新配置并更新内存（当前版本先以日志为主，后续可在此基础上实现真正的热更新）。
 - **应用启动全量同步**：FastAPI 启动时通过 `app.services.bootstrap_sync.sync_configs_to_redis_and_streams()` 将当前 DB 中的模型、算法、摄像头及摄像头-算法绑定全量写入 Redis，并调用 `stream_manager.register_stream` 为每个摄像头注册流，保证 Engine 冷启动即可从 Redis 读到完整配置；摄像头增/改/删时 API 同步写/删 `camera:config:{camera_id}`。
 
+### 3.3 摄像头启用状态与直播控制
+
+这一小节总结「摄像头 / 算法启用状态」以及「直播心跳」是如何在 **前端 → FastAPI → Redis → Engine** 之间协同工作的，方便后续扩展代码时快速对齐设计。
+
+#### 3.3.1 启用状态的传递路径
+
+- **数据库字段**
+  - 摄像头表 `cameras`：字段 `is_enabled` 表示该摄像头当前是否启用。
+  - 摄像头-算法绑定表 `camera_algorithms`：字段 `is_enabled` 表示该条绑定（某摄像头使用某算法）是否生效。
+- **FastAPI 写 Redis（应用启动 + 增删改时）**
+  - `bootstrap_sync` 在启动阶段会把 DB 中所有启用/未启用的摄像头、算法及绑定写入 Redis：
+    - `camera:config:{camera_id}` 中包含：`id`, `name`, `rtsp_url`, `fps`, `is_enabled`。
+    - `camera:algorithm:config:{camera_id}:{algorithm_id}` 中包含：`camera_id`, `algorithm_id`, `model_id`, `confidence`, `alert_config`, `regions`, `is_enabled`。
+  - 后续通过 `cameras.py` / `algorithms.py` 里的增删改接口更新配置时，也会同步写/删上述 Key，保证 Redis 中的状态与 DB 一致。
+- **Engine 加载配置时的过滤逻辑**
+  - `Scheduler._load_config()` 在从 Redis 扫描配置时，统一按 `is_enabled` 做过滤：
+    - 加载摄像头基础配置：
+      - 仅当 `cfg.get("is_enabled", True)` 为真时，才创建 `CameraConfig` 放入 `self.cameras`；禁用摄像头不会被 Engine 管理，不会启动 Pipeline。
+    - 加载摄像头-算法绑定配置：
+      - 仅当绑定配置 `is_enabled=True` 时，才将该算法信息附加到 `self.cameras[camera_id].algorithms` 中；禁用的绑定不会参与推理。
+- **前端行为约束**
+  - 在前端「摄像头编辑」中勾选/取消“启用”会改写 `cameras.is_enabled`，进而影响：
+    - 是否允许通过 `/cameras/{id}/start` 启动该摄像头；
+    - Engine 在下一次刷新 Redis 快照后是否还会为该摄像头创建/维持 Pipeline。
+
+#### 3.3.2 摄像头启动/停止命令与 Engine 协同
+
+- **启动摄像头 `/cameras/{id}/start`**
+  - FastAPI 侧：
+    - 先从 DB 查询摄像头：
+      - 若不存在：返回 `404`。
+      - 若 `is_enabled=False`：返回 `400`，提示「摄像头未启用，请先在编辑页启用后再播放」。
+    - 若合法，则执行两步：
+      1. 将 `camera_id` 加入集合 `cameras:live:started`（`RedisKeys.CAMERAS_LIVE_STARTED`），表示该摄像头当前存在至少一个直播会话。
+      2. 通过 `ConfigPublisher.publish_camera_start(camera_id)` 向频道 `engine:config_update` 发布 `camera_start` 事件。
+  - Engine 侧（`Scheduler._handle_config_event`）：
+    - 收到 `camera_start` 后，将 `camera_id` 记录为「点播中」（`live_started`），并调用 `_reconcile_camera_pipeline(camera_id)`。
+    - `_reconcile_camera_pipeline` 会结合「点播状态 + 启用算法」决定是否启动 Pipeline，以及启动模式（见下方 *Pipeline 三种模式*）。
+- **停止摄像头 `/cameras/{id}/stop`**
+  - FastAPI 侧：
+    - 从 DB 检查摄像头存在性。
+    - 从集合 `cameras:live:started` 中移除该 `camera_id`。
+    - 通过 `ConfigPublisher.publish_camera_stop(camera_id)` 发布 `camera_stop` 事件。
+  - Engine 侧：
+    - 收到 `camera_stop` 后，将 `camera_id` 从「点播中」移除，并调用 `_reconcile_camera_pipeline(camera_id)`：
+      - 若该摄像头 **没有启用算法**：停止 Pipeline（不再拉/推流）。
+      - 若该摄像头 **有启用算法**：切换为 `inference_only`（保留拉流+推理，但**停止推流**），避免无人观看时仍推流浪费资源。
+
+##### 3.3.2.1 Pipeline 三种模式（按点播与算法自动切换）
+
+Engine 启动/切换 Pipeline 时，会把 `mode` 传入 `Pipeline.run()`，在 Pipeline 进程内按模式启动不同线程：
+
+- **`live_only`（仅点播转推）**
+  - 启动：`StreamReader` + `StreamWriter`
+  - 不启动：推理请求（`request_queue=None`）、`ResultHandler`
+  - 适用：摄像头**无启用算法**，但前端正在点播，需要实时画面
+- **`inference_only`（后台推理，不推流）**
+  - 启动：`StreamReader` + `ResultHandler`（以及推理请求）
+  - 不启动：`StreamWriter`
+  - 适用：摄像头**有启用算法**，但当前无人点播；仍需后台推理/告警/事件推送
+- **`full`（点播 + 推理）**
+  - 启动：`StreamReader` + `StreamWriter` + `ResultHandler`
+  - 适用：摄像头**有启用算法**，且前端正在点播
+
+##### 3.3.2.2 Engine 启动时的“是否启动 Pipeline”规则
+
+`Scheduler._load_config()` 会从 Redis 读取：
+
+- 摄像头基础配置：`camera:config:{camera_id}`
+- 启用的摄像头-算法配置：`camera:algorithm:config:{camera_id}:{algorithm_id}`（仅 `is_enabled=True` 的绑定会进入 `CameraConfig.algorithms`）
+- 点播集合：`cameras:live:started`（`RedisKeys.CAMERAS_LIVE_STARTED`）
+
+随后在 `Scheduler._start_pipelines()` 中按规则启动：
+
+- **无启用算法 + 未点播**：不启动 Pipeline
+- **无启用算法 + 点播中**：启动 `live_only`
+- **有启用算法 + 未点播**：启动 `inference_only`
+- **有启用算法 + 点播中**：启动 `full`
+
+#### 3.3.3 直播心跳与自动关闭推流
+
+为避免「浏览器已经关闭但 Engine 仍在推流」浪费资源，系统通过 Redis Key + 后台任务实现直播心跳检测与自动关流：
+
+- **前端心跳上报**
+  - 播放页面在开始播放后，每隔 ~60 秒调用：
+    - `POST /cameras/{camera_id}/live-heartbeat`
+  - FastAPI 侧实现：
+    - 写入 `camera:live:heartbeat:{camera_id}`（`RedisKeys.camera_live_heartbeat`），Value 为当前时间戳，TTL 设置为 `LIVE_HEARTBEAT_TIMEOUT_SEC`（目前为 90 秒）。
+- **“已启动直播”集合**
+  - 当 `POST /cameras/{id}/start` 成功时，将 `camera_id` 加入集合：
+    - `cameras:live:started`（`RedisKeys.CAMERAS_LIVE_STARTED`）。
+  - 当 `POST /cameras/{id}/stop` 被调用时，或心跳检测认为超时时，会把 `camera_id` 从该集合中移除。
+- **后台心跳检测任务 `live_heartbeat_monitor`**
+  - 位置：`app/services/live_heartbeat_monitor.py`。
+  - 启动：
+    - 在 `app.main` 的 `lifespan` 中，通过 `start_live_heartbeat_monitor()` 创建一个后台 `asyncio` 任务，按固定间隔（`CHECK_INTERVAL_SEC`，当前为 45 秒）执行一次检测。
+  - 检测流程（伪代码）：
+
+    ```python
+    members = SMEMBERS("cameras:live:started")
+    for camera_id in members:
+        key = f"camera:live:heartbeat:{camera_id}"
+        if EXISTS(key):
+            continue  # 心跳正常
+        # 心跳已过期：从集合移除并通知 Engine 停止
+        SREM("cameras:live:started", camera_id)
+        publish_camera_stop(camera_id)  # 触发 Engine 关闭该路 Pipeline
+    ```
+
+  - 关闭：
+    - 在 `lifespan` 的关闭阶段调用 `stop_live_heartbeat_monitor()`，通过 `task.cancel()` 方式让循环优雅结束。
+
+综合以上三小节，**前端启用开关 + 播放心跳** 最终会在 Engine 侧转化为「是否启动 Pipeline」以及「以何种模式运行（full / live_only / inference_only）」，从而精确控制 **拉流 / 推流 / 推理** 的资源开销。新同事只要沿用这套 Redis Key 与事件约定，即可扩展更多控制能力（例如：按用户级别限流、并发路数控制、无人观看自动停推流、仍保留后台推理等）。
+
 ---
 
 ## 四、存储设计（本地 / MinIO / S3）
@@ -398,6 +512,10 @@ backend/
 FastAPI 服务提供业务 API，相对简单：
 
 ```
+先启动虚拟环境
+D:\workspace\python\ai-vision-platform>D:/software/Anaconda3/Scripts/activate
+
+(base) D:\workspace\python\ai-vision-platform>conda activate base
 启动命令: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 启动流程:

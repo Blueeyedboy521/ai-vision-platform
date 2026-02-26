@@ -180,7 +180,6 @@ class StreamReader:
                 stderr=subprocess.DEVNULL,
                 bufsize=width * height * 3 * 2,
             )
-            time.sleep(3)
             # 获取启动返回值，判断是否真的启动
             if self._ffmpeg_process.poll() is not None:
                 logger.error(f"摄像头{self.camera_id} FFmpeg 拉流启动失败，命令: {cmd_str}")
@@ -244,6 +243,9 @@ class StreamReader:
         """读取循环：按目标 fps 墙钟节流"""
         frame_interval = 1.0 / self.fps
         next_read_time = 0.0
+        # 每隔一段时间打印一次存活日志，便于排查拉流是否仍在运行
+        last_alive_log_time = time.time()
+        alive_log_interval = 10.0  # 秒
 
         while self.running:
             try:
@@ -290,6 +292,18 @@ class StreamReader:
                     continue
 
                 self.total_frames += 1
+
+                # 周期性打印拉流存活日志
+                now_wall = time.time()
+                if now_wall - last_alive_log_time >= alive_log_interval:
+                    last_alive_log_time = now_wall
+                    logger.info(
+                        f"摄像头{self.camera_id} StreamReader 仍在拉流中，"
+                        f"total_frames={self.total_frames}, "
+                        f"inference_frames={self.inference_frames}, "
+                        f"dropped_frames={self.dropped_frames}, "
+                        f"use_ffmpeg={self.use_ffmpeg}"
+                    )
 
                 if self.frame_queue:
                     try:

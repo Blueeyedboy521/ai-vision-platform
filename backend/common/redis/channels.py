@@ -119,8 +119,14 @@ class RedisKeys:
 
     # ==================== 摄像头直播心跳 ====================
     CAMERA_LIVE_HEARTBEAT_PREFIX = "camera:live:heartbeat:"
+    # 已启动直播的摄像头集合（用于心跳超时检测）
+    CAMERAS_LIVE_STARTED = "cameras:live:started"
+    # 已启动推理的摄像头集合（用于 Engine 判断是否需要后台推理）
+    CAMERAS_INFERENCE_STARTED = "cameras:inference:started"
 
     @staticmethod
     def camera_live_heartbeat(camera_id: str) -> str:
-        """获取摄像头直播心跳的 Key"""
+        """获取摄像头直播心跳的 Key（建议设置 TTL，如 90 秒）"""
         return f"{RedisKeys.CAMERA_LIVE_HEARTBEAT_PREFIX}{camera_id}"
+
+    # 推理启停不需要心跳 Key，目前用集合即可

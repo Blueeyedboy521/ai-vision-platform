@@ -102,6 +102,18 @@ async def get_cameras(
     cameras = result.scalars().all()
     
     # 构建响应
+    # 推理启动状态：从 Redis 读取集合一次
+    inference_started: set[str] = set()
+    try:
+        redis = get_redis()
+        members = await redis.client.smembers(RedisKeys.CAMERAS_INFERENCE_STARTED)
+        inference_started = {
+            x.decode() if isinstance(x, (bytes, bytearray)) else str(x)
+            for x in (members or [])
+        }
+    except Exception as e:
+        logger.warning(f"读取推理启动集合失败，将忽略: {e}")
+
     data = []
     for camera in cameras:
         # 统计关联算法数量
@@ -136,6 +148,7 @@ async def get_cameras(
             "resolution": camera.resolution,
             "is_enabled": camera.is_enabled,
             "status": camera.status,
+            "inference_started": camera.id in inference_started,
             "algorithm_count": algo_count,
             "snapshot_url": snapshot_url,
             "created_at": camera.created_at.isoformat(),
@@ -208,6 +221,13 @@ async def get_camera(
             snapshot_url = storage.get_url(camera.last_snapshot_path)
         except Exception as e:
             logger.error(f"构建摄像头快照 URL 失败: {e}")
+
+    inference_started = False
+    try:
+        redis = get_redis()
+        inference_started = await redis.client.sismember(RedisKeys.CAMERAS_INFERENCE_STARTED, camera_id)
+    except Exception as e:
+        logger.warning(f"读取推理启动状态失败，将忽略: {e}")
     return success_response({
         "id": camera.id,
         "name": camera.name,
@@ -228,11 +248,75 @@ async def get_camera(
         "resolution": camera.resolution,
         "is_enabled": camera.is_enabled,
         "status": camera.status,
+        "inference_started": inference_started,
         "algorithm_count": algo_count,
         "snapshot_url": snapshot_url,
         "created_at": camera.created_at.isoformat(),
         "updated_at": camera.updated_at.isoformat()
     })
+
+
+@router.post("/{camera_id}/start-inference", summary="启动摄像头推理")
+async def start_camera_inference(
+    camera_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    启动摄像头推理（后台推理，不要求前端点播）。
+    若该摄像头没有任何启用算法，则拒绝启动。
+    """
+    result = await db.execute(select(Camera).where(Camera.id == camera_id))
+    camera = result.scalar_one_or_none()
+    if camera is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="摄像头不存在")
+    if not camera.is_enabled:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="摄像头未启用")
+
+    algo_count_result = await db.execute(
+        select(func.count(CameraAlgorithm.id))
+        .where(CameraAlgorithm.camera_id == camera_id, CameraAlgorithm.is_enabled == True)  # noqa: E712
+    )
+    enabled_algo_count = algo_count_result.scalar() or 0
+    if enabled_algo_count <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="未启用任何算法，无法启动推理")
+
+    try:
+        redis = get_redis()
+        await redis.client.sadd(RedisKeys.CAMERAS_INFERENCE_STARTED, camera_id)
+    except Exception as e:
+        logger.error(f"记录推理启动集合失败: {camera_id}, 错误: {e}")
+
+    config_publisher = get_config_publisher()
+    await config_publisher.publish_camera_inference_start(camera_id)
+    logger.info(f"摄像头推理启动命令已发送: {camera_id}")
+    return success_response(None, "推理启动命令已发送")
+
+
+@router.post("/{camera_id}/stop-inference", summary="停止摄像头推理")
+async def stop_camera_inference(
+    camera_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    停止摄像头推理（后台推理关闭）。如果仍在点播，则可能只保留推流（由 Engine 决策）。
+    """
+    result = await db.execute(select(Camera).where(Camera.id == camera_id))
+    camera = result.scalar_one_or_none()
+    if camera is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="摄像头不存在")
+
+    try:
+        redis = get_redis()
+        await redis.client.srem(RedisKeys.CAMERAS_INFERENCE_STARTED, camera_id)
+    except Exception as e:
+        logger.error(f"从推理启动集合移除失败: {camera_id}, 错误: {e}")
+
+    config_publisher = get_config_publisher()
+    await config_publisher.publish_camera_inference_stop(camera_id)
+    logger.info(f"摄像头推理停止命令已发送: {camera_id}")
+    return success_response(None, "推理停止命令已发送")
 
 
 @router.post("", summary="创建摄像头")
@@ -484,7 +568,16 @@ async def start_camera(
     # 加入“直播已启动”集合，供心跳超时检测使用
     try:
         redis = get_redis()
-        await redis.client.sadd(RedisKeys.CAMERAS_LIVE_STARTED, camera_id)
+        # 也应该设置60秒过期
+        await redis.client.sadd(RedisKeys.CAMERAS_LIVE_STARTED, camera_id, ex=60 )
+        # 启动时立即写入一次心跳 Key，避免在前端首个心跳上报前被误判为超时
+        import time
+        ts = int(time.time())
+        await redis.client.set(
+            RedisKeys.camera_live_heartbeat(camera_id),
+            str(ts),
+            ex=LIVE_HEARTBEAT_TIMEOUT_SEC,
+        )
     except Exception as e:
         logger.error(f"记录直播启动集合失败: {camera_id}, 错误: {e}")
 

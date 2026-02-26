@@ -46,10 +46,29 @@
           </n-icon>
           <code>{{ camera.ip }}</code>
         </div>
-        <span class="camera-card__detail">
-          详情配置
-          <n-icon :size="14"><ChevronForwardOutline /></n-icon>
-        </span>
+        <div class="camera-card__footer-right">
+          <span
+            class="camera-card__inference"
+            :class="{
+              'camera-card__inference--on': camera.inferenceStarted,
+              'camera-card__inference--off': !camera.inferenceStarted
+            }"
+          >
+            <span class="camera-card__inference-dot"></span>
+            {{ camera.inferenceStarted ? '推理中' : '未启动推理' }}
+          </span>
+          <button
+            class="camera-card__inference-btn"
+            type="button"
+            @click.stop="emit('toggleInference', camera)"
+          >
+            {{ camera.inferenceStarted ? '停止推理' : '启动推理' }}
+          </button>
+          <span class="camera-card__detail">
+            详情配置
+            <n-icon :size="14"><ChevronForwardOutline /></n-icon>
+          </span>
+        </div>
       </div>
     </div>
   </div>
@@ -76,6 +95,7 @@ export interface CameraInfo {
   thumbnail: string
   online: boolean
   algorithmEnabled: boolean
+  inferenceStarted?: boolean
 }
 
 const props = defineProps<{
@@ -86,6 +106,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'detail', camera: CameraInfo): void
   (e: 'play', camera: CameraInfo): void
+  (e: 'toggleInference', camera: CameraInfo): void
 }>()
 </script>
 
@@ -292,6 +313,52 @@ const emit = defineEmits<{
   margin-top: var(--spacing-sm);
   padding-top: var(--spacing-md);
   border-top: 1px solid var(--border-color);
+}
+
+.camera-card__footer-right {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.camera-card__inference {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+}
+
+.camera-card__inference-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.camera-card__inference--on {
+  border-color: var(--success-color);
+  color: var(--success-color);
+}
+
+.camera-card__inference--on .camera-card__inference-dot {
+  background: var(--success-color);
+}
+
+.camera-card__inference-btn {
+  border: none;
+  background: transparent;
+  font-size: var(--font-size-xs);
+  color: var(--primary-color);
+  cursor: pointer;
+  padding: 0;
+}
+
+.camera-card__inference-btn:hover {
+  text-decoration: underline;
 }
 
 .camera-card__ip {

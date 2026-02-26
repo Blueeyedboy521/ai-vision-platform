@@ -29,6 +29,11 @@ class PipelineConfig:
     fps: int = 25
     skip_frames: int = 3
     algorithms: list = None
+    # 模式：
+    # - full: 推理 + 结果处理 + 推流
+    # - live_only: 仅拉流推流（无推理/结果处理）
+    # - inference_only: 仅推理/结果处理（不推流）
+    mode: str = "full"
 
 
 class Pipeline:
@@ -86,7 +91,8 @@ class Pipeline:
             rtsp_url=config.get("rtsp_url", ""),
             fps=config.get("fps", 25),
             skip_frames=config.get("skip_frames", 3),
-            algorithms=config.get("algorithms", [])
+            algorithms=config.get("algorithms", []),
+            mode=config.get("mode", "full"),
         )
         
         pipeline = cls(pipeline_config, request_queue, result_queue)
@@ -103,7 +109,7 @@ class Pipeline:
     
     def start(self):
         """启动 Pipeline"""
-        logger.info(f"Pipeline 启动中: {self.config.camera_name}")
+        logger.info(f"Pipeline 启动中: {self.config.camera_name}, mode={self.config.mode}")
         self.running = True
         self.start_time = time.time()
         
@@ -115,30 +121,33 @@ class Pipeline:
                 fps=self.config.fps,
                 skip_frames=self.config.skip_frames,
                 frame_queue=self.frame_queue,
-                request_queue=self.request_queue,
-                result_queue=self.result_queue
+                # live_only 模式不发推理请求
+                request_queue=self.request_queue if self.config.mode in ("full", "inference_only") else None,
+                result_queue=self.result_queue,
             )
             self.stream_reader.start()
             
-            # 启动 StreamWriter
-            push_url = self._get_push_url()
-            self.stream_writer = StreamWriter(
-                camera_id=self.config.camera_id,
-                push_url=push_url,
-                frame_queue=self.frame_queue,
-                fps=self.config.fps
-            )
-            self.stream_writer.start()
+            # 启动 StreamWriter（仅 live_only / full 模式）
+            if self.config.mode in ("full", "live_only"):
+                push_url = self._get_push_url()
+                self.stream_writer = StreamWriter(
+                    camera_id=self.config.camera_id,
+                    push_url=push_url,
+                    frame_queue=self.frame_queue,
+                    fps=self.config.fps
+                )
+                self.stream_writer.start()
             
-            # 启动 ResultHandler
-            self.result_handler = ResultHandler(
-                camera_id=self.config.camera_id,
-                result_queue=self.result_queue,
-                frame_queue=self.frame_queue,
-                draw_queue=self.draw_queue,
-                algorithms=self.config.algorithms or []
-            )
-            self.result_handler.start()
+            # 启动 ResultHandler（仅 full / inference_only 模式）
+            if self.config.mode in ("full", "inference_only"):
+                self.result_handler = ResultHandler(
+                    camera_id=self.config.camera_id,
+                    result_queue=self.result_queue,
+                    frame_queue=self.frame_queue,
+                    draw_queue=self.draw_queue,
+                    algorithms=self.config.algorithms or []
+                )
+                self.result_handler.start()
             
             logger.info(f"Pipeline 启动完成: {self.config.camera_name}")
             

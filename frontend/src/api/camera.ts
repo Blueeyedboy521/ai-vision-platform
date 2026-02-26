@@ -28,6 +28,7 @@ export interface Camera {
   fps: number
   resolution: string | null
   algorithm_count?: number
+  inference_started?: boolean
   snapshot_url?: string | null
   created_at: string
   updated_at: string
@@ -139,6 +140,20 @@ export function startCamera(id: string) {
  */
 export function stopCamera(id: string) {
   return request.post(`/cameras/${id}/stop`)
+}
+
+/**
+ * 启动摄像头推理（后台推理）
+ */
+export function startCameraInference(id: string) {
+  return request.post(`/cameras/${id}/start-inference`)
+}
+
+/**
+ * 停止摄像头推理（后台推理）
+ */
+export function stopCameraInference(id: string) {
+  return request.post(`/cameras/${id}/stop-inference`)
 }
 
 /**

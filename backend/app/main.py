@@ -25,6 +25,7 @@ from app.api import api_router
 from app.websocket.manager import connection_manager
 from app.websocket.handlers import websocket_handler
 from app.services.bootstrap_sync import sync_configs_to_redis_and_streams
+from app.services.live_heartbeat_monitor import start_live_heartbeat_monitor, stop_live_heartbeat_monitor
 from app.consumer.worker_pool import alarm_worker_pool
 
 
@@ -73,6 +74,8 @@ async def lifespan(app: FastAPI):
         redis_ok = True
         logger.info("启动告警消费者线程池...")
         alarm_worker_pool.start(num_workers=settings.ALARM_CONSUMER_WORKERS)
+        logger.info("启动直播心跳超时检测任务...")
+        start_live_heartbeat_monitor()
     except Exception as e:
         # 提取完整堆栈信息（字符串格式）
         exc_traceback = traceback.format_exc()
@@ -98,6 +101,8 @@ async def lifespan(app: FastAPI):
     logger.info("正在关闭应用...")
     
     if redis_ok:
+        logger.info("停止直播心跳超时检测任务...")
+        stop_live_heartbeat_monitor()
         logger.info("停止告警消费者线程池...")
         alarm_worker_pool.stop(timeout=5.0)
         logger.info("停止 WebSocket 处理器...")
