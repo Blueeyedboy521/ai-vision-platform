@@ -205,3 +205,25 @@ class MinIOStorage(StorageInterface):
             scheme = "https" if self.secure else "http"
             return f"{scheme}://{self.endpoint}/{self.bucket}/{path}"
 
+    def download_file(self, path: str, download_path: str) -> bool:
+        """
+        下载文件
+        """
+        try:
+            self.client.fget_object(self.bucket, path, download_path)
+            return True
+        except S3Error as e:
+            logger.error(f"下载文件失败: {path}, 错误: {e}")
+            return False
+    
+    def upload_file(self, path: str, upload_path: str) -> bool:
+        """
+        上传文件
+        """
+        try:
+            # fput_object(bucket, object_name, file_path)
+            self.client.fput_object(self.bucket, path, upload_path)
+            return True
+        except S3Error as e:
+            logger.error(f"上传文件失败: {path} -> {upload_path}, 错误: {e}")
+            return False

@@ -6,6 +6,7 @@
 """
 import threading
 import time
+import os
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
@@ -34,6 +35,9 @@ class InferenceResult:
     inference_time_ms: float
     timestamp: float
 
+
+# 定义模型下载路径
+MODEL_DOWNLOAD_PATH = "/tmp"
 
 class InferenceWorker:
     """
@@ -106,8 +110,18 @@ class InferenceWorker:
         logger.info(f"Worker {self.worker_id} 加载模型: {self.model_path}")
         
         try:
+            # 调用公共storage服务将模型文件下载到本地
+            from common.storage import get_storage
+            storage = get_storage()
+            # 拼接路径
+            model_path = os.path.join(MODEL_DOWNLOAD_PATH, self.model_path)
+            # 判断文件是否存在
+            if not os.path.exists(model_path):
+                logger.info(f"Worker {self.worker_id} 模型文件{self.model_path}不存在，开始下载到{model_path}")
+                storage.download_file(self.model_path, model_path)
+            
             self.model = ModelLoader.load(
-                model_path=self.model_path,
+                model_path=model_path,
                 model_type=self.model_type,
                 input_size=self.input_size
             )
@@ -116,11 +130,14 @@ class InferenceWorker:
             logger.error(f"Worker {self.worker_id} 模型加载失败: {e}")
             # 使用模拟模型
             self.model = None
-    
     def _process_loop(self):
         """处理循环"""
         logger.debug(f"Worker {self.worker_id} 进入处理循环")
-        
+        last_alive_log_time = time.time()
+        alive_log_interval = 10.0  # 秒
+        last_camera_id: Optional[str] = None
+        last_frame_id: Optional[int] = None
+
         while self.is_running:
             try:
                 # 从队列获取请求 (超时 1 秒)
@@ -166,7 +183,27 @@ class InferenceWorker:
                 # 更新统计
                 self.processed_frames += 1
                 self.total_time_ms += inference_time_ms
-                
+                last_camera_id = camera_id
+                last_frame_id = frame_id
+
+                # 周期性打印推理存活日志
+                now_wall = time.time()
+                if (
+                    now_wall - last_alive_log_time >= alive_log_interval
+                    and last_camera_id is not None
+                    and last_frame_id is not None
+                ):
+                    last_alive_log_time = now_wall
+                    logger.info(
+                        f"InferenceWorker {self.worker_id} 正在推理，"
+                        f"model_id={self.model_id}, "
+                        f"camera_id={last_camera_id}, "
+                        f"frame_id={last_frame_id}, "
+                        f"processed_frames={self.processed_frames}, "
+                        f"avg_time_ms={self.total_time_ms / max(self.processed_frames, 1):.2f}"
+                    )
+                    # 打印推理结果
+                    logger.info(f"推理结果: {result}")
             except Exception as e:
                 if "Empty" not in str(type(e).__name__):
                     logger.error(f"Worker {self.worker_id} 处理异常: {e}")
@@ -183,12 +220,15 @@ class InferenceWorker:
         """
         if self.model is None:
             # 模拟推理结果
+            logger.warning(f"Worker {self.worker_id} 模型未加载，返回空结果，model_id={self.model_id}")
             return []
         
         try:
             # 执行推理
             results = self.model.predict(frame)
-            
+            # 打印frame的信息和推理结果
+            logger.info(f"frame信息: {frame.shape}, {frame.dtype}, {frame.min()}, {frame.max()}, 帧大小: {frame.size}，推理结果: {results}")
+           
             # 解析结果
             detections = []
             for r in results:

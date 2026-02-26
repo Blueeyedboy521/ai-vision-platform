@@ -451,6 +451,11 @@ async def create_camera_algorithm_config(
     db.add(config)
     await db.commit()
     
+    # 计算生效配置（此处避免访问懒加载关系，只使用当前覆盖值）
+    effective_confidence = config.confidence if config.confidence is not None else 0.5
+    effective_alert_config = config.alert_config or {}
+    regions = config.regions
+    
     # 写入摄像头-算法配置到 Redis
     try:
         redis = get_redis()
@@ -461,9 +466,9 @@ async def create_camera_algorithm_config(
                     "camera_id": camera_id,
                     "algorithm_id": config_data.algorithm_id,
                     "model_id": config.model_id,
-                    "confidence": config.get_effective_confidence(),
-                    "alert_config": config.get_effective_alert_config(),
-                    "regions": config.regions,
+                    "confidence": effective_confidence,
+                    "alert_config": effective_alert_config,
+                    "regions": regions,
                     "is_enabled": config.is_enabled,
                 },
                 ensure_ascii=False,
@@ -477,9 +482,9 @@ async def create_camera_algorithm_config(
         camera_id,
         config_data.algorithm_id,
         {
-            "confidence": config.get_effective_confidence(),
-            "regions": config.regions,
-            "alert_config": config.get_effective_alert_config()
+            "confidence": effective_confidence,
+            "regions": regions,
+            "alert_config": effective_alert_config
         }
     )
     

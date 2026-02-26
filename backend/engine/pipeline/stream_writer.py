@@ -74,7 +74,11 @@ class StreamWriter:
             if self._redis_client is None:
                 self._redis_client = get_redis_client()
                 self._redis_client.connect_sync()
-            self._redis_client.sync_client.sadd(RedisKeys.CAMERAS_LIVE_STARTED, self.camera_id, ex=60)
+            # 将摄像头加入集合，并为整个集合设置过期时间，避免长期遗留脏数据
+            self._redis_client.sync_client.sadd(RedisKeys.CAMERAS_LIVE_STARTED, self.camera_id)
+            # 这里为 key 设置 TTL，而不是为单个成员设置（Redis 不支持成员级 TTL）
+            # 多个推流实例都会不断刷新这个 TTL
+            self._redis_client.sync_client.expire(RedisKeys.CAMERAS_LIVE_STARTED, 60)
             self._live_started_reported = True
         except Exception as e:
             logger.warning(f"摄像头{self.camera_id} 标记推流状态到 Redis 失败: {e}")

@@ -178,3 +178,25 @@ class StorageInterface(ABC):
         date_path = dt.strftime("%Y/%m/%d")
         filename = f"{camera_id}_{int(timestamp * 1000)}.{extension}"
         return f"snapshots/{date_path}/{filename}"
+    
+    @abstractmethod
+    def download_file(self, path: str, download_path: str) -> bool:
+        """
+        下载文件
+        
+        Args:
+            path: 文件路径
+            download_path: 下载路径
+        """
+        
+    
+    @abstractmethod
+    def upload_file(self, path: str, upload_path: str) -> bool:
+        """
+        上传文件
+        
+        Args:
+            path: 文件路径
+            upload_path: 上传路径
+        """
+        pass

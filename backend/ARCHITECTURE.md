@@ -376,8 +376,9 @@ Engine 启动/切换 Pipeline 时，会把 `mode` 传入 `Pipeline.run()`，在 
 ### 4.1 存储接口与实现
 
 - 抽象接口：`common.storage.StorageInterface`
-  - `save_file` / `save_image` / `get_file` / `delete_file` / `exists` / `get_url`
-  - `generate_alarm_path` / `generate_video_path` 等辅助方法。
+  - 基础文件操作：`save_file` / `save_image` / `get_file` / `delete_file` / `exists` / `get_url`
+  - 上传/下载能力：`upload_file(path, upload_path)` / `download_file(path, download_path)`
+  - 业务辅助方法：`generate_alarm_path` / `generate_video_path` 等，用于统一告警截图、视频片段等路径规则。
 - 实现：
   - `LocalStorage`：本地磁盘目录（用于开发环境）。
   - `MinIOStorage`：基于 MinIO 的 S3 协议实现。
@@ -606,9 +607,10 @@ python -m engine.main
 │              ├── 遍历每个模型配置                                  │
 │              │   └── 启动 N 个 InferenceWorker 线程               │
 │              │       每个 Worker:                                  │
+│              │       ├── 通过 `common.storage.get_storage()` 从统一存储中下载模型文件到本地临时目录 │
 │              │       ├── 加载自己的模型实例                        │
 │              │       ├── 绑定到对应模型的请求队列                  │
-│              │       └── 进入循环: 取帧 → 推理 → 分发结果         │
+│              │       └── 进入循环: 取帧 → 推理 → 分发结果，并每 ~10 秒输出一次存活/性能日志 │
 │              │                                                     │
 │              └── 所有 Worker 就绪后，打印日志:                     │
 │                  "InferenceService 启动完成: YOLO 3 Workers, Fire 2 Workers"

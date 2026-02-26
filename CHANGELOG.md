@@ -8,8 +8,9 @@
 - **检测区域绘制持久化**：DrawRegionModal 支持绘制多边形检测区域，保存后写入 `camera_algorithms.regions` 字段并同步到 Redis 与 Engine；重新打开摄像头配置页时会从后端加载并在画布上还原已配置区域。
 - **直播心跳与状态监控基础**：补充摄像头直播心跳服务与相关管道日志，Engine 可结合 `/cameras/{id}/live-heartbeat` 与 Redis Key 实现对推流会话的超时回收与在线状态更新，为后续完善摄像头状态管理打基础。
 - **Pipeline 三模式与推理开关**：Engine 支持 `live_only` / `inference_only` / `full` 三种 Pipeline 模式，依据「点播状态 + 启用算法 + 推理开关」自动切换；FastAPI 新增 `/cameras/{id}/start-inference` / `stop-inference` 接口，前端在列表/卡片中可单独控制后台推理启停。
-- **推流状态与心跳联动**：`StreamWriter` 周期性将正在推流的摄像头写入 `cameras:live:started`，`/cameras/{id}/start` 时即时写入首帧心跳，`live_heartbeat_monitor` 依据集合与心跳 Key 精准判断无人观看时自动触发停止推流。
+- **推流状态与心跳联动**：`StreamWriter` 周期性将正在推流的摄像头写入 `cameras:live:started`，并为该集合设置适当 TTL，配合 `/cameras/{id}/start` 即时写入的首帧心跳，使 `live_heartbeat_monitor` 能依据集合与心跳 Key 精准判断无人观看时自动触发停止推流。
 - **摄像头管理 UI 增强**：摄像头管理页支持区域树默认选中根节点且在新增/编辑后保持展开与选中状态；列表/卡片视图统一展示「推理中 / 未启动推理」状态徽标并提供显式的启停按钮；HTTP-FLV 播放失败时前端会以 5 秒间隔自动重试最多 30 秒，失败后给出友好提示。
+ - **模型存储与推理日志增强**：`StorageInterface` 新增通用 `upload_file` / `download_file` 能力并在 `MinIOStorage` 中实现，`InferenceWorker` 启动时会通过统一存储将模型文件下载到本地临时目录后再加载，并在推理循环中每 ~10 秒输出一次包含 `model_id`、`camera_id`、`frame_id` 与平均耗时的存活日志，便于排查模型与性能问题。
 
 ### v2.3.0 - 2026-02-25
 
