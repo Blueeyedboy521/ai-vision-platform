@@ -2,17 +2,20 @@
 """
 推理 Worker
 
-从请求队列获取帧，执行推理，将结果放入结果队列
+职责：加载推理器、从队列取请求、组 params 字典交给 infer(params)、将返回的 InferenceResult 放入结果队列。
+推理实现类在 infer 内完成计时与结果组装，Worker 不再二次组装。
+可选：若 config 中 TEST_SAVE_DRAW=True，Worker 会调用推理器的 draw_boxes(result) 并保存绘框图到 TEST_SAVE_DRAW_DIR。
 """
+import os
 import threading
 import time
-import os
+from dataclasses import replace
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
 from loguru import logger
 
-from .model_loader import ModelLoader
+from .inferencer import build_inferencer, Inferencer, InferenceResult
 
 
 @dataclass
@@ -25,27 +28,11 @@ class InferenceRequest:
     timestamp: float
 
 
-@dataclass
-class InferenceResult:
-    """推理结果"""
-    request_id: str
-    camera_id: str
-    frame_id: int
-    detections: list  # 检测结果列表
-    inference_time_ms: float
-    timestamp: float
-
-
-# 定义模型下载路径
-MODEL_DOWNLOAD_PATH = "/tmp"
-
 class InferenceWorker:
     """
-    推理 Worker
-    
-    作为线程运行，从请求队列获取帧并执行推理
+    推理 Worker：仅负责加载推理器、循环取帧、调用 infer、组结果入队。
     """
-    
+
     def __init__(
         self,
         worker_id: str,
@@ -56,18 +43,6 @@ class InferenceWorker:
         request_queue: Any,
         result_queues: Dict[str, Any]
     ):
-        """
-        初始化 Worker
-        
-        Args:
-            worker_id: Worker 标识
-            model_id: 模型 ID
-            model_path: 模型文件路径
-            model_type: 模型类型 (yolo, onnx, tensorrt)
-            input_size: 输入尺寸
-            request_queue: 请求队列
-            result_queues: 结果队列映射 {camera_id: queue}
-        """
         self.worker_id = worker_id
         self.model_id = model_id
         self.model_path = model_path
@@ -75,61 +50,46 @@ class InferenceWorker:
         self.input_size = input_size
         self.request_queue = request_queue
         self.result_queues = result_queues
-        
-        self.model = None
+
+        self.inferencer: Optional[Inferencer] = None
         self.thread: Optional[threading.Thread] = None
         self.is_running = False
-        
-        # 统计信息
         self.processed_frames = 0
         self.total_time_ms = 0
-    
+
     def start(self):
         """启动 Worker"""
         logger.info(f"Worker {self.worker_id} 启动中...")
-        
-        # 加载模型
         self._load_model()
-        
-        # 启动处理线程
         self.is_running = True
         self.thread = threading.Thread(target=self._process_loop, daemon=True)
         self.thread.start()
-        
         logger.info(f"Worker {self.worker_id} 已启动")
-    
+
     def stop(self):
         """停止 Worker"""
         self.is_running = False
         if self.thread:
             self.thread.join(timeout=5)
         logger.info(f"Worker {self.worker_id} 已停止")
-    
+
     def _load_model(self):
-        """加载模型"""
+        """创建推理器并调用 load()，下载与 classes 等由实现类负责"""
         logger.info(f"Worker {self.worker_id} 加载模型: {self.model_path}")
-        
         try:
-            # 调用公共storage服务将模型文件下载到本地
-            from common.storage import get_storage
-            storage = get_storage()
-            # 拼接路径
-            model_path = os.path.join(MODEL_DOWNLOAD_PATH, self.model_path)
-            # 判断文件是否存在
-            if not os.path.exists(model_path):
-                logger.info(f"Worker {self.worker_id} 模型文件{self.model_path}不存在，开始下载到{model_path}")
-                storage.download_file(self.model_path, model_path)
-            
-            self.model = ModelLoader.load(
-                model_path=model_path,
+            device = "cuda:0"
+            self.inferencer = build_inferencer(
                 model_type=self.model_type,
-                input_size=self.input_size
+                model_id=self.model_id,
+                model_path=self.model_path,
+                device=device,
+                input_size=self.input_size,
             )
+            self.inferencer.load()
             logger.info(f"Worker {self.worker_id} 模型加载完成")
         except Exception as e:
             logger.error(f"Worker {self.worker_id} 模型加载失败: {e}")
-            # 使用模拟模型
-            self.model = None
+            self.inferencer = None
     def _process_loop(self):
         """处理循环"""
         logger.debug(f"Worker {self.worker_id} 进入处理循环")
@@ -159,34 +119,41 @@ class InferenceWorker:
                 
                 if frame is None:
                     continue
-                
-                # 执行推理
-                start_time = time.perf_counter()
-                detections = self._inference(frame)
-                inference_time_ms = (time.perf_counter() - start_time) * 1000
-                
-                # 构建结果
-                result = InferenceResult(
-                    request_id=request_id,
-                    camera_id=camera_id,
-                    frame_id=frame_id,
-                    detections=detections,
-                    inference_time_ms=inference_time_ms,
-                    timestamp=time.time()
-                )
-                
-                # 放入结果队列（根据 camera_id 选择对应的结果队列）
+
+                params = {
+                    "frame": frame,
+                    "request_id": request_id,
+                    "camera_id": camera_id,
+                    "frame_id": frame_id,
+                    "timestamp": time.time(),
+                }
+                result = self._inference(params)
+
                 result_queue = self.result_queues.get(camera_id)
                 if result_queue:
                     result_queue.put(result)
-                
-                # 更新统计
+
+                # 测试验证：若 .env 中 TEST_SAVE_DRAW=True，调用推理器 draw_boxes(result) 并保存绘框图
+                try:
+                    from config.settings import get_settings
+                    settings = get_settings()
+                    if settings.TEST_SAVE_DRAW and settings.TEST_SAVE_DRAW_DIR and self.inferencer is not None:
+                        result_with_frame = replace(result, frame=params.get("frame"))
+                        drawn = self.inferencer.draw_boxes(result_with_frame)
+                        if drawn is not None:
+                            os.makedirs(settings.TEST_SAVE_DRAW_DIR, exist_ok=True)
+                            import cv2
+                            path = os.path.join(settings.TEST_SAVE_DRAW_DIR, f"test__{camera_id}_{frame_id}.jpg")
+                            cv2.imwrite(path, drawn)
+                            logger.info(f"测试绘框图已保存: {path}, 检测数={len(result.detections)}")
+                except Exception as e:
+                    logger.debug(f"测试保存绘框图跳过或失败: {e}")
+
                 self.processed_frames += 1
-                self.total_time_ms += inference_time_ms
+                self.total_time_ms += result.inference_time_ms
                 last_camera_id = camera_id
                 last_frame_id = frame_id
 
-                # 周期性打印推理存活日志
                 now_wall = time.time()
                 if (
                     now_wall - last_alive_log_time >= alive_log_interval
@@ -195,61 +162,39 @@ class InferenceWorker:
                 ):
                     last_alive_log_time = now_wall
                     logger.info(
-                        f"InferenceWorker {self.worker_id} 正在推理，"
-                        f"model_id={self.model_id}, "
-                        f"camera_id={last_camera_id}, "
-                        f"frame_id={last_frame_id}, "
+                        f"InferenceWorker {self.worker_id} 正在推理，model_id={self.model_id}, "
+                        f"camera_id={last_camera_id}, frame_id={last_frame_id}, "
                         f"processed_frames={self.processed_frames}, "
-                        f"avg_time_ms={self.total_time_ms / max(self.processed_frames, 1):.2f}"
+                        f"avg_time_ms={self.total_time_ms / max(self.processed_frames, 1):.2f}, 推理结果: {result}"
                     )
-                    # 打印推理结果
-                    logger.info(f"推理结果: {result}")
             except Exception as e:
                 if "Empty" not in str(type(e).__name__):
                     logger.error(f"Worker {self.worker_id} 处理异常: {e}")
     
-    def _inference(self, frame) -> list:
-        """
-        执行推理
-        
-        Args:
-            frame: 输入图像
-            
-        Returns:
-            检测结果列表
-        """
-        if self.model is None:
-            # 模拟推理结果
+    def _inference(self, params: Dict[str, Any]) -> InferenceResult:
+        """调用推理器 infer(params)，由实现类内部计时并组装完整 InferenceResult 返回"""
+        if self.inferencer is None:
             logger.warning(f"Worker {self.worker_id} 模型未加载，返回空结果，model_id={self.model_id}")
-            return []
-        
+            return InferenceResult(
+                request_id=params.get("request_id", ""),
+                camera_id=params.get("camera_id", ""),
+                frame_id=int(params.get("frame_id", 0)),
+                detections=[],
+                inference_time_ms=0.0,
+                timestamp=params.get("timestamp", time.time()),
+            )
         try:
-            # 执行推理
-            results = self.model.predict(frame)
-            # 打印frame的信息和推理结果
-            logger.info(f"frame信息: {frame.shape}, {frame.dtype}, {frame.min()}, {frame.max()}, 帧大小: {frame.size}，推理结果: {results}")
-           
-            # 解析结果
-            detections = []
-            for r in results:
-                boxes = r.boxes
-                if boxes is None:
-                    continue
-                    
-                for box in boxes:
-                    detection = {
-                        "class_id": int(box.cls[0]),
-                        "class_name": self.model.names[int(box.cls[0])],
-                        "confidence": float(box.conf[0]),
-                        "bbox": box.xyxy[0].tolist()  # [x1, y1, x2, y2]
-                    }
-                    detections.append(detection)
-            
-            return detections
-            
+            return self.inferencer.infer(params)
         except Exception as e:
             logger.error(f"推理失败: {e}")
-            return []
+            return InferenceResult(
+                request_id=params.get("request_id", ""),
+                camera_id=params.get("camera_id", ""),
+                frame_id=int(params.get("frame_id", 0)),
+                detections=[],
+                inference_time_ms=0.0,
+                timestamp=params.get("timestamp", time.time()),
+            )
     
     def get_stats(self) -> dict:
         """获取统计信息"""

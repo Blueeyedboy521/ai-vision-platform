@@ -1,5 +1,15 @@
 ## Changelog
 
+### v2.5.0 - 2026-02-28
+
+- **推理层接口化与实现拆分**：Engine 推理抽象为统一接口 `Inferencer`（`inferencer.py`），包含 `load()`、`infer(params)`、`draw_boxes(result)`、`close()`；YOLO 与 ONNX 分别实现于 `inferencer_yolo.py`、`inferencer_onnx.py`；`build_inferencer(model_type, ...)` 工厂按类型创建实现类，Worker 只负责调用 `load()` 与 `infer(params)` 并入队。
+- **推理结果与入参统一**：`infer(params)` 接收含 `frame/request_id/camera_id/frame_id` 的字典，实现类内部计时并返回完整 `InferenceResult`（含 `detections`、`inference_time_ms` 等）；Worker 不再二次组装结果；`InferenceResult` 增加可选字段 `frame` 仅用于 `draw_boxes`。
+- **实现类自管加载与 classes**：各实现类在 `load()` 内完成模型下载（含存储路径→本地）、从 Redis `model:config:{model_id}` 读取 `classes` 初始化类别名；Worker 不再传 `class_names`，Service 不再向 Worker 传递 `classes`。
+- **绘框接口与测试保存**：接口定义 `draw_boxes(result: InferenceResult)`，由各实现类在 `result.frame` 上绘制 `result.detections`；配置项 `TEST_SAVE_DRAW`、`TEST_SAVE_DRAW_DIR`（.env + config.settings）控制是否在 Worker 中调用 `draw_boxes` 并保存绘框图到本地用于验证。
+- **认证与用户缓存**：登录成功后用户信息写入 Redis（`user:cache:{user_id}`），TTL 与 access token 一致；`get_current_user` 优先使用请求内 `request.state.current_user`，再查 Redis，未命中再查 DB 并回写缓存；同请求内多次依赖只解析一次；修改密码后清除对应用户缓存。
+- **接口冗余与查询优化**：去除增删改接口中不必要的 `db.refresh`（areas/algorithms/models/cameras）；`get_cameras` 不再 `selectinload(Camera.area)`，列表仅返回 `area_id`，`area_name` 由前端从区域树解析；算法创建后不再 refresh，摄像头-算法配置更新后使用直接属性写 Redis 避免懒加载。
+- **配置与示例**：`.env.example` 与 `config.settings` 新增 `TEST_SAVE_DRAW`、`TEST_SAVE_DRAW_DIR`；Scheduler 模型配置增加 `classes` 写入 Redis 供 Engine 使用，`input_size` 统一为 (h,w)。
+
 ### v2.4.0 - 2026-02-26
 
 - **摄像头实时预览（HTTP-FLV）**：前端新增 `FlvPlayer` 组件，使用 flv.js 在页面内播放 HTTP-FLV 流，摄像头管理页与配置页均支持点击“播放”在弹窗中预览实时画面，避免浏览器直接下载 FLV 文件。

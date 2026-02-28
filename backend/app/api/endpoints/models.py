@@ -258,7 +258,7 @@ async def create_model(
     
     db.add(model)
     await db.commit()
-    await db.refresh(model)
+    # 无需 refresh：id 为 generate_uuid，后续仅用 model.id 等已赋值字段
 
     # 如有临时文件则迁移到正式路径
     await _migrate_model_file_if_needed(model, db)

@@ -159,9 +159,9 @@ async def create_algorithm(
     """
     创建算法 (仅管理员)
     """
-    # 检查编码
+    # 检查编码,条件应该是model_id,code
     existing = await db.execute(
-        select(Algorithm).where(Algorithm.code == algo_data.code)
+        select(Algorithm).where(Algorithm.model_id == algo_data.model_id, Algorithm.code == algo_data.code)
     )
     if existing.scalar_one_or_none():
         raise HTTPException(
@@ -196,10 +196,8 @@ async def create_algorithm(
     
     db.add(algo)
     await db.commit()
-    await db.refresh(algo)
-    
-    await sync_model_classes_from_algorithms(db, algo.model_id)
-    
+    # 无需 refresh：id 等均为 Python 侧赋值，无 DB 端默认值需回读
+
     # 写入算法配置到 Redis
     try:
         redis = get_redis()
@@ -268,8 +266,6 @@ async def update_algorithm(
     algo.updated_by = current_user.id
     
     await db.commit()
-    
-    await sync_model_classes_from_algorithms(db, algo.model_id)
     
     # 更新 Redis 中的算法配置
     try:
@@ -532,11 +528,13 @@ async def update_camera_algorithm_config(
             setattr(config, field, value)
     
     config.updated_by = current_user.id
-    
+
     await db.commit()
-    await db.refresh(config)
-    
-    # 更新 Redis 中的摄像头-算法配置
+    # 无需 refresh：下面用 config 自身属性即可，避免懒加载
+
+    # 更新 Redis 中的摄像头-算法配置（用当前覆盖值，避免访问 relationship）
+    effective_confidence = config.confidence if config.confidence is not None else 0.5
+    effective_alert_config = config.alert_config or {}
     try:
         redis = get_redis()
         await redis.client.set(
@@ -546,8 +544,8 @@ async def update_camera_algorithm_config(
                     "camera_id": camera_id,
                     "algorithm_id": config.algorithm_id,
                     "model_id": config.model_id,
-                    "confidence": config.get_effective_confidence(),
-                    "alert_config": config.get_effective_alert_config(),
+                    "confidence": effective_confidence,
+                    "alert_config": effective_alert_config,
                     "regions": config.regions,
                     "is_enabled": config.is_enabled,
                 },

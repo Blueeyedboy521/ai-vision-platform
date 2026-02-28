@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from loguru import logger
 
 from .worker import InferenceWorker
-from .model_loader import ModelLoader
 
 
 @dataclass

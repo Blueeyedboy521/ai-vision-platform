@@ -194,8 +194,8 @@ async def create_area(
     
     db.add(area)
     await db.commit()
-    await db.refresh(area)
-    
+    # 无需 refresh：id 为 generate_uuid，返回仅用 id
+
     logger.info(f"区域已创建: {area.id} - {area.name}")
     
     return success_response({"id": area.id}, "创建成功")

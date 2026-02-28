@@ -108,10 +108,11 @@ backend/
 │   │
 │   ├── inference/                    # 推理服务
 │   │   ├── __init__.py
+│   │   ├── inferencer.py             # 推理器接口 (InferenceResult, Inferencer, build_inferencer)
+│   │   ├── inferencer_yolo.py        # Ultralytics YOLO 实现 (load/infer/draw_boxes)
+│   │   ├── inferencer_onnx.py       # ONNX YOLO11 实现 (load/infer/draw_boxes)
 │   │   ├── service.py                # InferenceService 进程主类
-│   │   ├── worker.py                 # InferenceWorker 线程
-│   │   ├── model_loader.py           # 模型加载器 (支持 YOLO/ONNX/TensorRT)
-│   │   └── model_registry.py         # 模型注册表
+│   │   └── worker.py                 # InferenceWorker：build_inferencer → load() → 循环 infer(params) 入队
 │   │
 │   ├── pipeline/                     # 流处理管道
 │   │   ├── __init__.py
@@ -194,6 +195,13 @@ backend/
 ├── docker-compose.yml                # Docker Compose
 └── README.md                         # 说明文档
 ```
+
+### 2.1 推理器接口与实现（Engine 推理层）
+
+- **接口**（`engine/inference/inferencer.py`）：定义 `InferenceResult`（含 `request_id`、`camera_id`、`frame_id`、`detections`、`inference_time_ms`、`timestamp`，可选 `frame`）与 `Inferencer` Protocol（`load()`、`infer(params)`、`draw_boxes(result)`、`close()`）；工厂函数 `build_inferencer(model_type, model_id, ...)` 按类型返回 YOLO 或 ONNX 实现。
+- **实现类**：`inferencer_yolo.py`（Ultralytics）、`inferencer_onnx.py`（ONNX YOLO11）。各实现类在 `load()` 内完成：从统一存储下载模型到本地、从 Redis `model:config:{model_id}` 读取 `classes` 并初始化；`infer(params)` 接收含 `frame/request_id/camera_id/frame_id` 的字典，返回完整 `InferenceResult`；`draw_boxes(result)` 在 `result.frame` 上绘制 `result.detections`。
+- **Worker 职责**：`worker.py` 仅做 `build_inferencer` → `load()` → 循环取请求、组 `params`、调用 `inferencer.infer(params)`、将结果放入结果队列；若配置 `TEST_SAVE_DRAW=True` 且 `TEST_SAVE_DRAW_DIR` 非空，则对带 `frame` 的 result 调用 `draw_boxes` 并保存到该目录，用于调试/验证。
+- **配置**：`config.settings` 与 `.env` 提供 `TEST_SAVE_DRAW`、`TEST_SAVE_DRAW_DIR`；Scheduler 将模型 `classes`、`input_size` 等写入 Redis，供 Engine 推理器加载时使用。
 
 ---
 
@@ -607,10 +615,9 @@ python -m engine.main
 │              ├── 遍历每个模型配置                                  │
 │              │   └── 启动 N 个 InferenceWorker 线程               │
 │              │       每个 Worker:                                  │
-│              │       ├── 通过 `common.storage.get_storage()` 从统一存储中下载模型文件到本地临时目录 │
-│              │       ├── 加载自己的模型实例                        │
-│              │       ├── 绑定到对应模型的请求队列                  │
-│              │       └── 进入循环: 取帧 → 推理 → 分发结果，并每 ~10 秒输出一次存活/性能日志 │
+│              │       ├── build_inferencer(model_type, ...) 创建推理器实例                      │
+│              │       ├── inferencer.load()（实现类内：下载模型、读 Redis model:config 的 classes）│
+│              │       └── 循环: 取请求 → 组 params → inferencer.infer(params) → 入队；可选 TEST_SAVE_DRAW 时 draw_boxes 并保存 │
 │              │                                                     │
 │              └── 所有 Worker 就绪后，打印日志:                     │
 │                  "InferenceService 启动完成: YOLO 3 Workers, Fire 2 Workers"
@@ -1200,8 +1207,8 @@ python -m engine.main
 │   │                                                                         │
 │   ├── 动作2+3: 告警存储 (需要先保存截图)                                   │
 │   │   │                                                                     │
-│   │   │  # Step1: 在帧上绘制检测框                                          │
-│   │   │  annotated_frame = draw_boxes(result["frame"], result["detections"])│
+│   │   │  # Step1: 在帧上绘制检测框（由 Inferencer.draw_boxes(result) 提供） │
+│   │   │  annotated_frame = inferencer.draw_boxes(result)  # result.frame + result.detections │
 │   │   │                                                                     │
 │   │   │  # Step2: 保存截图到磁盘 (异步 I/O 或线程池)                        │
 │   │   │  snapshot_path = storage.save_image(annotated_frame)                │

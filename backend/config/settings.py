@@ -152,7 +152,15 @@ class Settings(BaseSettings):
         default=100,
         description="结果队列最大长度"
     )
-    
+    TEST_SAVE_DRAW: bool = Field(
+        default=False,
+        description="是否将推理绘框图保存到本地用于验证（Worker 中调用 draw_boxes 并保存）"
+    )
+    TEST_SAVE_DRAW_DIR: str = Field(
+        default="",
+        description="测试绘框图保存目录，如 G:/ai/temp；TEST_SAVE_DRAW 为 True 时生效"
+    )
+
     # ==================== 存储配置 ====================
     STORAGE_TYPE: str = Field(
         default="local",

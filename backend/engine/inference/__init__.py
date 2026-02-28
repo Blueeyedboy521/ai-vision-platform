@@ -5,7 +5,7 @@
 提供 AI 模型推理功能
 """
 from .service import InferenceService
-from .worker import InferenceWorker
-from .model_loader import ModelLoader
+from .worker import InferenceWorker, InferenceResult
+from .inferencer import build_inferencer, Inferencer
 
-__all__ = ["InferenceService", "InferenceWorker", "ModelLoader"]
+__all__ = ["InferenceService", "InferenceWorker", "InferenceResult", "Inferencer", "build_inferencer"]

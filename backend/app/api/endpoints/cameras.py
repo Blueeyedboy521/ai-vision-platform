@@ -93,8 +93,7 @@ async def get_cameras(
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
     
-    # 分页查询
-    query = query.options(selectinload(Camera.area))
+    # 分页查询（不 load area 关系，列表仅返回 area_id，避免多余 areas 表查询）query = query.options(selectinload(Camera.area))
     query = query.order_by(Camera.created_at.desc())
     query = query.offset((page - 1) * page_size).limit(page_size)
     
@@ -136,7 +135,7 @@ async def get_cameras(
             "code": camera.code,
             "description": camera.description,
             "area_id": camera.area_id,
-            "area_name": camera.area.name if camera.area else None,
+            "area_name": None,  # 列表不查 areas 表；前端可用 area_id 从区域树解析名称
             "rtsp_url": camera.rtsp_url,
             "manufacturer": camera.manufacturer,
             "device_model": camera.device_model,
@@ -375,8 +374,8 @@ async def create_camera(
     
     db.add(camera)
     await db.commit()
-    await db.refresh(camera)
-    
+    # 无需 refresh：id 为 generate_uuid，后续仅用 camera.id 等已赋值字段
+
     # 写入 Redis 缓存，与 Engine 及流管理一致
     try:
         redis = get_redis()
@@ -443,10 +442,10 @@ async def update_camera(
         setattr(camera, field, value)
     
     camera.updated_by = current_user.id
-    
+
     await db.commit()
-    await db.refresh(camera)
-    
+    # 无需 refresh：下面仅用 camera.is_enabled 等已更新字段
+
     # 若摄像头被禁用，从“直播已启动”集合移除并通知 Engine 停止推流
     if not camera.is_enabled:
         try:

@@ -4,6 +4,7 @@
 
 提供登录、登出、Token 刷新等接口
 """
+import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
@@ -11,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.redis import get_redis
 from app.core.security import (
     verify_password,
     create_access_token,
@@ -32,7 +34,12 @@ from app.schemas.auth import (
     ChangePasswordRequest
 )
 from app.schemas.common import MessageResponse
+from common.redis.channels import RedisKeys
 from common.logging import logger
+
+# 用户缓存 TTL（秒），与 access token 一致
+_USER_CACHE_TTL = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+_USER_CACHE_KEYS = ("id", "username", "nickname", "email", "phone", "avatar", "role", "is_active")
 
 
 router = APIRouter()
@@ -94,7 +101,19 @@ async def login(
     token_data = {"sub": user.id}
     access_token = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
-    
+
+    # 写入用户信息到 Redis，后续请求 get_current_user 优先从缓存读取，减少 DB 查询
+    try:
+        redis = get_redis()
+        cache = {k: getattr(user, k) for k in _USER_CACHE_KEYS}
+        await redis.client.set(
+            RedisKeys.user_cache(user.id),
+            json.dumps(cache, ensure_ascii=False),
+            ex=_USER_CACHE_TTL,
+        )
+    except Exception as e:
+        logger.warning(f"登录后写入用户缓存失败: user_id={user.id}, err={e}")
+
     logger.info(
         f"登录成功: username={user.username}, "
         f"ip={get_client_ip(request)}"
@@ -203,19 +222,28 @@ async def change_password(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    修改当前用户密码
+    修改当前用户密码（从 DB 拉取用户以校验旧密码并更新，修改后清除 Redis 用户缓存）
     """
-    # 验证旧密码
-    if not verify_password(password_data.old_password, current_user.password):
+    result = await db.execute(select(User).where(User.id == current_user.id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
+
+    if not verify_password(password_data.old_password, user.password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="旧密码错误"
         )
-    
-    # 更新密码
-    current_user.password = hash_password(password_data.new_password)
+
+    user.password = hash_password(password_data.new_password)
     await db.commit()
-    
-    logger.info(f"密码已修改: username={current_user.username}")
-    
+
+    # 清除用户缓存，下次请求会从 DB 加载并重新写入缓存
+    try:
+        redis = get_redis()
+        await redis.client.delete(RedisKeys.user_cache(user.id))
+    except Exception as e:
+        logger.warning(f"修改密码后清除用户缓存失败: user_id={user.id}, err={e}")
+
+    logger.info(f"密码已修改: username={user.username}")
     return MessageResponse(code=0, message="密码修改成功")

@@ -43,6 +43,7 @@ class ModelConfig:
     path: str
     model_type: str  # yolo, onnx, tensorrt
     input_size: tuple = (640, 640)
+    classes: List[str] = field(default_factory=list)
     inference_time_ms: float = 30.0
     gpu_memory_mb: int = 500
 
@@ -356,10 +357,12 @@ class Scheduler:
                     name=cfg.get("name", model_id),
                     path=cfg.get("model_path", ""),
                     model_type=cfg.get("model_type", "yolo"),
+                    # 统一按 (h, w) 存储，供 ONNX letterbox/预处理使用
                     input_size=(
-                        int(cfg.get("input_width", 640)),
                         int(cfg.get("input_height", 640)),
+                        int(cfg.get("input_width", 640)),
                     ),
+                    classes=list(cfg.get("classes") or []),
                     inference_time_ms=float(cfg.get("inference_ms", 30.0)),
                     gpu_memory_mb=int(cfg.get("gpu_memory_mb", 500)),
                 )
@@ -468,7 +471,8 @@ class Scheduler:
                 "name": model.name,
                 "path": model.path,
                 "model_type": model.model_type,
-                "input_size": model.input_size
+                "input_size": model.input_size,
+                "classes": model.classes,
             }
             for model_id, model in self.models.items()
         }
