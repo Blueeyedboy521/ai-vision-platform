@@ -25,9 +25,13 @@ from app.schemas.algorithm import (
 )
 from app.schemas.common import success_response, page_response
 from app.services.config_publisher import get_config_publisher
-from app.services.model_sync import sync_model_classes_from_algorithms
 from common.logging import logger
 from common.redis import RedisKeys
+from app.core.redis import (
+    write_model_to_redis,
+    write_algorithm_to_redis,
+    delete_algorithm_from_redis,
+)
 
 
 router = APIRouter()
@@ -198,27 +202,8 @@ async def create_algorithm(
     await db.commit()
     # 无需 refresh：id 等均为 Python 侧赋值，无 DB 端默认值需回读
 
-    # 写入算法配置到 Redis
-    try:
-        redis = get_redis()
-        await redis.client.set(
-            RedisKeys.algorithm_config(algo.id),
-            json.dumps(
-                {
-                    "id": algo.id,
-                    "code": algo.code,
-                    "name": algo.name,
-                    "model_id": algo.model_id,
-                    "target_classes": list(algo.target_classes or []),
-                    "default_confidence": algo.default_confidence,
-                    "alert_config": algo.alert_config,
-                    "is_enabled": algo.is_enabled,
-                },
-                ensure_ascii=False,
-            ),
-        )
-    except Exception as e:
-        logger.error(f"写入算法配置到 Redis 失败: {e}")
+    # 写入算法配置到 Redis（统一封装）
+    await write_algorithm_to_redis(algo)
     
     config_publisher = get_config_publisher()
     await config_publisher.publish_algorithm_add({
@@ -229,6 +214,8 @@ async def create_algorithm(
     
     logger.info(f"算法已创建: {algo.id} - {algo.name}")
     
+    # 更新关联模型的 Redis 配置（包含算法列表）
+    await write_model_to_redis(algo.model_id, db)
     return success_response({"id": algo.id}, "创建成功")
 
 
@@ -267,27 +254,8 @@ async def update_algorithm(
     
     await db.commit()
     
-    # 更新 Redis 中的算法配置
-    try:
-        redis = get_redis()
-        await redis.client.set(
-            RedisKeys.algorithm_config(algo.id),
-            json.dumps(
-                {
-                    "id": algo.id,
-                    "code": algo.code,
-                    "name": algo.name,
-                    "model_id": algo.model_id,
-                    "target_classes": list(algo.target_classes or []),
-                    "default_confidence": algo.default_confidence,
-                    "alert_config": algo.alert_config,
-                    "is_enabled": algo.is_enabled,
-                },
-                ensure_ascii=False,
-            ),
-        )
-    except Exception as e:
-        logger.error(f"更新算法配置到 Redis 失败: {e}")
+    # 更新 Redis 中的算法配置（统一封装）
+    await write_algorithm_to_redis(algo)
     
     config_publisher = get_config_publisher()
     await config_publisher.publish_algorithm_update({
@@ -298,6 +266,8 @@ async def update_algorithm(
     
     logger.info(f"算法已更新: {algorithm_id}")
     
+    # 更新关联模型的 Redis 配置（包含算法列表）
+    await write_model_to_redis(algo.model_id, db)
     return success_response(None, "更新成功")
 
 
@@ -336,20 +306,16 @@ async def delete_algorithm(
     await db.delete(algo)
     await db.commit()
     
-    await sync_model_classes_from_algorithms(db, model_id)
-    
-    # 从 Redis 中删除算法配置
-    try:
-        redis = get_redis()
-        await redis.client.delete(RedisKeys.algorithm_config(algorithm_id))
-    except Exception as e:
-        logger.error(f"从 Redis 删除算法配置失败: {e}")
+    # 从 Redis 中删除算法配置（统一封装）
+    await delete_algorithm_from_redis(algorithm_id)
     
     config_publisher = get_config_publisher()
     await config_publisher.publish_algorithm_delete(algorithm_id)
     
     logger.info(f"算法已删除: {algorithm_id}")
     
+    # 更新关联模型的 Redis 配置（包含算法列表）
+    await write_model_to_redis(model_id, db)
     return success_response(None, "删除成功")
 
 

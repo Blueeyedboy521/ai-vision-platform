@@ -12,11 +12,10 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.redis import get_redis
+from app.core.redis import get_redis, write_model_to_redis
 from app.api.deps import get_current_user, get_current_admin
 from app.models import User, Model, Algorithm
 from app.models.base import generate_uuid
-from app.services.model_sync import sync_model_classes_from_algorithms
 from app.schemas.model import ModelCreate, ModelUpdate, ModelResponse
 from app.schemas.common import success_response, page_response
 from app.services.config_publisher import get_config_publisher
@@ -53,31 +52,6 @@ async def _migrate_model_file_if_needed(model: Model, db: AsyncSession) -> None:
         logger.info(f"模型文件已从临时存储迁移到正式路径: {final_key}")
     except Exception as e:
         logger.error(f"迁移模型文件到正式存储失败: {e}")
-
-
-async def _write_model_to_redis(model: Model) -> None:
-    """
-    将模型配置写入 Redis，供引擎读取。
-    """
-    try:
-        redis = get_redis()
-        await redis.client.set(
-            RedisKeys.model_config(model.id),
-            json.dumps(
-                {
-                    "id": model.id,
-                    "code": model.code,
-                    "name": model.name,
-                    "model_type": model.model_type,
-                    "model_path": model.model_path,
-                    "classes": list(model.classes or []),
-                    "is_enabled": model.is_enabled,
-                },
-                ensure_ascii=False,
-            ),
-        )
-    except Exception as e:
-        logger.error(f"写入模型配置到 Redis 失败: {e}")
 
 
 async def _publish_model_event(action: str, model: Model) -> None:
@@ -292,7 +266,7 @@ async def create_model(
         await db.commit()
 
     # 同步到 Redis 并通知引擎
-    await _write_model_to_redis(model)
+    await write_model_to_redis(model.id, db)
     await _publish_model_event("add", model)
     
     logger.info(f"模型已创建: {model.id} - {model.name}，已自动生成 {len(classes)} 条算法")
@@ -338,7 +312,7 @@ async def update_model(
     await _migrate_model_file_if_needed(model, db)
 
     # 同步到 Redis 并通知引擎
-    await _write_model_to_redis(model)
+    await write_model_to_redis(model.id, db)
     await _publish_model_event("update", model)
     
     logger.info(f"模型已更新: {model_id}")

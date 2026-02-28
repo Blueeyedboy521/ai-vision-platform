@@ -4,7 +4,6 @@
 
 提供摄像头 CRUD 和流媒体控制接口
 """
-import json
 from pathlib import Path
 from typing import Optional, List
 
@@ -16,7 +15,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import settings
 from app.core.database import get_db
-from app.core.redis import get_redis
+from app.core.redis import (
+    get_inference_started_camera_ids,
+    is_camera_inference_started,
+    add_camera_inference_started,
+    remove_camera_inference_started,
+    write_camera_to_redis,
+    delete_camera_from_redis,
+    add_camera_live_started,
+    remove_camera_live_started,
+    update_camera_live_heartbeat,
+)
 from app.api.deps import get_current_user
 from app.models import User, Camera, Area, CameraAlgorithm
 from app.models.base import generate_uuid
@@ -35,7 +44,6 @@ from app.services.snapshot import save_snapshot
 from common.media import get_stream_manager
 from common.logging import logger
 from common.storage import get_storage
-from common.redis import RedisKeys
 
 
 class ProbeStreamRequest(BaseModel):
@@ -101,17 +109,8 @@ async def get_cameras(
     cameras = result.scalars().all()
     
     # 构建响应
-    # 推理启动状态：从 Redis 读取集合一次
-    inference_started: set[str] = set()
-    try:
-        redis = get_redis()
-        members = await redis.client.smembers(RedisKeys.CAMERAS_INFERENCE_STARTED)
-        inference_started = {
-            x.decode() if isinstance(x, (bytes, bytearray)) else str(x)
-            for x in (members or [])
-        }
-    except Exception as e:
-        logger.warning(f"读取推理启动集合失败，将忽略: {e}")
+    # 推理启动状态：从 Redis 读取集合一次（封装在 core.redis 中）
+    inference_started: set[str] = await get_inference_started_camera_ids()
 
     data = []
     for camera in cameras:
@@ -221,12 +220,7 @@ async def get_camera(
         except Exception as e:
             logger.error(f"构建摄像头快照 URL 失败: {e}")
 
-    inference_started = False
-    try:
-        redis = get_redis()
-        inference_started = await redis.client.sismember(RedisKeys.CAMERAS_INFERENCE_STARTED, camera_id)
-    except Exception as e:
-        logger.warning(f"读取推理启动状态失败，将忽略: {e}")
+    inference_started = await is_camera_inference_started(camera_id)
     return success_response({
         "id": camera.id,
         "name": camera.name,
@@ -280,11 +274,7 @@ async def start_camera_inference(
     if enabled_algo_count <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="未启用任何算法，无法启动推理")
 
-    try:
-        redis = get_redis()
-        await redis.client.sadd(RedisKeys.CAMERAS_INFERENCE_STARTED, camera_id)
-    except Exception as e:
-        logger.error(f"记录推理启动集合失败: {camera_id}, 错误: {e}")
+    await add_camera_inference_started(camera_id)
 
     config_publisher = get_config_publisher()
     await config_publisher.publish_camera_inference_start(camera_id)
@@ -306,11 +296,7 @@ async def stop_camera_inference(
     if camera is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="摄像头不存在")
 
-    try:
-        redis = get_redis()
-        await redis.client.srem(RedisKeys.CAMERAS_INFERENCE_STARTED, camera_id)
-    except Exception as e:
-        logger.error(f"从推理启动集合移除失败: {camera_id}, 错误: {e}")
+    await remove_camera_inference_started(camera_id)
 
     config_publisher = get_config_publisher()
     await config_publisher.publish_camera_inference_stop(camera_id)
@@ -376,24 +362,8 @@ async def create_camera(
     await db.commit()
     # 无需 refresh：id 为 generate_uuid，后续仅用 camera.id 等已赋值字段
 
-    # 写入 Redis 缓存，与 Engine 及流管理一致
-    try:
-        redis = get_redis()
-        await redis.client.set(
-            RedisKeys.camera_config(camera.id),
-            json.dumps(
-                {
-                    "id": camera.id,
-                    "name": camera.name,
-                    "rtsp_url": camera.full_rtsp_url,
-                    "fps": camera.fps,
-                    "is_enabled": camera.is_enabled,
-                },
-                ensure_ascii=False,
-            ),
-        )
-    except Exception as e:
-        logger.error(f"摄像头创建后写入 Redis 失败: {camera.id}, 错误: {e}")
+    # 写入 Redis 缓存，与 Engine 及流管理一致（封装在 core.redis）
+    await write_camera_to_redis(camera)
     
     # 注册流
     stream_manager = get_stream_manager()
@@ -448,33 +418,13 @@ async def update_camera(
 
     # 若摄像头被禁用，从“直播已启动”集合移除并通知 Engine 停止推流
     if not camera.is_enabled:
-        try:
-            redis = get_redis()
-            await redis.client.srem(RedisKeys.CAMERAS_LIVE_STARTED, camera.id)
-        except Exception as e:
-            logger.error(f"更新摄像头时清理直播集合失败: {camera.id}, 错误: {e}")
+        await remove_camera_live_started(camera.id)
         config_publisher = get_config_publisher()
         await config_publisher.publish_camera_stop(camera.id)
         logger.info(f"摄像头已禁用，已发送停止命令: {camera.id}")
     
     # 更新 Redis 缓存
-    try:
-        redis = get_redis()
-        await redis.client.set(
-            RedisKeys.camera_config(camera.id),
-            json.dumps(
-                {
-                    "id": camera.id,
-                    "name": camera.name,
-                    "rtsp_url": camera.full_rtsp_url,
-                    "fps": camera.fps,
-                    "is_enabled": camera.is_enabled,
-                },
-                ensure_ascii=False,
-            ),
-        )
-    except Exception as e:
-        logger.error(f"摄像头更新后写入 Redis 失败: {camera.id}, 错误: {e}")
+    await write_camera_to_redis(camera)
     
     # 重新注册流（地址可能已变更）
     stream_manager = get_stream_manager()
@@ -519,12 +469,8 @@ async def delete_camera(
     await db.commit()
     
     # 从直播集合与缓存中移除
-    try:
-        redis = get_redis()
-        await redis.client.srem(RedisKeys.CAMERAS_LIVE_STARTED, camera_id)
-        await redis.client.delete(RedisKeys.camera_config(camera_id))
-    except Exception as e:
-        logger.error(f"摄像头删除后清理 Redis 失败: {camera_id}, 错误: {e}")
+    await remove_camera_live_started(camera_id)
+    await delete_camera_from_redis(camera_id)
     
     # 注销流
     stream_manager = get_stream_manager()
@@ -564,21 +510,10 @@ async def start_camera(
             detail="摄像头未启用，请先在编辑页启用后再播放"
         )
 
-    # 加入“直播已启动”集合，供心跳超时检测使用
-    try:
-        redis = get_redis()
-        # 也应该设置60秒过期
-        await redis.client.sadd(RedisKeys.CAMERAS_LIVE_STARTED, camera_id, ex=60 )
-        # 启动时立即写入一次心跳 Key，避免在前端首个心跳上报前被误判为超时
-        import time
-        ts = int(time.time())
-        await redis.client.set(
-            RedisKeys.camera_live_heartbeat(camera_id),
-            str(ts),
-            ex=LIVE_HEARTBEAT_TIMEOUT_SEC,
-        )
-    except Exception as e:
-        logger.error(f"记录直播启动集合失败: {camera_id}, 错误: {e}")
+    # 加入“直播已启动”集合，供心跳超时检测使用（封装在 core.redis）
+    # 注意：live_started 集合 TTL 固定为 60 秒；心跳 Key 的 TTL 使用 LIVE_HEARTBEAT_TIMEOUT_SEC
+    await add_camera_live_started(camera_id, live_set_ttl_sec=60)
+    await update_camera_live_heartbeat(camera_id, LIVE_HEARTBEAT_TIMEOUT_SEC)
 
     # 发布启动命令
     config_publisher = get_config_publisher()
@@ -610,11 +545,7 @@ async def stop_camera(
         )
 
     # 从“直播已启动”集合移除
-    try:
-        redis = get_redis()
-        await redis.client.srem(RedisKeys.CAMERAS_LIVE_STARTED, camera_id)
-    except Exception as e:
-        logger.error(f"从直播集合移除失败: {camera_id}, 错误: {e}")
+    await remove_camera_live_started(camera_id)
 
     # 发布停止命令
     config_publisher = get_config_publisher()
@@ -638,11 +569,7 @@ async def camera_live_heartbeat(
     前端播放摄像头直播流时每 60 秒调用一次。后端刷新心跳 Key 的 TTL；
     若超时未收到心跳，后台任务会通知 Engine 关闭该路推流。
     """
-    redis = get_redis()
-    import time
-    ts = int(time.time())
-    key = RedisKeys.camera_live_heartbeat(camera_id)
-    await redis.client.set(key, str(ts), ex=LIVE_HEARTBEAT_TIMEOUT_SEC)
+    ts = await update_camera_live_heartbeat(camera_id, LIVE_HEARTBEAT_TIMEOUT_SEC)
     return success_response({"camera_id": camera_id, "timestamp": ts}, "心跳已更新")
 
 

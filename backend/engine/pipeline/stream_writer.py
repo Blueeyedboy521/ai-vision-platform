@@ -4,16 +4,21 @@
 
 通过 FFmpeg 子进程将处理后的视频帧推送到流媒体服务器（RTMP/FLV）
 """
+import os
 import subprocess
+import cv2
 import threading
 import time
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from queue import Empty
 
 from loguru import logger
 from common.redis import get_redis_client
 from common.redis.channels import RedisKeys
+from config.settings import settings
 
+from .overlay_state import OverlayState
+from engine.inference.inferencer import InferenceResult
 
 class StreamWriter:
     """
@@ -30,7 +35,9 @@ class StreamWriter:
         frame_queue: Any,
         fps: int = 25,
         width: int = 1920,
-        height: int = 1080
+        height: int = 1080,
+        overlay_state: Optional[OverlayState] = None,
+        inferencer: Optional[Any] = None,
     ):
         """
         初始化 StreamWriter
@@ -49,6 +56,12 @@ class StreamWriter:
         self.fps = fps
         self.width = width
         self.height = height
+
+        # 实时绘框（方案A）：从 overlay_state 读最新 (frame_id, detections, updated_at)
+        self.overlay_state = overlay_state
+        self.inferencer = inferencer
+        self.enable_overlay_draw = bool(getattr(settings, "ENGINE_STREAM_DRAW_BOXES", False))
+        self.overlay_ttl_sec = float(getattr(settings, "ENGINE_STREAM_DRAW_TTL_SEC", 2.0))
         
         self._process: Optional[subprocess.Popen] = None
         self.thread: Optional[threading.Thread] = None
@@ -62,6 +75,20 @@ class StreamWriter:
         # Redis 客户端（用于标记正在推流的摄像头）
         self._redis_client = None
         self._live_started_reported = False
+
+    def _get_overlay_snapshot(self) -> Tuple[Optional[int], List[Dict], float]:
+        if self.overlay_state is None:
+            return None, [], 0.0
+        return self.overlay_state.snapshot()
+
+    def _should_draw_overlay(self, updated_at: float) -> bool:
+        if not self.enable_overlay_draw:
+            return False
+        if self.inferencer is None:
+            return False
+        if updated_at <= 0:
+            return False
+        return (time.time() - updated_at) <= self.overlay_ttl_sec
 
     def _mark_live_started(self):
         """
@@ -85,7 +112,7 @@ class StreamWriter:
     
     def start(self):
         """启动推流"""
-        logger.info(f"摄像头{self.camera_id} StreamWriter 启动, push_url: {self.push_url}")
+        logger.info(f"摄像头{self.camera_id} StreamWriter 启动, push_url: {self.push_url}，inferencer: {self.inferencer}")
         self.running = True
         
         if not self._connect():
@@ -188,6 +215,29 @@ class StreamWriter:
                 frame_id = frame_data.get("frame_id")
                 if frame is None:
                     continue
+
+                # 方案A：按 TTL 使用“最新检测结果”，调用 Inferencer.draw_boxes(result) 绘框
+                overlay_frame_id, overlay_dets, overlay_updated_at = self._get_overlay_snapshot()
+                # logger.info(f"摄像头{self.camera_id} StreamWriter 绘框条件: {overlay_frame_id} {overlay_dets} {overlay_updated_at} {self.inferencer}")
+                if self._should_draw_overlay(overlay_updated_at) and overlay_dets and self.inferencer is not None:
+                    result = InferenceResult(
+                        request_id="",
+                        camera_id=self.camera_id,
+                        frame_id=overlay_frame_id or 0,
+                        detections=overlay_dets,
+                        inference_time_ms=0.0,
+                        timestamp=time.time(),
+                        frame=frame,
+                    )
+                    # logger.info(f"摄像头{self.camera_id} StreamWriter 绘框结果: {result}")
+                    drawn = self.inferencer.draw_boxes(result)
+                    if drawn is not None:
+                        # save_draw_path = getattr(settings, "ENGINE_TEST_SAVE_DRAW_DIR", "G:/ai/temp/draw")
+                        # os.makedirs(save_draw_path, exist_ok=True)
+                        # save_draw_path = os.path.join(save_draw_path, f"{self.camera_id}_{frame_id}.jpg")
+                        # cv2.imwrite(save_draw_path, drawn)
+                        # logger.info(f"摄像头{self.camera_id} StreamWriter 绘框结果: {result}")
+                        frame = drawn
                 
                 if self._process is None or self._process.poll() is not None:
                     logger.warning(f"摄像头{self.camera_id} FFmpeg 未运行，尝试重连")
@@ -208,7 +258,6 @@ class StreamWriter:
                 next_send_time = now + target_interval
                 # 打印每个时间
                 # logger.debug(f"摄像头{self.camera_id} StreamWriter 发送帧{frame_id} 时间2: {now}，next_send_time: {next_send_time}，sleep_duration: {sleep_duration}，target_interval: {target_interval}")
-                import cv2
                 if frame.shape[1] != self.width or frame.shape[0] != self.height:
                     frame = cv2.resize(frame, (self.width, self.height))
                 

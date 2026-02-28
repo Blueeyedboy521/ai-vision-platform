@@ -160,6 +160,14 @@ class Settings(BaseSettings):
         default="",
         description="测试绘框图保存目录，如 G:/ai/temp；TEST_SAVE_DRAW 为 True 时生效"
     )
+    ENGINE_STREAM_DRAW_BOXES: bool = Field(
+        default=False,
+        description="是否在 StreamWriter 推流时实时绘框（方案A：用最新推理结果覆盖后续帧，允许拖影）"
+    )
+    ENGINE_STREAM_DRAW_TTL_SEC: float = Field(
+        default=2.0,
+        description="推流实时绘框结果过期时间（秒）。超过该时间未收到新推理结果，则不再绘制"
+    )
 
     # ==================== 存储配置 ====================
     STORAGE_TYPE: str = Field(

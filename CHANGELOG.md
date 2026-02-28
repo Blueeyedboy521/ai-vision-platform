@@ -1,5 +1,12 @@
 ## Changelog
 
+### v2.6.0 - 2026-02-28
+
+- **后端实时绘框与轻量推理器**：在 Engine Pipeline 中引入 `OverlayState` 作为同一进程内 `ResultHandler` 与 `StreamWriter` 间的共享检测结果缓存，`StreamWriter` 每帧从中读取最新 `frame_id` + `detections` 构造 `InferenceResult` 并调用各模型实现的 `draw_boxes` 完成实时绘框；新增配置开关 `ENGINE_STREAM_DRAW_BOXES` / `ENGINE_STREAM_DRAW_TTL_SEC` 控制是否开启后端绘框以及检测结果过期时间，支持仅后端绘框不影响告警保存与推送链路。
+- **Pipeline 状态机与单进程多模式切换**：`Scheduler` 采用摄像头状态机（Idle / Live-only / Inference-only / Full）管理 Pipeline，确保同一摄像头始终只有一个 Pipeline 进程；通过 `pipeline_control_queue` 将 `set_mode` 命令发送到已运行的 Pipeline 子进程，由其内部动态启停 `StreamWriter` / `ResultHandler` 线程并切换模式，避免频繁重启子进程导致的开销与状态错乱。
+- **ONNX 类别映射与算法聚合配置**：将 ONNX 推理实现的类别读取逻辑改为从 `model:config:{model_id}` 的 `algorithms` 字段构建 `target_class -> {code, name}` 映射，推理结果中 `class_name` 使用英文 `code` 参与绘框、`algo_name` 保留中文名称供告警使用；`write_model_to_redis` 负责写入包含算法列表的模型快照，避免在推理侧扫描所有 `algorithm:config:*` 带来的性能问题。
+- **Redis 操作集中封装**：新增 `app/core/redis.py` 统一封装模型、算法与摄像头相关的 Redis 读写，包括 `write_model_to_redis`、`write_algorithm_to_redis`、`delete_algorithm_from_redis`、摄像头配置缓存、推理/直播状态集合与心跳 Key 更新等；`algorithms.py`、`models.py`、`cameras.py` 中不再直接调用 `redis.client`，而是通过这些封装方法间接访问 Redis，降低耦合度便于后续调整 Key 结构或序列化细节。
+
 ### v2.5.0 - 2026-02-28
 
 - **推理层接口化与实现拆分**：Engine 推理抽象为统一接口 `Inferencer`（`inferencer.py`），包含 `load()`、`infer(params)`、`draw_boxes(result)`、`close()`；YOLO 与 ONNX 分别实现于 `inferencer_yolo.py`、`inferencer_onnx.py`；`build_inferencer(model_type, ...)` 工厂按类型创建实现类，Worker 只负责调用 `load()` 与 `infer(params)` 并入队。

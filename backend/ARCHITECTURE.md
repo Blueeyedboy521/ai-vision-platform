@@ -258,6 +258,8 @@ backend/
 - **Redis 存快照 + 事件**：
   - FastAPI 在增删改配置成功后，写/删对应 Redis Key。
   - 同时通过 `engine:config_update` 发布一条事件，让 Engine 感知变更。
+- **Redis 访问集中封装**：
+  - FastAPI 侧所有与模型 / 算法 / 摄像头相关的 Redis 写操作统一封装在 `app.core.redis` 中（例如 `write_model_to_redis`、`write_algorithm_to_redis`、摄像头配置与直播/推理状态集合维护等），API 层仅调用这些封装方法，不直接操作 `redis.client`，便于后续调整 Key 结构或序列化细节。
 - **Engine 仅依赖 Redis**：
   - 启动时从各类 `config:*` Key 拉取快照。
   - 运行过程中订阅 `engine:config_update`，根据事件类型到 Redis 读取最新配置并更新内存（当前版本先以日志为主，后续可在此基础上实现真正的热更新）。
@@ -711,6 +713,54 @@ python -m engine.main
 线程总数: 推理 Worker 数 + N × 3 (每摄像头3个线程)
 ```
 
+### 6.1 摄像头 Pipeline 状态机与调度
+
+在 Engine 内部，**每个摄像头始终只对应一个 Pipeline 进程**，该进程内有三个线程：
+
+- `StreamReader`：负责拉流、按 fps/skip 规则投递原始帧
+- `StreamWriter`：负责推流（HTTP-FLV/RTMP），可选在后端叠加绘框
+- `ResultHandler`：负责消费推理结果、更新绘框状态、后续告警等
+
+调度由 `Scheduler` 根据两个布尔状态决定：
+
+- `live_started`：当前摄像头是否处于“播放中”（前端已下发开始播放，未停止）
+- `inference_started`：当前摄像头是否处于“推理开启中”（前端已下发启动推理，未停止）
+
+在 `has_algorithms=True` 时，单摄像头的理想状态如下（S0–S3）：
+
+| 状态 | live_started | inference_started | Pipeline 进程 | 线程组合 |
+|------|--------------|-------------------|---------------|----------|
+| S0 空闲          | false | false | 无       | 无线程 |
+| S1 仅推流        | true  | false | 有       | `StreamReader` + `StreamWriter` |
+| S2 仅推理        | false | true  | 有       | `StreamReader` + `ResultHandler` |
+| S3 推流+推理     | true  | true  | 有       | `StreamReader` + `StreamWriter` + `ResultHandler` |
+
+转移规则（简化）：
+
+- `PLAY_START`（开始播放）：  
+  - 若未起 Pipeline，则创建 1 个 Pipeline 进程，并按 `inference_started` 决定进入 S1 或 S3  
+  - 若已在 S2，则补充启动 `StreamWriter` 变为 S3
+- `PLAY_STOP`（停止播放）：  
+  - S1 → S0：停止整个 Pipeline  
+  - S3 → S2：仅停止 `StreamWriter`，保留推理
+- `INFER_START`（启动推理）：  
+  - S0 → S2：创建 Pipeline，启动 `StreamReader + ResultHandler`  
+  - S1 → S3：在现有 Pipeline 内补充启动 `ResultHandler`，并让 `StreamReader` 往请求队列投递帧
+- `INFER_STOP`（停止推理）：  
+  - S3 → S1：停止 `ResultHandler`，停止向请求队列投递帧，仅保留推流  
+  - S2 → S0：停止整个 Pipeline
+
+无算法的摄像头（`has_algorithms=False`）仅有：
+
+- T0：不播放（无 Pipeline）
+- T1：播放中（`StreamReader + StreamWriter`），不涉及推理
+
+推理 Worker 的调度独立由 `InferenceService` 负责：
+
+- Scheduler 只根据 `inference_started` 与摄像头-算法绑定，为每个 `model_id` 维护“正在使用该模型的摄像头集合”
+- 当集合从空 → 非空时，确保启动该模型的 Worker；当从非空 → 空时，可安全停止对应 Worker
+- **模型/算法配置变更仅更新 Scheduler/InerenceService 的缓存，不直接改变 Worker 数量；前端一般通过“先停止推理，再重新启动推理”来加载新配置**
+
 ---
 
 ## 七、数据流向
@@ -750,7 +800,7 @@ python -m engine.main
 │           ▼                          ▼                                      │
 │   ┌───────────────┐          ┌───────────────┐                             │
 │   │ 前端 flv.js   │          │ ResultHandler │ (结果处理线程)              │
-│   │ (视频播放)    │          │               │                             │
+│   │ (视频播放)    │          │  + OverlayState│ (后端绘框状态缓存)        │
 │   └───────────────┘          └───────┬───────┘                             │
 │                                      │                                      │
 │                                      ├──────────────────┐                   │

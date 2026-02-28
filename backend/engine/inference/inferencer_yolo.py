@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from .inferencer import InferenceResult
+from .draw_utils import draw_detections_inplace
 
 
 def _read_classes_from_redis(model_id: str) -> Optional[List[str]]:
@@ -138,22 +139,10 @@ class UltralyticsYoloInferencer:
 
     def draw_boxes(self, result: InferenceResult) -> Any:
         """在 result.frame 上绘制 result.detections 的框与标签"""
-        import cv2
         if result.frame is None:
             return None
         drawn = result.frame.copy()
-        for det in result.detections:
-            bbox = det.get("bbox", [])
-            if len(bbox) < 4:
-                continue
-            x1, y1, x2, y2 = [int(round(v)) for v in bbox[:4]]
-            class_name = det.get("class_name", "")
-            confidence = det.get("confidence", 0)
-            color = (0, 255, 0)  # BGR 绿
-            cv2.rectangle(drawn, (x1, y1), (x2, y2), color, 2)
-            label = f"{class_name} {confidence:.2f}"
-            cv2.putText(drawn, label, (x1, max(0, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-        return drawn
+        return draw_detections_inplace(drawn, result.detections)
 
     def close(self) -> None:
         self._model = None

@@ -11,27 +11,58 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 from loguru import logger
 
 from .inferencer import InferenceResult, MODEL_DOWNLOAD_PATH
-import cv2
+from .draw_utils import draw_detections_inplace
 
-def _read_classes_from_redis(model_id: str) -> Optional[List[str]]:
-    """从 Redis 模型配置读取 classes（ONNX 无内置类别名，必须从配置来）"""
+def _read_classes_from_redis(model_id: str) -> Optional[Dict[str, Dict[str, str]]]:
+    """
+    从 Redis 读取模型配置的 algorithms，并构造 {target_class -> {code, name}} 的映射。
+    """
     try:
         from common.redis import get_redis_client
         from common.redis.channels import RedisKeys
+
         client = get_redis_client()
         client.connect_sync()
-        raw = client.sync_client.get(RedisKeys.model_config(model_id))
-        if not raw:
+        r = client.sync_client
+
+        raw_model = r.get(RedisKeys.model_config(model_id))
+        if not raw_model:
             return None
-        cfg = json.loads(raw)
-        classes = cfg.get("classes")
-        if isinstance(classes, list) and len(classes) > 0:
-            return [str(c) for c in classes]
+        try:
+            cfg_model = json.loads(raw_model)
+        except Exception:
+            logger.warning(f"ONNX 解析模型配置失败: model_id={model_id}")
+            return None
+        algorithms_cfg = cfg_model.get("algorithms")
+        if not isinstance(algorithms_cfg, list):
+            return None
+
+        class_map: Dict[str, Dict[str, str]] = {}
+        for item in algorithms_cfg:
+            # 预期结构: {"id": algo_id, "name": ..., "code": algo_code, "target_classes": [...]}
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("code") or "")
+            name = str(item.get("name") or "")
+            targets = item.get("target_classes") or []
+            if not code or not isinstance(targets, list):
+                continue
+            for t in targets:
+                if t is None:
+                    continue
+                key = str(t)
+                class_map[key] = {"code": code, "name": name}
+
+        if class_map:
+            logger.info(
+                f"ONNX 从 model:config.algorithms 构造 target_class->{{code,name}} 映射: model_id={model_id}, count={len(class_map)}"
+            )
+            return class_map
         return None
     except Exception as e:
         logger.warning(f"从 Redis 读取模型 classes 失败: model_id={model_id}, err={e}")
@@ -190,7 +221,8 @@ class OnnxYolo11Inferencer:
         self.iou_thres = iou_thres
         self._sess = None
         self._info: Optional[_OnnxSessionInfo] = None
-        self._class_names: Optional[List[str]] = None
+        # target_class -> {code, name} 的映射（来自 model_config.algorithms）
+        self._class_name_map: Optional[Dict[str, Dict[str, str]]] = None
         self._local_path: Optional[str] = None
 
     def load(self) -> None:
@@ -207,9 +239,11 @@ class OnnxYolo11Inferencer:
                 get_storage().download_file(self.model_path, local_path)
             self._local_path = local_path
 
-        self._class_names = _read_classes_from_redis(self.model_id)
-        if not self._class_names:
-            logger.warning(f"ONNX 未从 Redis 读取到 classes，将使用 class_id 作为 class_name: model_id={self.model_id}")
+        self._class_name_map = _read_classes_from_redis(self.model_id)
+        if not self._class_name_map:
+            logger.warning(
+                f"ONNX 未从 Redis 读取到 classes 映射，将使用 class_id 作为 class_name: model_id={self.model_id}"
+            )
 
         input_hw = None
         if self.input_size and len(self.input_size) >= 2:
@@ -256,11 +290,22 @@ class OnnxYolo11Inferencer:
         detections: List[Dict[str, Any]] = []
         for (x1, y1, x2, y2), score, cid in zip(boxes, scores, class_ids):
             class_id = int(cid)
+            # 近似将 class_id 映射到某个 target_class：按 key 排序后取第 class_id 个
+            algo_code = str(class_id)
+            algo_name = str(class_id)
+            if self._class_name_map:
+                sorted_keys = sorted(self._class_name_map.keys())
+                if 0 <= class_id < len(sorted_keys):
+                    target_class = sorted_keys[class_id]
+                    info = self._class_name_map.get(target_class) or {}
+                    algo_code = str(info.get("code") or target_class)
+                    algo_name = str(info.get("name") or target_class)
             detections.append({
                 "class_id": class_id,
-                "class_name": _safe_class_name(class_id, self._class_names),
+                "class_name": algo_code,  # 绘框等使用英文 code，避免中文导致 cv2.putText 乱码
                 "confidence": float(score),
                 "bbox": [float(x1), float(y1), float(x2), float(y2)],
+                "algo_name": algo_name,   # 预留中文名称，后续告警推送可以使用
             })
         inference_time_ms = (time.perf_counter() - start) * 1000
         return InferenceResult(
@@ -274,22 +319,10 @@ class OnnxYolo11Inferencer:
 
     def draw_boxes(self, result: InferenceResult) -> Any:
         """在 result.frame 上绘制 result.detections 的框与标签"""
-        import cv2
         if result.frame is None:
             return None
         drawn = result.frame.copy()
-        for det in result.detections:
-            bbox = det.get("bbox", [])
-            if len(bbox) < 4:
-                continue
-            x1, y1, x2, y2 = [int(round(v)) for v in bbox[:4]]
-            class_name = det.get("class_name", "")
-            confidence = det.get("confidence", 0)
-            color = (0, 255, 0)  # BGR 绿
-            cv2.rectangle(drawn, (x1, y1), (x2, y2), color, 2)
-            label = f"{class_name} {confidence:.2f}"
-            cv2.putText(drawn, label, (x1, max(0, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-        return drawn
+        return draw_detections_inplace(drawn, result.detections)
 
     def close(self) -> None:
         self._sess = None

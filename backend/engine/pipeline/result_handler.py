@@ -3,17 +3,18 @@
 结果处理线程
 
 处理 AI 推理结果，执行以下操作：
-1. 在帧上绘制检测框
-2. 触发告警并存储
-3. 推送实时消息
+1. 清洗推理结果，推送给 StreamWriter 用于实时绘框（方案A）
+2. 触发告警并存储（预留）
+3. 推送实时消息（预留）
 """
 import threading
 import time
-import json
 from typing import Any, Dict, List, Optional
 from queue import Empty
 
 from loguru import logger
+
+from .overlay_state import OverlayState
 
 
 class ResultHandler:
@@ -31,9 +32,8 @@ class ResultHandler:
         self,
         camera_id: str,
         result_queue: Any,
-        frame_queue: Any,
-        draw_queue: Any,
-        algorithms: List[dict]
+        algorithms: List[dict],
+        overlay_state: OverlayState,
     ):
         """
         初始化 ResultHandler
@@ -41,15 +41,13 @@ class ResultHandler:
         Args:
             camera_id: 摄像头 ID
             result_queue: 推理结果队列
-            frame_queue: 原始帧队列
-            draw_queue: 绘制帧队列
             algorithms: 算法配置列表
+            overlay_state: 推送给 StreamWriter 的最新绘框状态（update 内深拷贝）
         """
         self.camera_id = camera_id
         self.result_queue = result_queue
-        self.frame_queue = frame_queue
-        self.draw_queue = draw_queue
         self.algorithms = algorithms
+        self.overlay_state = overlay_state
         
         self.thread: Optional[threading.Thread] = None
         self.running = False
@@ -94,80 +92,23 @@ class ResultHandler:
                     continue
                 
                 self.processed_results += 1
-                
-                # 获取对应的原始帧
-                frame_data = self._get_matching_frame(result.frame_id)
-                if frame_data is None:
-                    continue
-                
-                frame = frame_data.get("frame")
-                if frame is None:
-                    continue
-                
-                # 处理检测结果
-                detections = result.detections if hasattr(result, 'detections') else []
-                
-                # 绘制检测框
-                drawn_frame = self._draw_detections(frame.copy(), detections)
-                
-                # 放入绘制队列
+
+                frame_id = getattr(result, "frame_id", None)
+                detections = result.detections if hasattr(result, "detections") else []
+
+                # 方案A：写入 overlay_state（内部分深拷贝，result 销毁后 Writer 仍可读）
                 try:
-                    self.draw_queue.put_nowait({
-                        "frame_id": result.frame_id,
-                        "frame": drawn_frame,
-                        "timestamp": time.time()
-                    })
-                    self.pushed_frames += 1
-                except:
+                    self.overlay_state.update(frame_id=frame_id, detections=detections)
+                except Exception:
                     pass
-                
-                # 处理告警
-                self._process_alarms(detections, frame)
-                
-                # 推送实时消息
-                self._push_realtime_message(detections)
+                self.pushed_frames += 1
+
+                # 预留：告警/消息推送后续再接入，避免阻塞实时链路
+                # self._process_alarms(detections, frame)
+                # self._push_realtime_message(detections)
                 
             except Exception as e:
                 logger.error(f"ResultHandler 异常: {e}")
-    
-    def _get_matching_frame(self, frame_id: int) -> Optional[dict]:
-        """获取匹配的原始帧"""
-        # 从帧队列中查找匹配的帧
-        # 注意：简单实现，可能需要优化
-        try:
-            frame_data = self.frame_queue.get(timeout=0.1)
-            return frame_data
-        except Empty:
-            return None
-    
-    def _draw_detections(self, frame, detections: list):
-        """在帧上绘制检测框"""
-        import cv2
-        
-        for det in detections:
-            bbox = det.get("bbox", [])
-            if len(bbox) < 4:
-                continue
-            
-            x1, y1, x2, y2 = [int(v) for v in bbox[:4]]
-            class_name = det.get("class_name", "unknown")
-            confidence = det.get("confidence", 0)
-            
-            # 根据告警级别选择颜色
-            color = self._get_color_by_class(class_name)
-            
-            # 绘制边界框
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            
-            # 绘制标签
-            label = f"{class_name}: {confidence:.2f}"
-            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-            cv2.rectangle(frame, (x1, y1 - label_size[1] - 10), 
-                         (x1 + label_size[0], y1), color, -1)
-            cv2.putText(frame, label, (x1, y1 - 5),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        
-        return frame
     
     def _get_color_by_class(self, class_name: str) -> tuple:
         """根据类别获取颜色"""
@@ -181,8 +122,6 @@ class ResultHandler:
     
     def _process_alarms(self, detections: list, frame):
         """处理告警"""
-        import cv2
-        
         current_time = time.time()
         
         # 清理过期的去重记录

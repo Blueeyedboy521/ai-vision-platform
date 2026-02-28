@@ -6,18 +6,23 @@
 - StreamReader: 拉流线程
 - StreamWriter: 推流线程
 - ResultHandler: 结果处理线程
+
+支持在同一 Pipeline 进程内按指令动态切换模式（live_only / inference_only / full），
+通过控制队列从 Scheduler 接收模式切换命令，在进程内启停对应线程，避免频繁重启进程。
 """
 import threading
 import time
 import uuid
 from typing import Any, Dict, Optional
 from dataclasses import dataclass
+from queue import Empty  # 控制队列读取时使用
 
 from loguru import logger
 
 from .stream_reader import StreamReader
 from .stream_writer import StreamWriter
 from .result_handler import ResultHandler
+from .overlay_state import OverlayState
 
 
 @dataclass
@@ -29,11 +34,10 @@ class PipelineConfig:
     fps: int = 25
     skip_frames: int = 3
     algorithms: list = None
-    # 模式：
-    # - full: 推理 + 结果处理 + 推流
-    # - live_only: 仅拉流推流（无推理/结果处理）
-    # - inference_only: 仅推理/结果处理（不推流）
+    # 模式：full / live_only / inference_only
     mode: str = "full"
+    # 推流绘框用：build_inferencer 参数（仅用于 draw_boxes，不 load）
+    draw_model: Optional[dict] = None
 
 
 class Pipeline:
@@ -50,29 +54,34 @@ class Pipeline:
         self,
         config: PipelineConfig,
         request_queue: Optional[Any] = None,
-        result_queue: Optional[Any] = None
+        result_queue: Optional[Any] = None,
+        control_queue: Optional[Any] = None,
     ):
         """
-        初始化 Pipeline
+        初始化 Pipeline。
         
         Args:
             config: Pipeline 配置
-            request_queue: 推理请求队列
-            result_queue: 推理结果队列
+            request_queue: 推理请求队列（给 InferenceService 的模型请求队列）
+            result_queue: 推理结果队列（InferenceService → Pipeline）
+            control_queue: 调度队列（Scheduler → Pipeline，用于模式切换等控制指令）
         """
         self.config = config
         self.request_queue = request_queue
         self.result_queue = result_queue
+        self.control_queue = control_queue
         
         # 线程
         self.stream_reader: Optional[StreamReader] = None
         self.stream_writer: Optional[StreamWriter] = None
         self.result_handler: Optional[ResultHandler] = None
-        
+
         # 内部队列
         from queue import Queue
         self.frame_queue = Queue(maxsize=1)  # 原始帧队列
         self.draw_queue = Queue(maxsize=30)   # 绘制帧队列
+        # ResultHandler -> StreamWriter 最新绘框数据（OverlayState 内深拷贝，result 销毁后仍有效；每路 Pipeline 一个进程一个实例）
+        self.overlay_state = OverlayState(camera_id=self.config.camera_id)
         
         # 状态
         self.running = False
@@ -83,8 +92,14 @@ class Pipeline:
         self.dropped_frames = 0
     
     @classmethod
-    def run(cls, config: dict, request_queue: Any, result_queue: Any):
-        """进程入口函数"""
+    def run(cls, config: dict, request_queue: Any, result_queue: Any, control_queue: Any = None):
+        """
+        进程入口函数。
+        
+        - 从 config 构造 PipelineConfig
+        - 启动 Pipeline（默认模式）
+        - 在循环中从 control_queue 读取指令，动态切换模式
+        """
         pipeline_config = PipelineConfig(
             camera_id=config.get("camera_id", ""),
             camera_name=config.get("camera_name", ""),
@@ -93,15 +108,37 @@ class Pipeline:
             skip_frames=config.get("skip_frames", 3),
             algorithms=config.get("algorithms", []),
             mode=config.get("mode", "full"),
+            draw_model=config.get("draw_model"),
         )
         
-        pipeline = cls(pipeline_config, request_queue, result_queue)
+        pipeline = cls(pipeline_config, request_queue, result_queue, control_queue)
         pipeline.start()
         
-        # 保持进程运行
+        # 保持进程运行，并处理来自 Scheduler 的控制指令
         try:
             while pipeline.running:
-                time.sleep(1)
+                if pipeline.control_queue is None:
+                    # 没有控制队列时，仅作为守护循环
+                    time.sleep(1.0)
+                    continue
+                try:
+                    cmd = pipeline.control_queue.get(timeout=1.0)
+                except Empty:
+                    cmd = None
+                if not cmd:
+                    continue
+                # 支持 tuple/list 或 dict 形式的简单协议
+                action = None
+                mode = None
+                if isinstance(cmd, dict):
+                    action = cmd.get("action")
+                    mode = cmd.get("mode")
+                elif isinstance(cmd, (tuple, list)) and cmd:
+                    action = cmd[0]
+                    if len(cmd) > 1:
+                        mode = cmd[1]
+                if action == "set_mode" and mode:
+                    pipeline.set_mode(str(mode))
         except KeyboardInterrupt:
             pass
         finally:
@@ -114,7 +151,7 @@ class Pipeline:
         self.start_time = time.time()
         
         try:
-            # 启动 StreamReader
+            # 启动 StreamReader（始终存在，仅通过 request_queue 是否为 None 决定是否向推理服务发请求）
             self.stream_reader = StreamReader(
                 camera_id=self.config.camera_id,
                 rtsp_url=self.config.rtsp_url,
@@ -127,27 +164,8 @@ class Pipeline:
             )
             self.stream_reader.start()
             
-            # 启动 StreamWriter（仅 live_only / full 模式）
-            if self.config.mode in ("full", "live_only"):
-                push_url = self._get_push_url()
-                self.stream_writer = StreamWriter(
-                    camera_id=self.config.camera_id,
-                    push_url=push_url,
-                    frame_queue=self.frame_queue,
-                    fps=self.config.fps
-                )
-                self.stream_writer.start()
-            
-            # 启动 ResultHandler（仅 full / inference_only 模式）
-            if self.config.mode in ("full", "inference_only"):
-                self.result_handler = ResultHandler(
-                    camera_id=self.config.camera_id,
-                    result_queue=self.result_queue,
-                    frame_queue=self.frame_queue,
-                    draw_queue=self.draw_queue,
-                    algorithms=self.config.algorithms or []
-                )
-                self.result_handler.start()
+            # 按初始模式应用线程组合（仅在首次启动时生效，后续通过 set_mode 动态切换）
+            self._apply_mode(self.config.mode, initial=True)
             
             logger.info(f"Pipeline 启动完成: {self.config.camera_name}")
             
@@ -170,6 +188,92 @@ class Pipeline:
             self.result_handler.stop()
         
         logger.info(f"Pipeline 已停止: {self.config.camera_name}")
+
+    def _apply_mode(self, mode: str, initial: bool = False) -> None:
+        """
+        在当前 Pipeline 进程内按目标模式启停线程。
+        
+        Args:
+            mode: 目标模式（"live_only" / "inference_only" / "full"）
+            initial: 是否为首次启动时应用（仅影响日志文本）
+        """
+        old_mode = self.config.mode
+        if initial:
+            logger.info(f"Pipeline 初始模式: camera_id={self.config.camera_id}, mode={mode}")
+            self.config.mode = mode
+        else:
+            if mode == old_mode:
+                return
+            logger.info(f"Pipeline 模式切换: camera_id={self.config.camera_id}, {old_mode} -> {mode}")
+            self.config.mode = mode
+
+        # 1. 控制 StreamReader 是否向推理服务发送请求
+        if self.stream_reader:
+            if mode in ("full", "inference_only"):
+                # full / inference_only: 需要往推理服务发送帧
+                self.stream_reader.request_queue = self.request_queue
+            else:
+                # live_only: 只推流，不推理
+                self.stream_reader.request_queue = None
+
+        # 2. 控制 StreamWriter 是否存在
+        writer_needed = mode in ("full", "live_only")
+        if writer_needed:
+            if self.stream_writer is None:
+                push_url = self._get_push_url()
+                draw_inferencer = None
+                draw_boxes = False
+                if self.config.draw_model:
+                    from config.settings import settings
+                    draw_boxes = getattr(settings, "ENGINE_STREAM_DRAW_BOXES", False)
+                    if draw_boxes:
+                        from engine.inference.inferencer import build_inferencer
+                        dm = self.config.draw_model
+                        # for_draw=True：构造轻量化绘框 inferencer，只用于 draw_boxes，不调用 load()/infer()
+                        draw_inferencer = build_inferencer(
+                            model_type=dm.get("model_type", "yolo"),
+                            model_id=dm.get("model_id", ""),
+                            model_path=dm.get("model_path", ""),
+                            device=dm.get("device", "cpu"),
+                            input_size=tuple(dm.get("input_size") or (640, 640)),
+                            for_draw=True,
+                        )
+                logger.info(f"Pipeline {self.config.camera_id} 绘框模型: {self.config.draw_model}, draw_boxes: {draw_boxes}, inferencer: {draw_inferencer is not None}")
+                self.stream_writer = StreamWriter(
+                    camera_id=self.config.camera_id,
+                    push_url=push_url,
+                    frame_queue=self.frame_queue,
+                    fps=self.config.fps,
+                    overlay_state=self.overlay_state,
+                    inferencer=draw_inferencer,
+                )
+                self.stream_writer.start()
+        else:
+            if self.stream_writer:
+                self.stream_writer.stop()
+                self.stream_writer = None
+
+        # 3. 控制 ResultHandler 是否存在
+        handler_needed = mode in ("full", "inference_only")
+        if handler_needed:
+            if self.result_handler is None:
+                self.result_handler = ResultHandler(
+                    camera_id=self.config.camera_id,
+                    result_queue=self.result_queue,
+                    algorithms=self.config.algorithms or [],
+                    overlay_state=self.overlay_state,
+                )
+                self.result_handler.start()
+        else:
+            if self.result_handler:
+                self.result_handler.stop()
+                self.result_handler = None
+
+    def set_mode(self, mode: str) -> None:
+        """
+        对外暴露的模式切换接口，由子进程内的控制循环调用。
+        """
+        self._apply_mode(mode, initial=False)
     
     def _get_push_url(self) -> str:
         """获取推流地址"""
