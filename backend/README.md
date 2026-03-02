@@ -102,7 +102,7 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### 视频处理引擎（独立进程，可选）
 
-视频拉流、推理、告警等由独立引擎进程完成，与 FastAPI 分开启动：
+视频拉流、推理、告警等由独立引擎进程完成，与 FastAPI 分开启动（Engine 内部为**单进程 + 多线程**架构，通过 Scheduler 调度 InferenceService / PipelineService 管理各类 Worker/Pipeline 线程）：
 
 ```bash
 cd backend

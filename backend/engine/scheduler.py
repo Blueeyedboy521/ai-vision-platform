@@ -2,9 +2,9 @@
 """
 主调度器
 
-负责管理整个视频处理引擎的生命周期：
+负责管理整个视频处理引擎的生命周期（单进程 + 多线程）：
 - 读取配置
-- 创建和管理子进程
+- 创建和管理 InferenceService / Pipeline 对象
 - 健康检查
 - 配置热更新
 """
@@ -12,13 +12,12 @@ import os
 import time
 import threading
 from typing import Dict, List, Optional
-from multiprocessing import Process, Queue
 from dataclasses import dataclass, field
 
 from loguru import logger
 
 from engine.inference.service import InferenceService
-from engine.pipeline.pipeline import Pipeline
+from engine.pipeline.service import PipelineService
 from engine.queue.memory_queue import MemoryQueue
 import json
 
@@ -67,9 +66,9 @@ class Scheduler:
     主调度器
     
     负责管理:
-    - InferenceService 进程
-    - Pipeline 进程
-    - 内存队列
+    - InferenceService 线程池（按模型维度管理 Worker 线程）
+    - Pipeline（每路摄像头一个 Pipeline 对象，内部 3 个线程）
+    - 内存队列（单进程内线程安全）
     """
     
     def __init__(self):
@@ -78,12 +77,6 @@ class Scheduler:
         # 配置
         self.cameras: Dict[str, CameraConfig] = {}
         self.models: Dict[str, ModelConfig] = {}
-        
-        # 进程管理
-        self.inference_process: Optional[Process] = None
-        self.pipeline_processes: Dict[str, Process] = {}
-        # 每个摄像头对应一个 Pipeline 控制队列（主进程通过它向子进程发送模式切换等指令）
-        self.pipeline_control_queues: Dict[str, Queue] = {}
         
         # 队列管理
         self.request_queues: Dict[str, MemoryQueue] = {}  # model_id -> queue
@@ -103,8 +96,9 @@ class Scheduler:
         # 推理状态：记录已启动推理的摄像头（Engine 自身视角）
         self.inference_started: set[str] = set()
         
-        # Pipeline 启动模式：camera_id -> "full" | "live_only" | "inference_only"
-        self.pipeline_modes: Dict[str, str] = {}
+        # 服务层封装
+        self.inference_service: Optional[InferenceService] = None
+        self.pipeline_service: Optional[PipelineService] = None
     
     def start(self):
         """启动调度器"""
@@ -119,10 +113,13 @@ class Scheduler:
             # 2. 创建队列
             self._create_queues()
             
-            # 3. 启动所有 Pipeline（按点播/推理开关决定是否启动）
+            # 3. 初始化服务层
+            self._init_services()
+            
+            # 4. 启动所有 Pipeline（按点播/推理开关决定是否启动）
             self._start_pipelines()
             
-            # 4. 按需启动推理服务（仅当存在推理任务时）
+            # 5. 按需启动推理服务（仅当存在推理任务时）
             self._reconcile_inference_service()
             
             # 5. 启动 Redis 配置监听（Engine 订阅 engine:config_update）
@@ -142,18 +139,19 @@ class Scheduler:
         self.running = False
         
         # 停止所有 Pipeline
-        for camera_id, process in self.pipeline_processes.items():
-            if process.is_alive():
-                logger.info(f"停止 Pipeline: {camera_id}")
-                process.terminate()
-                process.join(timeout=5)
-        self.pipeline_processes.clear()
+        if self.pipeline_service is not None:
+            try:
+                self.pipeline_service.stop_all()
+            except Exception as e:
+                logger.error(f"停止 PipelineService 失败: {e}")
         
-        # 停止推理服务
-        if self.inference_process and self.inference_process.is_alive():
-            logger.info("停止推理服务")
-            self.inference_process.terminate()
-            self.inference_process.join(timeout=10)
+        # 停止推理服务（仅停 Worker 线程，不再管理独立进程）
+        if self.inference_service is not None:
+            try:
+                logger.info("停止推理服务")
+                self.inference_service.stop()
+            except Exception as e:
+                logger.error(f"停止推理服务失败: {e}")
         
         # 停止配置监听线程
         self._stop_config_listener()
@@ -265,6 +263,14 @@ class Scheduler:
             self.inference_started.add(camera_id)
             self._refresh_camera_algorithms_from_redis(camera_id)
             self._reconcile_camera_pipeline(camera_id)
+            # 通知 InferenceService 某个摄像头开始推理，由服务内部自行计数与扩缩容
+            if self.inference_service:
+                camera = self.cameras.get(camera_id)
+                model_id = None
+                if camera and camera.algorithms:
+                    first_algo = camera.algorithms[0] or {}
+                    model_id = first_algo.get("model_id")
+                self.inference_service.on_camera_inference_start(camera_id, model_id or "")
             self._reconcile_inference_service()
 
         if action == "camera_inference_stop":
@@ -274,19 +280,22 @@ class Scheduler:
             logger.info(f"Engine 收到摄像头推理停止命令: {camera_id}")
             self.inference_started.discard(camera_id)
             self._reconcile_camera_pipeline(camera_id)
+            # 通知 InferenceService 某个摄像头停止推理
+            if self.inference_service:
+                self.inference_service.on_camera_inference_stop(camera_id)
             self._reconcile_inference_service()
     
     def health_check(self):
         """健康检查"""
         # 检查推理服务（仅当确实需要推理时才保证存在）
-        if self._want_inference() and self.inference_process and not self.inference_process.is_alive():
-            logger.error("推理服务进程已退出，正在重启...")
+        if self._want_inference() and self.inference_service is None:
+            logger.error("推理服务未启动，正在启动...")
             self._start_inference_service()
         
-        # 检查所有 Pipeline
-        for camera_id, process in list(self.pipeline_processes.items()):
-            if not process.is_alive():
-                logger.warning(f"Pipeline {camera_id} 已退出，正在重启...")
+        # 检查所有 Pipeline（若线程异常退出，可按状态机重新拉起）
+        if self.pipeline_service:
+            for camera_id in list(self.cameras.keys()):
+                # 简单策略：按状态机重新 reconcile 一遍，由 PipelineService 自己决定是否重建
                 self._reconcile_camera_pipeline(camera_id)
         
         # 输出统计信息
@@ -396,12 +405,40 @@ class Scheduler:
         for camera_id in self.cameras:
             self.result_queues[camera_id] = MemoryQueue(maxsize=10)
             logger.debug(f"创建结果队列: {camera_id}")
+
+    def _init_services(self):
+        """初始化 InferenceService 与 PipelineService"""
+        logger.info("初始化 Engine 服务层: InferenceService / PipelineService")
+        # 推理服务：按当前 models_config 创建实例（需要时再 start）
+        models_config = {
+            model_id: {
+                "id": model.id,
+                "name": model.name,
+                "path": model.path,
+                "model_type": model.model_type,
+                "input_size": model.input_size,
+                "classes": model.classes,
+            }
+            for model_id, model in self.models.items()
+        }
+        self.inference_service = InferenceService(
+            models_config=models_config,
+            request_queues=self.request_queues,
+            result_queues=self.result_queues,
+        )
+        # Pipeline 服务：持有 cameras/models 视图与队列映射
+        self.pipeline_service = PipelineService(
+            cameras=self.cameras,
+            models=self.models,
+            request_queues=self.request_queues,
+            result_queues=self.result_queues,
+        )
     
     def _start_inference_service(self):
-        """启动推理服务"""
+        """启动推理服务（单进程内创建 Worker 线程）"""
         logger.info("启动推理服务...")
         
-        # 准备配置
+        # 准备配置（按模型维度）
         models_config = {
             model_id: {
                 "id": model.id,
@@ -414,14 +451,28 @@ class Scheduler:
             for model_id, model in self.models.items()
         }
         
-        # 创建并启动进程
-        self.inference_process = Process(
-            target=InferenceService.run,
-            args=(models_config, self.request_queues, self.result_queues),
-            name="InferenceService"
+        self.inference_service = InferenceService(
+            models_config=models_config,
+            request_queues=self.request_queues,
+            result_queues=self.result_queues,
         )
-        self.inference_process.start()
-        logger.info(f"推理服务进程已启动: PID={self.inference_process.pid}")
+        self.inference_service.start()
+        logger.info("推理服务已启动（线程池）")
+
+        # Engine 重启场景：为已在 inference_started 集合中的摄像头补发一次绑定事件，
+        # 由 InferenceService 内部自行统计模型使用情况并启动对应 Worker。
+        for cam_id in list(self.inference_started):
+            camera = self.cameras.get(cam_id)
+            if not camera or not getattr(camera, "algorithms", None):
+                continue
+            first_algo = (camera.algorithms[0] or {}) if camera.algorithms else {}
+            model_id = first_algo.get("model_id")
+            if not model_id:
+                continue
+            try:
+                self.inference_service.on_camera_inference_start(cam_id, model_id)
+            except Exception as e:
+                logger.error(f"为摄像头 {cam_id} 恢复推理绑定失败: {e}")
     
     def _start_pipelines(self):
         """
@@ -438,116 +489,20 @@ class Scheduler:
     
     def _start_pipeline(self, camera_id: str, mode: str = "full"):
         """
-        启动单个 Pipeline 进程（full / live_only / inference_only）。
-        
-        约束：同一摄像头在任意时刻最多只有一个 Pipeline 进程。
-        如果模式发生变化，则会先停止旧进程，再以新模式重新拉起。
+        启动或切换单个 Pipeline（full / live_only / inference_only）。
+        具体实现委托给 PipelineService。
         """
-        camera = self.cameras.get(camera_id)
-        if not camera:
-            logger.error(f"摄像头配置不存在: {camera_id}")
+        if not self.pipeline_service:
+            logger.error("PipelineService 未初始化，无法启动 Pipeline")
             return
-        # 如果rtsp_url为空，则不启动
-        if not camera.rtsp_url:
-            logger.warning(f"摄像头{camera_id} RTSP 地址为空，不启动")
-            return
-        # 准备配置
-        # 若已存在进程且模式一致，则不重复启动
-        existing = self.pipeline_processes.get(camera_id)
-        if existing and existing.is_alive():
-            current_mode = self.pipeline_modes.get(camera_id)
-            if current_mode == mode:
-                # 已处于目标模式，直接返回
-                return
-            # 模式变化时，通过控制队列通知子进程内部切换线程组合，而不是重启进程
-            control_queue = self.pipeline_control_queues.get(camera_id)
-            if control_queue is not None:
-                logger.info(f"Pipeline 已运行，发送模式切换指令: {camera_id}, {current_mode} -> {mode}")
-                # 使用简单协议: ("set_mode", mode)
-                control_queue.put(("set_mode", mode))
-                self.pipeline_modes[camera_id] = mode
-                return
-            # 理论上不会走到这里；若没有控制队列，则退化为重启进程
-            logger.warning(f"Pipeline {camera_id} 缺少控制队列，回退为重启方式切换模式")
-            existing.terminate()
-            existing.join(timeout=5)
-            self.pipeline_processes.pop(camera_id, None)
-            self.pipeline_modes.pop(camera_id, None)
-        
-        pipeline_config = {
-            "camera_id": camera.id,
-            "camera_name": camera.name,
-            "rtsp_url": camera.rtsp_url,
-            "fps": camera.fps,
-            "skip_frames": camera.skip_frames,
-            "algorithms": camera.algorithms if mode != "live_only" else [],
-            "mode": mode,
-        }
-        # 推流实时绘框：传入该路使用的模型配置，Pipeline 内 build_inferencer 仅用于 draw_boxes
-        draw_model = None
-        model_id = camera.algorithms[0].get("model_id")
-        model = self.models.get(model_id) if model_id else None
-        if model:
-            draw_model = {
-                "model_type": model.model_type,
-                "model_id": model.id,
-                "model_path": model.path,
-                "device": "cpu",
-                "input_size": model.input_size or (640, 640),
-            }
-        pipeline_config["draw_model"] = draw_model
-
-        # 获取/创建相关队列
-        request_queue = None
-        if mode in ("full", "inference_only") and camera.algorithms:
-            model_id = camera.algorithms[0].get("model_id")
-            if model_id:
-                # 若该模型还未创建请求队列（例如新启用算法后首次启动 Pipeline），在此处补创建
-                if model_id not in self.request_queues:
-                    logger.info(f"为模型{model_id} 创建请求队列（首次启用算法）")
-                    self.request_queues[model_id] = MemoryQueue(maxsize=100)
-                request_queue = self.request_queues.get(model_id)
-            # 按需启动/停止推理服务进程（仅根据 inference_started 总体状态，不在此处直接改变）
-            self._reconcile_inference_service()
-
-        # 结果队列按摄像头维度维护，若是新摄像头在此处补创建
-        result_queue = self.result_queues.get(camera_id)
-        if result_queue is None:
-            logger.info(f"为摄像头{camera_id} 创建结果队列（首次进入推理/推流状态）")
-            result_queue = MemoryQueue(maxsize=100)
-            self.result_queues[camera_id] = result_queue
-        
-        # 创建控制队列，用于在子进程内动态切换模式
-        control_queue = Queue()
-        # 创建并启动进程
-        process = Process(
-            target=Pipeline.run,
-            args=(pipeline_config, request_queue, result_queue, control_queue),
-            name=f"Pipeline-{camera_id}"
-        )
-        process.start()
-        
-        self.pipeline_processes[camera_id] = process
-        self.pipeline_control_queues[camera_id] = control_queue
-        self.pipeline_modes[camera_id] = mode
-        logger.info(f"Pipeline 已启动: {camera.name} (PID={process.pid}, mode={mode})")
+        self.pipeline_service._ensure_pipeline(camera_id, mode)
 
     def _stop_pipeline(self, camera_id: str):
         """
-        停止某个摄像头的 Pipeline 进程，并清理相关控制队列与模式状态。
+        停止某个摄像头的 Pipeline，并清理相关状态。
         """
-        process = self.pipeline_processes.get(camera_id)
-        if process and process.is_alive():
-            logger.info(f"停止 Pipeline 进程: {camera_id}")
-            process.terminate()
-            process.join(timeout=5)
-        self.pipeline_processes.pop(camera_id, None)
-        self.pipeline_control_queues.pop(camera_id, None)
-        self.pipeline_modes.pop(camera_id, None)
-        # 重置队列
-        model_id = self.cameras[camera_id].algorithms[0].get("model_id")
-        self.request_queues[model_id].reset_queue()
-        self.result_queues[camera_id].reset_queue()
+        if self.pipeline_service:
+            self.pipeline_service.stop_pipeline(camera_id)
 
     def _refresh_camera_algorithms_from_redis(self, camera_id: str):
         """从 Redis 刷新某个摄像头的 algorithms 列表（仅读取该 camera_id 的绑定配置）"""
@@ -560,50 +515,19 @@ class Scheduler:
             logger.error(f"刷新摄像头算法配置失败: {camera_id}, {e}")
 
     def _reconcile_camera_pipeline(self, camera_id: str):
-        """
-        根据算法启用情况与点播/推理状态，决定该摄像头 Pipeline 的目标模式：
-        - S0: 不起 Pipeline（live=false, infer=false）
-        - S1: live_only（仅推流）
-        - S2: inference_only（仅推理）
-        - S3: full（推流 + 推理）
-        然后通过 _start_pipeline / _stop_pipeline 将实际状态拉齐。
-        """
+        """根据状态机将单路摄像头的目标模式委托给 PipelineService。"""
         camera = self.cameras.get(camera_id)
-        if not camera:
+        if not camera or not self.pipeline_service:
             return
         has_algorithms = bool(camera.algorithms)
         is_live = camera_id in self.live_started
         is_infer = camera_id in self.inference_started
-
-        # S0：既不播放也不推理 → 不需要 Pipeline，直接停止
-        if not is_live and not is_infer:
-            logger.info(f"摄像头{camera_id} 不在播放且未开启推理，停止 Pipeline（S0）")
-            self._stop_pipeline(camera_id)
-            return
-
-        # S1：仅播放、不推理 → 只推流（无算法或推理未开启）
-        if is_live and (not is_infer or not has_algorithms):
-            logger.info(f"摄像头{camera_id} 仅播放（S1: live_only）")
-            self._start_pipeline(camera_id, mode="live_only")
-            return
-
-        # S2：仅推理、不播放 + 有算法 → 只推理
-        if is_infer and not is_live and has_algorithms:
-            logger.info(f"摄像头{camera_id} 仅推理（S2: inference_only）")
-            self._start_pipeline(camera_id, mode="inference_only")
-            return
-
-        # S3：播放 + 推理 + 有算法 → 推流 + 推理
-        if is_live and is_infer and has_algorithms:
-            logger.info(f"摄像头{camera_id} 播放 + 推理（S3: full）")
-            self._start_pipeline(camera_id, mode="full")
-            return
-
-        # 兜底：其它组合（理论上不会命中），安全起见停止 Pipeline
-        logger.warning(
-            f"摄像头{camera_id} 状态组合异常（live={is_live}, infer={is_infer}, has_algorithms={has_algorithms}），停止 Pipeline 兜底"
+        self.pipeline_service.reconcile_camera(
+            camera_id=camera_id,
+            has_algorithms=has_algorithms,
+            is_live=is_live,
+            is_infer=is_infer,
         )
-        self._stop_pipeline(camera_id)
 
     def _want_inference(self) -> bool:
         """当前是否需要推理服务（任一路摄像头处于推理启动中且存在启用算法）"""
@@ -620,9 +544,11 @@ class Scheduler:
         资源控制通过队列为空 + Worker 空转来实现，避免频繁重启进程带来的队列/句柄问题。
         """
         want = self._want_inference()
-        running = self.inference_process is not None and self.inference_process.is_alive()
+        running = self.inference_service is not None and self.inference_service.running
         if want and not running:
             self._start_inference_service()
+        # Worker 的扩缩容由 InferenceService 内部根据 on_camera_inference_start/stop 的记录自行处理，
+        # 这里不再进行模型使用计数逻辑，保持 Scheduler 的职责简单。
     
     def add_camera(self, camera_config: CameraConfig):
         """动态添加摄像头"""

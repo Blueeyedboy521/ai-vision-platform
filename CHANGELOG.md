@@ -1,5 +1,12 @@
 ## Changelog
 
+### v2.8.0 - 2026-03-02
+
+- **Engine 单进程多线程重构**：原本基于多进程的 Scheduler + InferenceService + Pipeline 架构，重构为单独的 Engine 进程内部通过线程并发的模型，`InferenceService` 与 `PipelineService` 作为高内聚服务类，由 `Scheduler` 只负责根据摄像头/模型状态做调度调用，避免跨进程 `multiprocessing.Queue` 句柄失效与重启带来的问题。
+- **PipelineService 状态机与幂等化**：引入 `PipelineService` 统一管理每路摄像头的 `Pipeline` 实例，内部实现 S0/S1/S2/S3 状态机和 `reconcile_camera` 幂等逻辑，`Scheduler` 仅传入 `has_algorithms/is_live/is_infer` 三个维度，由服务内部决定是否创建、切换或销毁 Pipeline 及其内部 `StreamReader/StreamWriter/ResultHandler` 线程。
+- **InferenceService Worker 自动扩缩容**：`InferenceService` 新增 `on_camera_inference_start/stop` 接口，自行维护「摄像头→模型」映射并根据使用同一模型的摄像头数量动态扩缩 Worker 数量（含回收不再被使用模型的 Worker），实现按需拉起/收紧推理线程，避免所有模型常驻占用 GPU/CPU。
+- **Engine 重启状态恢复**：Engine 冷启动时从 Redis 恢复摄像头/模型/算法快照以及 `live_started` / `inference_started` 状态，`Scheduler` 会在启动 `InferenceService` 后为已在推理中的摄像头补发一次绑定事件，确保相关模型 Worker 自动恢复，无需前端重新点击“启动推理”。
+
 ### v2.7.0 - 2026-03-02
 
 - **FFmpeg 拉流/推流延迟调优**：`StreamReader` 的 FFmpeg 命令增加 `-fflags nobuffer`、`-flags low_delay`、`-flags2 fast`、`-analyzeduration 0`、`-probesize 32` 等参数，尽量压低从摄像头到后端的内部缓冲；`StreamReader` 不再按 fps 主动 `sleep`，而是尽快把最新帧写入队列，由 FFmpeg 本身和 `StreamWriter` 控制节流，避免多层 `sleep` 造成画面滞后。

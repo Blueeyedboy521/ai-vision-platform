@@ -43,7 +43,7 @@ class MemoryQueue(QueueInterface):
             # logger.debug(f"{self._log_prefix()} put 成功, qsize={self.qsize()}, item_type={type(item).__name__}")
             return True
         except Full:
-            logger.debug(f"{self._log_prefix()} put 失败: Full, qsize={self.qsize()}")
+            # logger.debug(f"{self._log_prefix()} put 失败: Full, qsize={self.qsize()}")
             return False
         except Exception as e:
             logger.error(f"{self._log_prefix()} put 异常: {e}")
@@ -56,7 +56,7 @@ class MemoryQueue(QueueInterface):
             # logger.debug(f"{self._log_prefix()} put_nowait 成功, qsize={self.qsize()}, item_type={type(item).__name__}")
             return True
         except Full:
-            logger.debug(f"{self._log_prefix()} put_nowait 失败: Full, qsize={self.qsize()}")
+            # logger.debug(f"{self._log_prefix()} put_nowait 失败: Full, qsize={self.qsize()}")
             return False
         except Exception as e:
             logger.error(f"{self._log_prefix()} put_nowait 异常: {e}")
@@ -69,7 +69,7 @@ class MemoryQueue(QueueInterface):
             # logger.debug(f"{self._log_prefix()} get 成功, qsize={self.qsize()}, item_type={type(item).__name__}")
             return item
         except Empty:
-            logger.debug(f"{self._log_prefix()} get 超时或空队列返回 None, qsize={self.qsize()}, timeout={timeout}")
+            # logger.debug(f"{self._log_prefix()} get 超时或空队列返回 None, qsize={self.qsize()}, timeout={timeout}")
             return None
         except Exception as e:
             logger.error(f"{self._log_prefix()} get 异常: {e}")
@@ -82,7 +82,7 @@ class MemoryQueue(QueueInterface):
             # logger.debug(f"{self._log_prefix()} get_nowait 成功, qsize={self.qsize()}, item_type={type(item).__name__}")
             return item
         except Empty:
-            logger.debug(f"{self._log_prefix()} get_nowait 返回 None (Empty), qsize={self.qsize()}")
+            # logger.debug(f"{self._log_prefix()} get_nowait 返回 None (Empty), qsize={self.qsize()}")
             return None
         except Exception as e:
             logger.error(f"{self._log_prefix()} get_nowait 异常: {e}")

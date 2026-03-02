@@ -101,10 +101,10 @@ class InferenceWorker:
         while self.is_running:
             try:
                 # 打印进程pid
-                logger.info(f"Worker {self.worker_id} 处理循环，队列大小: {self.request_queue.qsize()},进程pid: {os.getpid()}")
+                # logger.info(f"Worker {self.worker_id} 处理循环，队列大小: {self.request_queue.qsize()},进程pid: {os.getpid()}")
                 # 从队列获取请求 (超时 1 秒)
                 request = self.request_queue.get(timeout=0.4)
-                logger.info(f"Worker {self.worker_id} 处理循环，获取请求{request is None}, 进程pid: {os.getpid()}")
+                # logger.info(f"Worker {self.worker_id} 处理循环，获取请求{request is None}, 进程pid: {os.getpid()}")
                 if request is None:
                     continue
 

@@ -7,15 +7,14 @@
 - StreamWriter: 推流线程
 - ResultHandler: 结果处理线程
 
-支持在同一 Pipeline 进程内按指令动态切换模式（live_only / inference_only / full），
-通过控制队列从 Scheduler 接收模式切换命令，在进程内启停对应线程，避免频繁重启进程。
+支持在同一进程内按指令动态切换模式（live_only / inference_only / full），
+通过 PipelineService/Scheduler 调用 set_mode，在管道内部启停对应线程。
 """
 import threading
 import time
 import uuid
 from typing import Any, Dict, Optional
 from dataclasses import dataclass
-from queue import Empty  # 控制队列读取时使用
 
 from loguru import logger
 
@@ -44,7 +43,7 @@ class Pipeline:
     """
     视频处理管道
     
-    作为独立进程运行，管理三个线程：
+    作为 Engine 内部对象运行，管理三个线程：
     - StreamReader: 从 RTSP 拉流
     - StreamWriter: 向 RTMP 推流
     - ResultHandler: 处理检测结果
@@ -55,7 +54,6 @@ class Pipeline:
         config: PipelineConfig,
         request_queue: Optional[Any] = None,
         result_queue: Optional[Any] = None,
-        control_queue: Optional[Any] = None,
     ):
         """
         初始化 Pipeline。
@@ -64,12 +62,10 @@ class Pipeline:
             config: Pipeline 配置
             request_queue: 推理请求队列（给 InferenceService 的模型请求队列）
             result_queue: 推理结果队列（InferenceService → Pipeline）
-            control_queue: 调度队列（Scheduler → Pipeline，用于模式切换等控制指令）
         """
         self.config = config
         self.request_queue = request_queue
         self.result_queue = result_queue
-        self.control_queue = control_queue
         
         # 线程
         self.stream_reader: Optional[StreamReader] = None
@@ -90,59 +86,6 @@ class Pipeline:
         # 统计
         self.processed_frames = 0
         self.dropped_frames = 0
-    
-    @classmethod
-    def run(cls, config: dict, request_queue: Any, result_queue: Any, control_queue: Any = None):
-        """
-        进程入口函数。
-        
-        - 从 config 构造 PipelineConfig
-        - 启动 Pipeline（默认模式）
-        - 在循环中从 control_queue 读取指令，动态切换模式
-        """
-        pipeline_config = PipelineConfig(
-            camera_id=config.get("camera_id", ""),
-            camera_name=config.get("camera_name", ""),
-            rtsp_url=config.get("rtsp_url", ""),
-            fps=config.get("fps", 25),
-            skip_frames=config.get("skip_frames", 3),
-            algorithms=config.get("algorithms", []),
-            mode=config.get("mode", "full"),
-            draw_model=config.get("draw_model"),
-        )
-        
-        pipeline = cls(pipeline_config, request_queue, result_queue, control_queue)
-        pipeline.start()
-        
-        # 保持进程运行，并处理来自 Scheduler 的控制指令
-        try:
-            while pipeline.running:
-                if pipeline.control_queue is None:
-                    # 没有控制队列时，仅作为守护循环
-                    time.sleep(1.0)
-                    continue
-                try:
-                    cmd = pipeline.control_queue.get(timeout=1.0)
-                except Empty:
-                    cmd = None
-                if not cmd:
-                    continue
-                # 支持 tuple/list 或 dict 形式的简单协议
-                action = None
-                mode = None
-                if isinstance(cmd, dict):
-                    action = cmd.get("action")
-                    mode = cmd.get("mode")
-                elif isinstance(cmd, (tuple, list)) and cmd:
-                    action = cmd[0]
-                    if len(cmd) > 1:
-                        mode = cmd[1]
-                if action == "set_mode" and mode:
-                    pipeline.set_mode(str(mode))
-        except KeyboardInterrupt:
-            pass
-        finally:
-            pipeline.stop()
     
     def start(self):
         """启动 Pipeline"""

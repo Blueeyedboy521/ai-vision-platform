@@ -82,7 +82,7 @@ def main():
         while scheduler.running:
             # 每 5 秒检查一次状态
             import time
-            time.sleep(5)
+            time.sleep(10)
             scheduler.health_check()
             
     except KeyboardInterrupt:

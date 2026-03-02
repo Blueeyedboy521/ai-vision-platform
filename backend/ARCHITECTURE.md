@@ -102,24 +102,25 @@ backend/
 │       ├── alarm_consumer.py         # 告警消费 Worker (存库)
 │       └── notification_sender.py    # 消息发送器 (钉钉、邮件、短信)
 │
-├── engine/                           # 视频处理引擎 (核心)
+├── engine/                           # 视频处理引擎 (核心，单进程 + 多线程)
 │   ├── main.py                       # 引擎入口
-│   ├── scheduler.py                  # 主调度器
+│   ├── scheduler.py                  # 主调度器（只关心状态与调用 Service）
 │   │
 │   ├── inference/                    # 推理服务
 │   │   ├── __init__.py
 │   │   ├── inferencer.py             # 推理器接口 (InferenceResult, Inferencer, build_inferencer)
 │   │   ├── inferencer_yolo.py        # Ultralytics YOLO 实现 (load/infer/draw_boxes)
 │   │   ├── inferencer_onnx.py       # ONNX YOLO11 实现 (load/infer/draw_boxes)
-│   │   ├── service.py                # InferenceService 进程主类
+│   │   ├── service.py                # InferenceService：模型维度的 Worker 管理器（线程）
 │   │   └── worker.py                 # InferenceWorker：build_inferencer → load() → 循环 infer(params) 入队
 │   │
 │   ├── pipeline/                     # 流处理管道
 │   │   ├── __init__.py
-│   │   ├── pipeline.py               # Pipeline 进程主类
-│   │   ├── stream_reader.py          # 拉流线程 (RTSP 解码)，按 fps 墙钟节流取帧
+│   │   ├── pipeline.py               # Pipeline：单路摄像头的拉流/推流/结果处理线程集合
+│   │   ├── service.py                # PipelineService：按摄像头状态机管理 Pipeline 实例与模式
+│   │   ├── stream_reader.py          # 拉流线程 (RTSP 解码)，尽快读取最新帧
 │   │   ├── stream_writer.py          # 推流线程：FFmpeg 子进程推 RTMP，按 fps 墙钟节流发帧
-│   │   └── result_handler.py         # 结果处理线程
+│   │   └── result_handler.py         # 结果处理线程：写入 OverlayState、后续告警清洗入口
 │   │
 │   ├── queue/                        # 队列抽象层
 │   │   ├── __init__.py
