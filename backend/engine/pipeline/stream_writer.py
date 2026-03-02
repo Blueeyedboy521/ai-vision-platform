@@ -13,9 +13,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from queue import Empty
 
 from loguru import logger
-from common.redis import get_redis_client
-from common.redis.channels import RedisKeys
 from config.settings import settings
+
+from engine.redis import mark_camera_live_started
 
 from .overlay_state import OverlayState
 from engine.inference.inferencer import InferenceResult
@@ -72,8 +72,6 @@ class StreamWriter:
         self.dropped_frames = 0
         self.reconnect_count = 0
 
-        # Redis 客户端（用于标记正在推流的摄像头）
-        self._redis_client = None
         self._live_started_reported = False
 
     def _get_overlay_snapshot(self) -> Tuple[Optional[int], List[Dict], float]:
@@ -98,14 +96,7 @@ class StreamWriter:
         if self._live_started_reported:
             return
         try:
-            if self._redis_client is None:
-                self._redis_client = get_redis_client()
-                self._redis_client.connect_sync()
-            # 将摄像头加入集合，并为整个集合设置过期时间，避免长期遗留脏数据
-            self._redis_client.sync_client.sadd(RedisKeys.CAMERAS_LIVE_STARTED, self.camera_id)
-            # 这里为 key 设置 TTL，而不是为单个成员设置（Redis 不支持成员级 TTL）
-            # 多个推流实例都会不断刷新这个 TTL
-            self._redis_client.sync_client.expire(RedisKeys.CAMERAS_LIVE_STARTED, 60)
+            mark_camera_live_started(self.camera_id, live_set_ttl_sec=60)
             self._live_started_reported = True
         except Exception as e:
             logger.warning(f"摄像头{self.camera_id} 标记推流状态到 Redis 失败: {e}")
@@ -157,6 +148,9 @@ class StreamWriter:
             cmd = [
                 "ffmpeg",
                 "-y",
+                "-fflags", "nobuffer",       # 关闭输入缓冲
+                "-flags", "low_delay",        # 低延迟模式
+                "-flags2", "fast",          # 快速模式
                 "-f", "rawvideo",
                 "-pix_fmt", "bgr24",
                 "-s", f"{self.width}x{self.height}",
@@ -254,6 +248,7 @@ class StreamWriter:
                     sleep_duration = next_send_time - now
                     if sleep_duration > 0.001:
                         time.sleep(sleep_duration)
+                        pass
                     now = time.perf_counter()
                 next_send_time = now + target_interval
                 # 打印每个时间

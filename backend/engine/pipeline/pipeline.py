@@ -78,7 +78,7 @@ class Pipeline:
 
         # 内部队列
         from queue import Queue
-        self.frame_queue = Queue(maxsize=1)  # 原始帧队列
+        self.frame_queue = Queue(maxsize=3)  # 原始帧队列
         self.draw_queue = Queue(maxsize=30)   # 绘制帧队列
         # ResultHandler -> StreamWriter 最新绘框数据（OverlayState 内深拷贝，result 销毁后仍有效；每路 Pipeline 一个进程一个实例）
         self.overlay_state = OverlayState(camera_id=self.config.camera_id)
@@ -151,6 +151,10 @@ class Pipeline:
         self.start_time = time.time()
         
         try:
+            from config.settings import settings
+            debug_reader_push = bool(getattr(settings, "ENGINE_DEBUG_READER_OPENCV_PUSH", False))
+            debug_push_url = self._get_push_url() if debug_reader_push else None
+
             # 启动 StreamReader（始终存在，仅通过 request_queue 是否为 None 决定是否向推理服务发请求）
             self.stream_reader = StreamReader(
                 camera_id=self.config.camera_id,
@@ -159,8 +163,12 @@ class Pipeline:
                 skip_frames=self.config.skip_frames,
                 frame_queue=self.frame_queue,
                 # live_only 模式不发推理请求
-                request_queue=self.request_queue if self.config.mode in ("full", "inference_only") else None,
+                request_queue=None if debug_reader_push else (self.request_queue if self.config.mode in ("full", "inference_only") else None),
                 result_queue=self.result_queue,
+                disable_inference=debug_reader_push,
+                direct_push_url=debug_push_url,
+                direct_push_ffmpeg=debug_reader_push,
+                direct_push_only=debug_reader_push,
             )
             self.stream_reader.start()
             
@@ -208,46 +216,76 @@ class Pipeline:
             self.config.mode = mode
 
         # 1. 控制 StreamReader 是否向推理服务发送请求
+        from config.settings import settings
+        debug_reader_push = bool(getattr(settings, "ENGINE_DEBUG_READER_OPENCV_PUSH", False))
         if self.stream_reader:
-            if mode in ("full", "inference_only"):
-                # full / inference_only: 需要往推理服务发送帧
-                self.stream_reader.request_queue = self.request_queue
-            else:
-                # live_only: 只推流，不推理
+            if debug_reader_push:
+                # 调试：强制关闭推理
+                self.stream_reader.disable_inference = True
                 self.stream_reader.request_queue = None
+            else:
+                self.stream_reader.disable_inference = False
+                if mode in ("full", "inference_only"):
+                    # full / inference_only: 需要往推理服务发送帧
+                    self.stream_reader.request_queue = self.request_queue
+                else:
+                    # live_only: 只推流，不推理
+                    self.stream_reader.request_queue = None
 
         # 2. 控制 StreamWriter 是否存在
         writer_needed = mode in ("full", "live_only")
         if writer_needed:
-            if self.stream_writer is None:
-                push_url = self._get_push_url()
-                draw_inferencer = None
-                draw_boxes = False
-                if self.config.draw_model:
-                    from config.settings import settings
-                    draw_boxes = getattr(settings, "ENGINE_STREAM_DRAW_BOXES", False)
-                    if draw_boxes:
-                        from engine.inference.inferencer import build_inferencer
-                        dm = self.config.draw_model
-                        # for_draw=True：构造轻量化绘框 inferencer，只用于 draw_boxes，不调用 load()/infer()
-                        draw_inferencer = build_inferencer(
-                            model_type=dm.get("model_type", "yolo"),
-                            model_id=dm.get("model_id", ""),
-                            model_path=dm.get("model_path", ""),
-                            device=dm.get("device", "cpu"),
-                            input_size=tuple(dm.get("input_size") or (640, 640)),
-                            for_draw=True,
-                        )
-                logger.info(f"Pipeline {self.config.camera_id} 绘框模型: {self.config.draw_model}, draw_boxes: {draw_boxes}, inferencer: {draw_inferencer is not None}")
-                self.stream_writer = StreamWriter(
-                    camera_id=self.config.camera_id,
-                    push_url=push_url,
-                    frame_queue=self.frame_queue,
-                    fps=self.config.fps,
-                    overlay_state=self.overlay_state,
-                    inferencer=draw_inferencer,
-                )
-                self.stream_writer.start()
+            push_url = self._get_push_url()
+            from config.settings import settings
+            debug_reader_push = bool(getattr(settings, "ENGINE_DEBUG_READER_OPENCV_PUSH", False))
+
+            if debug_reader_push:
+                # 调试：跳过 StreamWriter，由 StreamReader 直接 FFmpeg 推流到远端，并关闭推理请求
+                if self.stream_writer:
+                    self.stream_writer.stop()
+                    self.stream_writer = None
+                if self.stream_reader:
+                    self.stream_reader.disable_inference = True
+                    self.stream_reader.direct_push_ffmpeg = True
+                    self.stream_reader.direct_push_url = push_url
+                    self.stream_reader.direct_push_only = True
+                logger.info(f"Pipeline {self.config.camera_id} 调试模式已开启：StreamReader 直推 -> {push_url}")
+            else:
+                # 正常模式：确保关闭 Reader 直推
+                if self.stream_reader:
+                    self.stream_reader.direct_push_ffmpeg = False
+                    self.stream_reader.direct_push_url = None
+                    self.stream_reader.direct_push_only = False
+                if self.stream_writer is None:
+                    draw_inferencer = None
+                    draw_boxes = False
+                    if self.config.draw_model:
+                        draw_boxes = getattr(settings, "ENGINE_STREAM_DRAW_BOXES", False)
+                        if draw_boxes:
+                            from engine.inference.inferencer import build_inferencer
+                            dm = self.config.draw_model
+                            # for_draw=True：构造轻量化绘框 inferencer，只用于 draw_boxes，不调用 load()/infer()
+                            draw_inferencer = build_inferencer(
+                                model_type=dm.get("model_type", "yolo"),
+                                model_id=dm.get("model_id", ""),
+                                model_path=dm.get("model_path", ""),
+                                device=dm.get("device", "cpu"),
+                                input_size=tuple(dm.get("input_size") or (640, 640)),
+                                for_draw=True,
+                            )
+                    logger.info(
+                        f"Pipeline {self.config.camera_id} 绘框模型: {self.config.draw_model}, "
+                        f"draw_boxes: {draw_boxes}, inferencer: {draw_inferencer is not None}"
+                    )
+                    self.stream_writer = StreamWriter(
+                        camera_id=self.config.camera_id,
+                        push_url=push_url,
+                        frame_queue=self.frame_queue,
+                        fps=self.config.fps,
+                        overlay_state=self.overlay_state,
+                        inferencer=draw_inferencer,
+                    )
+                    self.stream_writer.start()
         else:
             if self.stream_writer:
                 self.stream_writer.stop()

@@ -201,3 +201,10 @@ pytest
   - `POST /api/v1/cameras/{id}/start` / `/stop`：通过 Redis 通知 Engine 启动/停止该摄像头的 Pipeline。
   - `GET /api/v1/cameras/{id}/play-url`：返回 ZLMediaKit 的播放地址（HTTP-FLV 等），前端用 flv.js 播放。
   - `POST /api/v1/cameras/{id}/live-heartbeat`：前端播放时每 60 秒调用一次，后端记录到 Redis，后续可用于自动关闭长期无观众的推流。
+
+## ffmpeg
+```bash
+ffplay -x 1280 -y 720 -fflags nobuffer -flags low_delay -i "rtmp://172.21.68.125:1935/live/camera_926001bb83db48bcb62cf3ebf0eb1e72"
+
+ ffplay -fflags nobuffer -flags low_delay -i "rtsp://172.21.68.125:8554/live/camera_local"
+```

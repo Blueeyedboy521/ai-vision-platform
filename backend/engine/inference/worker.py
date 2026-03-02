@@ -100,8 +100,11 @@ class InferenceWorker:
 
         while self.is_running:
             try:
+                # 打印进程pid
+                logger.info(f"Worker {self.worker_id} 处理循环，队列大小: {self.request_queue.qsize()},进程pid: {os.getpid()}")
                 # 从队列获取请求 (超时 1 秒)
-                request = self.request_queue.get(timeout=1)
+                request = self.request_queue.get(timeout=0.4)
+                logger.info(f"Worker {self.worker_id} 处理循环，获取请求{request is None}, 进程pid: {os.getpid()}")
                 if request is None:
                     continue
 
@@ -169,7 +172,9 @@ class InferenceWorker:
                     )
             except Exception as e:
                 if "Empty" not in str(type(e).__name__):
-                    logger.error(f"Worker {self.worker_id} 处理异常: {e}")
+                    logger.error(f"Worker {self.worker_id} 处理异常，可能空队列: {e}")
+                else:
+                    logger.info(f"Worker {self.worker_id} 处理异常: {e}")
     
     def _inference(self, params: Dict[str, Any]) -> InferenceResult:
         """调用推理器 infer(params)，由实现类内部计时并组装完整 InferenceResult 返回"""

@@ -19,22 +19,8 @@ from .draw_utils import draw_detections_inplace
 
 def _read_classes_from_redis(model_id: str) -> Optional[List[str]]:
     """从 Redis 模型配置读取 classes，用于覆盖或补充模型自带 names"""
-    try:
-        from common.redis import get_redis_client
-        from common.redis.channels import RedisKeys
-        client = get_redis_client()
-        client.connect_sync()
-        raw = client.sync_client.get(RedisKeys.model_config(model_id))
-        if not raw:
-            return None
-        cfg = json.loads(raw)
-        classes = cfg.get("classes")
-        if isinstance(classes, list) and len(classes) > 0:
-            return [str(c) for c in classes]
-        return None
-    except Exception as e:
-        logger.debug(f"从 Redis 读取模型 classes 失败: model_id={model_id}, err={e}")
-        return None
+    from engine.redis import get_model_classes
+    return get_model_classes(model_id)
 
 
 class UltralyticsYoloInferencer:

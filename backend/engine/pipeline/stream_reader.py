@@ -13,6 +13,7 @@ from queue import Full
 
 import numpy as np
 from loguru import logger
+from datetime import datetime
 
 # 可选：OpenCV 仅作备用
 try:
@@ -78,7 +79,12 @@ class StreamReader:
         frame_queue: Optional[Any] = None,
         request_queue: Optional[Any] = None,
         result_queue: Optional[Any] = None,
-        use_ffmpeg: bool = True,
+        use_ffmpeg: bool = False,
+        # 调试用途：关闭推理 + FFmpeg 直推远端（用于定位播放延迟来源）
+        disable_inference: bool = False,
+        direct_push_url: Optional[str] = None,
+        direct_push_ffmpeg: bool = False,
+        direct_push_only: bool = False,
     ):
         self.camera_id = camera_id
         self.rtsp_url = rtsp_url
@@ -88,6 +94,15 @@ class StreamReader:
         self.request_queue = request_queue
         self.result_queue = result_queue
         self.use_ffmpeg = bool(use_ffmpeg)
+
+        # 调试开关：关闭推理、以及在 Reader 内部用 FFmpeg 直推到远端
+        self.disable_inference = bool(disable_inference)
+        self.direct_push_url = direct_push_url
+        self.direct_push_ffmpeg = bool(direct_push_ffmpeg)
+        self.direct_push_only = bool(direct_push_only)
+        self._push_process: Optional[subprocess.Popen] = None
+        self._push_width: int = 0
+        self._push_height: int = 0
 
         self.cap = None
         self._ffmpeg_process: Optional[subprocess.Popen] = None
@@ -100,6 +115,7 @@ class StreamReader:
         self.inference_frames = 0
         self.dropped_frames = 0
         self.reconnect_count = 0
+        self.direct_pushed_frames = 0
 
     def start(self):
         """启动拉流"""
@@ -122,7 +138,87 @@ class StreamReader:
             self.thread.join(timeout=5)
         self._close_opencv()
         self._close_ffmpeg()
+        self._close_push_ffmpeg()
         logger.info(f"StreamReader 已停止: {self.camera_id}")
+
+    def _close_push_ffmpeg(self) -> None:
+        p = self._push_process
+        if p is None:
+            return
+        try:
+            if p.stdin and not p.stdin.closed:
+                try:
+                    p.stdin.close()
+                except Exception:
+                    pass
+            p.wait(timeout=3)
+        except Exception:
+            try:
+                p.terminate()
+                p.wait(timeout=2)
+            except Exception:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+        self._push_process = None
+
+    def _ensure_push_ffmpeg(self, frame: np.ndarray) -> bool:
+        """
+        懒初始化 FFmpeg 推流子进程（用于调试直推远端）。
+        stdin 接收 rawvideo(BGR24)，输出 RTMP(FLV/H264)。
+        """
+        if not self.direct_push_ffmpeg or not self.direct_push_url:
+            return False
+        if self._push_process is not None and self._push_process.poll() is None:
+            return True
+
+        h, w = frame.shape[:2]
+        fps = int(self.fps) if self.fps else 25
+        self._push_width, self._push_height = w, h
+
+        try:
+            self._close_push_ffmpeg()
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-fflags", "nobuffer",
+                "-flags", "low_delay",
+                "-flags2", "fast",
+                "-f", "rawvideo",
+                "-pix_fmt", "bgr24",
+                "-s", f"{w}x{h}",
+                "-r", str(fps),
+                "-i", "pipe:0",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-tune", "zerolatency",
+                "-g", str(fps),
+                "-keyint_min", str(fps),
+                "-sc_threshold", "0",
+                "-pix_fmt", "yuv420p",
+                "-f", "flv",
+                self.direct_push_url,
+            ]
+            self._push_process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if self._push_process.poll() is not None:
+                logger.error(f"摄像头{self.camera_id} 调试 FFmpeg 直推启动失败: {self.direct_push_url}")
+                self._push_process = None
+                return False
+            logger.info(f"摄像头{self.camera_id} 调试 FFmpeg 直推已开启 -> {self.direct_push_url} ({w}x{h}@{fps})")
+            return True
+        except FileNotFoundError:
+            logger.error(f"摄像头{self.camera_id} 未找到 ffmpeg，请确保已安装并加入 PATH")
+            return False
+        except Exception as e:
+            logger.error(f"摄像头{self.camera_id} 启动调试 FFmpeg 直推异常: {e}")
+            self._push_process = None
+            return False
 
     def _close_opencv(self):
         if self.cap is not None:
@@ -162,6 +258,12 @@ class StreamReader:
                 "ffmpeg",
                 "-y",
                 "-rtsp_transport", "tcp",
+                # 低延迟拉流参数
+                "-fflags", "nobuffer",
+                "-flags", "low_delay",
+                "-flags2", "fast",
+                "-analyzeduration", "0",
+                "-probesize", "32",
                 "-timeout", "5000000",
                 "-i", self.rtsp_url,
                 "-f", "rawvideo",
@@ -201,9 +303,8 @@ class StreamReader:
             return False
         try:
             self._close_opencv()
-            rtsp_tcp_url = f"{self.rtsp_url}?transportmode=unicast&tcpflag=1"
+            rtsp_tcp_url = f"{self.rtsp_url}"
             self.cap = cv2.VideoCapture(rtsp_tcp_url)
-            self.cap.set(cv2.CAP_PROP_RTSP_TRANSPORT, cv2.CAP_RTSP_TRANSPORT_TCP)
             self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
             self.cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000)
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -240,13 +341,10 @@ class StreamReader:
         return frame
 
     def _read_loop(self):
-        """读取循环：按目标 fps 墙钟节流"""
-        frame_interval = 1.0 / self.fps
-        next_read_time = 0.0
+        """读取循环：尽快读取最新帧并分发给后续处理（不再在此按 fps 节流）"""
         # 每隔一段时间打印一次存活日志，便于排查拉流是否仍在运行
         last_alive_log_time = time.time()
         alive_log_interval = 10.0  # 秒
-
         while self.running:
             try:
                 # 检查连接
@@ -270,14 +368,7 @@ class StreamReader:
                         next_read_time = 0.0
                     continue
 
-                # 墙钟节流
-                now = time.perf_counter()
-                if next_read_time > 0 and now < next_read_time:
-                    sleep_duration = next_read_time - now
-                    if sleep_duration > 0.001:
-                        time.sleep(sleep_duration)
-                    now = time.perf_counter()
-                next_read_time = now + frame_interval
+                # 如需逐帧调试，可在此打印 time.perf_counter() 等信息，但请注意会影响延迟与性能
 
                 # 读一帧
                 if self.use_ffmpeg:
@@ -292,6 +383,7 @@ class StreamReader:
                     continue
 
                 self.total_frames += 1
+                now = time.perf_counter()
 
                 # 周期性打印拉流存活日志
                 now_wall = time.time()
@@ -305,32 +397,50 @@ class StreamReader:
                         f"use_ffmpeg={self.use_ffmpeg}"
                     )
 
-                if self.frame_queue:
-                    try:
-                        self.frame_queue.put_nowait({
-                            "frame_id": self.total_frames,
-                            "frame": frame,
-                            "timestamp": now,
-                        })
-                    except Full:
-                        self.dropped_frames += 1
+                # 调试：在 StreamReader 内部用 FFmpeg 直接推到远端，用于定位播放延迟来源
+                if self.direct_push_ffmpeg and self.direct_push_url:
+                    if self._ensure_push_ffmpeg(frame):
+                        try:
+                            if self._push_process and self._push_process.stdin:
+                                self._push_process.stdin.write(frame.tobytes())
+                            self.direct_pushed_frames += 1
+                        except Exception as e:
+                            logger.error(f"摄像头{self.camera_id} FFmpeg 直推写入失败: {e}")
+                            self._close_push_ffmpeg()
+                    else:
+                        logger.error(f"摄像头{self.camera_id} FFmpeg 直推启动失败")
+                # 默认路径：写入帧队列供 StreamWriter 使用（直推 only 时跳过）
+                if not self.direct_push_only:
+                    if self.frame_queue:
+                        try:
+                            self.frame_queue.put_nowait({
+                                "frame_id": self.total_frames,
+                                "frame": frame,
+                                "timestamp": now,
+                            })
+                        except Full:
+                            self.dropped_frames += 1
+                # logger.info(f"摄像头{self.camera_id} StreamReader 读取帧{self.total_frames} 时间: {now}，队列大小: {self.frame_queue.qsize()},disable_inference: {self.disable_inference},request_queue: {self.request_queue}")
+                # 关闭推理（调试）或未配置 request_queue 时，不发送推理请求
+                if self.disable_inference or not self.request_queue:
+                    continue
 
+                # 推理节流：按 skip_frames 控制推理频率
                 if self.total_frames % (self.skip_frames + 1) != 0:
                     continue
 
-                if self.request_queue:
-                    request = {
-                        "request_id": str(uuid.uuid4()),
-                        "camera_id": self.camera_id,
-                        "frame_id": self.total_frames,
-                        "frame": frame,
-                        "timestamp": now,
-                    }
-                    try:
-                        self.request_queue.put_nowait(request)
-                        self.inference_frames += 1
-                    except Full:
-                        self.dropped_frames += 1
+                request = {
+                    "request_id": str(uuid.uuid4()),
+                    "camera_id": self.camera_id,
+                    "frame_id": self.total_frames,
+                    "frame": frame,
+                    "timestamp": now,
+                }
+                try:
+                    self.request_queue.put_nowait(request)
+                    self.inference_frames += 1
+                except Full:
+                    self.dropped_frames += 1
 
             except Exception as e:
                 logger.error(f"摄像头{self.camera_id} StreamReader 异常: {e}")
@@ -349,6 +459,7 @@ class StreamReader:
             "inference_frames": self.inference_frames,
             "dropped_frames": self.dropped_frames,
             "reconnect_count": self.reconnect_count,
+            "direct_pushed_frames": self.direct_pushed_frames,
             "connected": connected,
             "use_ffmpeg": self.use_ffmpeg,
         }

@@ -377,6 +377,22 @@ Engine 启动/切换 Pipeline 时，会把 `mode` 传入 `Pipeline.run()`，在 
   - 关闭：
     - 在 `lifespan` 的关闭阶段调用 `stop_live_heartbeat_monitor()`，通过 `task.cancel()` 方式让循环优雅结束。
 
+#### 3.3.4 FFmpeg 拉流/推流与延迟控制注意点
+
+- **StreamReader 拉流（FFmpeg 子进程）**
+  - 使用命令形如：
+    - `ffmpeg -y -rtsp_transport tcp -fflags nobuffer -flags low_delay -flags2 fast -analyzeduration 0 -probesize 32 -timeout ... -i rtsp://... -f rawvideo -pix_fmt bgr24 -s WxH -r fps pipe:1`
+  - **不要再在 `StreamReader` 中按 fps 做额外 `sleep`**：读取端的节流会与 ffmpeg 内部缓冲叠加，导致最新帧长时间滞留在缓冲中，从而放大端到端延迟。当前实现是：`StreamReader` 尽快 `read` + 推入队列，帧率控制交给下游。
+- **StreamWriter 推流（FFmpeg 子进程）**
+  - 使用命令形如：
+    - `ffmpeg -y -fflags nobuffer -flags low_delay -flags2 fast -f rawvideo -pix_fmt bgr24 -s WxH -r fps -i pipe:0 -c:v libx264 -preset ultrafast -tune zerolatency -g fps -keyint_min fps -sc_threshold 0 -pix_fmt yuv420p -f flv rtmp://...`
+  - 推流侧按墙钟时间（`target_interval = 1.0 / fps`）做一次节流即可，不需要在拉流侧重复节流；如果后续调整帧率，只改 Writer 一处即可。
+- **调试直推模式**
+  - 为了快速定位延迟来源，Engine 提供调试开关 `ENGINE_DEBUG_READER_OPENCV_PUSH`（名称沿用，含义更新为“StreamReader 直接 FFmpeg 推流”）：
+    - 开启时：Pipeline 关闭推理与 `StreamWriter`，`StreamReader` 内部直接用 FFmpeg 从 RTSP 拉流并推送到 RTMP，链路约简为「摄像头 → FFmpeg 拉流/推流 → ZLM → 播放器」。
+    - 关闭时：恢复正常模式，由 `StreamReader` 写帧到队列，`StreamWriter` 负责推流与（可选）绘框。
+  - 使用建议：调试延迟时，先在直推模式下确认“摄像头+FFmpeg+ZLM+播放器”的基础延迟，再逐步恢复推理和绘框，看哪一段引入了额外延迟，避免在代码层面误加 `sleep` 或缓冲。
+
 综合以上三小节，**前端启用开关 + 播放心跳** 最终会在 Engine 侧转化为「是否启动 Pipeline」以及「以何种模式运行（full / live_only / inference_only）」，从而精确控制 **拉流 / 推流 / 推理** 的资源开销。新同事只要沿用这套 Redis Key 与事件约定，即可扩展更多控制能力（例如：按用户级别限流、并发路数控制、无人观看自动停推流、仍保留后台推理等）。
 
 ---

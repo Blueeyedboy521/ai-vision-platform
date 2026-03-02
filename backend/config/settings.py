@@ -168,6 +168,10 @@ class Settings(BaseSettings):
         default=2.0,
         description="推流实时绘框结果过期时间（秒）。超过该时间未收到新推理结果，则不再绘制"
     )
+    ENGINE_DEBUG_READER_OPENCV_PUSH: bool = Field(
+        default=False,
+        description="调试：由 StreamReader 直接用 FFmpeg 推流到 push_url，并关闭推理与 StreamWriter（用于定位播放延迟来源）"
+    )
 
     # ==================== 存储配置 ====================
     STORAGE_TYPE: str = Field(

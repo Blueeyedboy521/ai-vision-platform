@@ -20,8 +20,22 @@ from loguru import logger
 from engine.inference.service import InferenceService
 from engine.pipeline.pipeline import Pipeline
 from engine.queue.memory_queue import MemoryQueue
-from common.redis import get_redis_client, RedisChannels, RedisKeys
 import json
+
+from engine.redis import (
+    get_sync_client,
+    get_live_started_camera_ids,
+    get_inference_started_camera_ids,
+    is_camera_heartbeat_active,
+    scan_model_configs,
+    scan_camera_configs,
+    scan_camera_algorithm_bindings,
+    scan_camera_algorithm_configs,
+    get_model_config,
+    get_algorithm_config,
+    get_camera_algorithm_config,
+)
+from common.redis import RedisChannels
 
 
 @dataclass
@@ -153,10 +167,9 @@ class Scheduler:
         self._config_running = True
         
         def _worker():
-            client = get_redis_client()
             try:
-                client.connect_sync()
-                pubsub = client.sync_client.pubsub()
+                r = get_sync_client()
+                pubsub = r.pubsub()
                 pubsub.subscribe(RedisChannels.ENGINE_CONFIG_UPDATE)
                 logger.info(f"Engine 已订阅 Redis 频道: {RedisChannels.ENGINE_CONFIG_UPDATE}" )
                 
@@ -198,50 +211,27 @@ class Scheduler:
         # 模型相关：从 Redis 读取最新模型配置
         if action in ("model_add", "model_update"):
             model_id = data.get("model_id")
-            if not model_id:
-                return
-            try:
-                client = get_redis_client()
-                client.connect_sync()
-                raw = client.sync_client.get(RedisKeys.model_config(model_id))
-                if raw:
-                    cfg = json.loads(raw)
+            if model_id:
+                cfg = get_model_config(model_id)
+                if cfg:
                     logger.info(f"Engine 读取模型配置: {cfg}")
-            except Exception as e:
-                logger.error(f"Engine 读取模型配置失败: {e}")
         
         # 算法相关：从 Redis 读取最新算法配置
         if action in ("algorithm_add", "algorithm_update"):
             algorithm_id = data.get("algorithm_id")
-            if not algorithm_id:
-                return
-            try:
-                client = get_redis_client()
-                client.connect_sync()
-                raw = client.sync_client.get(RedisKeys.algorithm_config(algorithm_id))
-                if raw:
-                    cfg = json.loads(raw)
+            if algorithm_id:
+                cfg = get_algorithm_config(algorithm_id)
+                if cfg:
                     logger.info(f"Engine 读取算法配置: {cfg}")
-            except Exception as e:
-                logger.error(f"Engine 读取算法配置失败: {e}")
         
         # 摄像头-算法绑定：从 Redis 读取最新绑定配置
         if action in ("camera_algorithm_add", "camera_algorithm_update"):
             camera_id = data.get("camera_id")
             algorithm_id = data.get("algorithm_id")
-            if not camera_id or not algorithm_id:
-                return
-            try:
-                client = get_redis_client()
-                client.connect_sync()
-                raw = client.sync_client.get(
-                    RedisKeys.camera_algorithm_config(camera_id, algorithm_id)
-                )
-                if raw:
-                    cfg = json.loads(raw)
+            if camera_id and algorithm_id:
+                cfg = get_camera_algorithm_config(camera_id, algorithm_id)
+                if cfg:
                     logger.info(f"Engine 读取摄像头算法配置: {cfg}")
-            except Exception as e:
-                logger.error(f"Engine 读取摄像头算法配置失败: {e}")
             
             # 重新加载该摄像头的算法列表（简单做法：从 Redis scan 一遍该 camera_id 前缀）
             # 注意：这里仅更新配置与 Pipeline，不直接改变 InferenceService 的调度状态
@@ -313,47 +303,13 @@ class Scheduler:
         self.cameras = {}
         self.models = {}
         
-        client = get_redis_client()
-        try:
-            client.connect_sync()
-            r = client.sync_client
-        except Exception as e:
-            logger.error(f"连接 Redis 失败，无法加载配置: {e}")
-            return
-        
-        # 0. 读取“直播已启动”集合
-        try:
-            self.live_started = set(r.smembers(RedisKeys.CAMERAS_LIVE_STARTED) or [])
-            # redis-py 可能返回 bytes
-            self.live_started = {x.decode() if isinstance(x, (bytes, bytearray)) else str(x) for x in self.live_started}
-        except Exception as e:
-            logger.warning(f"读取直播启动集合失败，将忽略: {e}")
-            self.live_started = set()
-
-        # 0.1 读取“推理已启动”集合
-        try:
-            self.inference_started = set(r.smembers(RedisKeys.CAMERAS_INFERENCE_STARTED) or [])
-            self.inference_started = {x.decode() if isinstance(x, (bytes, bytearray)) else str(x) for x in self.inference_started}
-        except Exception as e:
-            logger.warning(f"读取推理启动集合失败，将忽略: {e}")
-            self.inference_started = set()
+        # 0. 读取“直播已启动”“推理已启动”集合
+        self.live_started = get_live_started_camera_ids()
+        self.inference_started = get_inference_started_camera_ids()
         
         # 1. 加载模型配置
         try:
-            for key in r.scan_iter(f"{RedisKeys.MODEL_CONFIG_PREFIX}*"):
-                raw = r.get(key)
-                if not raw:
-                    continue
-                try:
-                    cfg = json.loads(raw)
-                except Exception:
-                    logger.error(f"解析模型配置失败: key={key}")
-                    continue
-                
-                if not cfg.get("is_enabled", True):
-                    continue
-                
-                model_id = cfg.get("id") or str(key).split(":")[-1]
+            for model_id, cfg in scan_model_configs():
                 self.models[model_id] = ModelConfig(
                     id=model_id,
                     name=cfg.get("name", model_id),
@@ -373,20 +329,7 @@ class Scheduler:
         
         # 2. 加载摄像头基础配置
         try:
-            for key in r.scan_iter(f"{RedisKeys.CAMERA_CONFIG_PREFIX}*"):
-                raw = r.get(key)
-                if not raw:
-                    continue
-                try:
-                    cfg = json.loads(raw)
-                except Exception:
-                    logger.error(f"解析摄像头配置失败: key={key}")
-                    continue
-                
-                if not cfg.get("is_enabled", True):
-                    continue
-                
-                camera_id = cfg.get("id") or str(key).split(":")[-1]
+            for camera_id, cfg in scan_camera_configs():
                 self.cameras[camera_id] = CameraConfig(
                     id=camera_id,
                     name=cfg.get("name", camera_id),
@@ -400,21 +343,7 @@ class Scheduler:
         
         # 3. 加载摄像头-算法绑定配置
         try:
-            for key in r.scan_iter(f"{RedisKeys.CAMERA_ALGORITHM_CONFIG_PREFIX}*"):
-                raw = r.get(key)
-                if not raw:
-                    continue
-                try:
-                    cfg = json.loads(raw)
-                except Exception:
-                    logger.error(f"解析摄像头算法配置失败: key={key}")
-                    continue
-                
-                if not cfg.get("is_enabled", True):
-                    continue
-                
-                camera_id = cfg.get("camera_id") or str(key).split(":")[-2]
-                algorithm_id = cfg.get("algorithm_id") or str(key).split(":")[-1]
+            for camera_id, algorithm_id, cfg in scan_camera_algorithm_bindings():
                 model_id = cfg.get("model_id")
                 if not camera_id or not model_id:
                     continue
@@ -443,9 +372,15 @@ class Scheduler:
         except Exception as e:
             logger.error(f"从 Redis 加载摄像头算法绑定配置失败: {e}")
         
+        # 4. Engine 重启恢复：若某摄像头心跳 Key 仍有效（前端在点播中），确保加入 live_started 以启动 Writer
+        for camera_id in list(self.cameras.keys()):
+            if is_camera_heartbeat_active(camera_id):
+                self.live_started.add(camera_id)
+                logger.info(f"Engine 重启恢复: 摄像头 {camera_id} 心跳有效，已加入 live_started")
+        
         logger.info(
             f"从 Redis 加载配置完成: {len(self.cameras)} 个摄像头, "
-            f"{len(self.models)} 个模型"
+            f"{len(self.models)} 个模型, live_started={len(self.live_started)}"
         )
     
     def _create_queues(self):
@@ -454,12 +389,12 @@ class Scheduler:
         
         # 为每个模型创建请求队列
         for model_id in self.models:
-            self.request_queues[model_id] = MemoryQueue(maxsize=100)
+            self.request_queues[model_id] = MemoryQueue(maxsize=10)
             logger.debug(f"创建请求队列: {model_id}")
         
         # 为每个摄像头创建结果队列
         for camera_id in self.cameras:
-            self.result_queues[camera_id] = MemoryQueue(maxsize=100)
+            self.result_queues[camera_id] = MemoryQueue(maxsize=10)
             logger.debug(f"创建结果队列: {camera_id}")
     
     def _start_inference_service(self):
@@ -609,44 +544,18 @@ class Scheduler:
         self.pipeline_processes.pop(camera_id, None)
         self.pipeline_control_queues.pop(camera_id, None)
         self.pipeline_modes.pop(camera_id, None)
+        # 重置队列
+        model_id = self.cameras[camera_id].algorithms[0].get("model_id")
+        self.request_queues[model_id].reset_queue()
+        self.result_queues[camera_id].reset_queue()
 
     def _refresh_camera_algorithms_from_redis(self, camera_id: str):
         """从 Redis 刷新某个摄像头的 algorithms 列表（仅读取该 camera_id 的绑定配置）"""
         camera = self.cameras.get(camera_id)
         if not camera:
             return
-        client = get_redis_client()
         try:
-            client.connect_sync()
-            r = client.sync_client
-            algos: List[dict] = []
-            pattern = f"{RedisKeys.CAMERA_ALGORITHM_CONFIG_PREFIX}{camera_id}:*"
-            for key in r.scan_iter(pattern):
-                raw = r.get(key)
-                if not raw:
-                    continue
-                try:
-                    cfg = json.loads(raw)
-                except Exception:
-                    continue
-                if not cfg.get("is_enabled", True):
-                    continue
-                algorithm_id = cfg.get("algorithm_id") or str(key).split(":")[-1]
-                model_id = cfg.get("model_id")
-                if not model_id:
-                    continue
-                algos.append(
-                    {
-                        "id": algorithm_id,
-                        "model_id": model_id,
-                        "config": {
-                            "confidence": cfg.get("confidence"),
-                            "alert_config": cfg.get("alert_config"),
-                            "regions": cfg.get("regions") or [],
-                        },
-                    }
-                )
-            camera.algorithms = algos
+            camera.algorithms = scan_camera_algorithm_configs(camera_id)
         except Exception as e:
             logger.error(f"刷新摄像头算法配置失败: {camera_id}, {e}")
 
@@ -704,19 +613,16 @@ class Scheduler:
         return False
 
     def _reconcile_inference_service(self):
-        """按需启动/停止推理服务"""
+        """
+        按需启动推理服务。
+
+        约定：推理进程一旦启动就不再主动停止，只在 Engine 整体关闭时退出。
+        资源控制通过队列为空 + Worker 空转来实现，避免频繁重启进程带来的队列/句柄问题。
+        """
         want = self._want_inference()
         running = self.inference_process is not None and self.inference_process.is_alive()
         if want and not running:
             self._start_inference_service()
-        if (not want) and running:
-            logger.info("当前无推理任务，停止推理服务进程")
-            try:
-                self.inference_process.terminate()
-                self.inference_process.join(timeout=10)
-            except Exception:
-                pass
-            self.inference_process = None
     
     def add_camera(self, camera_config: CameraConfig):
         """动态添加摄像头"""

@@ -14,7 +14,7 @@ from app.models import Model, Algorithm, Camera, CameraAlgorithm
 from common.logging import logger
 from common.redis import RedisKeys
 from common.media import get_stream_manager
-
+from app.core.redis import write_model_to_redis
 
 async def sync_configs_to_redis_and_streams() -> None:
   """
@@ -31,21 +31,8 @@ async def sync_configs_to_redis_and_streams() -> None:
     models: List[Model] = result.scalars().all()
     for model in models:
       try:
-        await redis.client.set(
-          RedisKeys.model_config(model.id),
-          json.dumps(
-            {
-              "id": model.id,
-              "code": model.code,
-              "name": model.name,
-              "model_type": model.model_type,
-              "model_path": model.model_path,
-              "classes": list(model.classes or []),
-              "is_enabled": model.is_enabled,
-            },
-            ensure_ascii=False,
-          ),
-        )
+        # 调用 write_model_to_redis同步模型配置到 Redis
+        await write_model_to_redis(model.id, session)
       except Exception as e:
         logger.error(f"启动同步模型配置到 Redis 失败: {model.id}, 错误: {e}")
 

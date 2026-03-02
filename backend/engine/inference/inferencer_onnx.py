@@ -8,7 +8,6 @@ ONNX YOLO11 推理实现
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Set
@@ -22,51 +21,13 @@ def _read_classes_from_redis(model_id: str) -> Optional[Dict[str, Dict[str, str]
     """
     从 Redis 读取模型配置的 algorithms，并构造 {target_class -> {code, name}} 的映射。
     """
-    try:
-        from common.redis import get_redis_client
-        from common.redis.channels import RedisKeys
-
-        client = get_redis_client()
-        client.connect_sync()
-        r = client.sync_client
-
-        raw_model = r.get(RedisKeys.model_config(model_id))
-        if not raw_model:
-            return None
-        try:
-            cfg_model = json.loads(raw_model)
-        except Exception:
-            logger.warning(f"ONNX 解析模型配置失败: model_id={model_id}")
-            return None
-        algorithms_cfg = cfg_model.get("algorithms")
-        if not isinstance(algorithms_cfg, list):
-            return None
-
-        class_map: Dict[str, Dict[str, str]] = {}
-        for item in algorithms_cfg:
-            # 预期结构: {"id": algo_id, "name": ..., "code": algo_code, "target_classes": [...]}
-            if not isinstance(item, dict):
-                continue
-            code = str(item.get("code") or "")
-            name = str(item.get("name") or "")
-            targets = item.get("target_classes") or []
-            if not code or not isinstance(targets, list):
-                continue
-            for t in targets:
-                if t is None:
-                    continue
-                key = str(t)
-                class_map[key] = {"code": code, "name": name}
-
-        if class_map:
-            logger.info(
-                f"ONNX 从 model:config.algorithms 构造 target_class->{{code,name}} 映射: model_id={model_id}, count={len(class_map)}"
-            )
-            return class_map
-        return None
-    except Exception as e:
-        logger.warning(f"从 Redis 读取模型 classes 失败: model_id={model_id}, err={e}")
-        return None
+    from engine.redis import get_model_algorithms_class_map
+    result = get_model_algorithms_class_map(model_id)
+    if result:
+        logger.info(
+            f"ONNX 从 model:config.algorithms 构造 target_class->{{code,name}} 映射: model_id={model_id}, count={len(result)}"
+        )
+    return result
 
 
 def _safe_class_name(class_id: int, class_names: Optional[List[str]]) -> str:

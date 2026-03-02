@@ -1,5 +1,12 @@
 ## Changelog
 
+### v2.7.0 - 2026-03-02
+
+- **FFmpeg 拉流/推流延迟调优**：`StreamReader` 的 FFmpeg 命令增加 `-fflags nobuffer`、`-flags low_delay`、`-flags2 fast`、`-analyzeduration 0`、`-probesize 32` 等参数，尽量压低从摄像头到后端的内部缓冲；`StreamReader` 不再按 fps 主动 `sleep`，而是尽快把最新帧写入队列，由 FFmpeg 本身和 `StreamWriter` 控制节流，避免多层 `sleep` 造成画面滞后。
+- **调试直推模式（StreamReader 直连 FFmpeg）**：新增调试开关 `ENGINE_DEBUG_READER_OPENCV_PUSH`（含义更新为 FFmpeg 直推），开启后 Pipeline 会关闭推理与 `StreamWriter`，由 `StreamReader` 直接用 FFmpeg 从 RTSP 拉流并推到 RTMP，用于快速定位端到端延迟来源，避免在调试阶段被绘框/告警/多级队列干扰判断。
+- **Engine 队列与 Redis 封装**：在 Engine 侧新增 `engine/redis.py`，统一封装模型/算法/摄像头配置读取、直播/推理状态集合 (`cameras:live:started` / `cameras:inference:started`) 与心跳检测等逻辑，Scheduler 不再直接操作 `redis.sync_client`；`MemoryQueue` 继续基于 `multiprocessing.Queue` 实现，并增加详细调试日志（队列 id、pid、qsize、item_type），用于排查跨进程队列读写问题。
+- **推理服务生命周期调整**：`Scheduler` 仅在首次需要推理时启动 `InferenceService` 进程，后续不再因「当前暂时无推理任务」而主动停止该进程，避免在 Windows spawn 模式下频繁重启进程导致的 `multiprocessing.Queue` 管道/句柄问题；推理资源控制改由「是否还有推理请求」与 Worker 空转来实现。
+
 ### v2.6.0 - 2026-02-28
 
 - **后端实时绘框与轻量推理器**：在 Engine Pipeline 中引入 `OverlayState` 作为同一进程内 `ResultHandler` 与 `StreamWriter` 间的共享检测结果缓存，`StreamWriter` 每帧从中读取最新 `frame_id` + `detections` 构造 `InferenceResult` 并调用各模型实现的 `draw_boxes` 完成实时绘框；新增配置开关 `ENGINE_STREAM_DRAW_BOXES` / `ENGINE_STREAM_DRAW_TTL_SEC` 控制是否开启后端绘框以及检测结果过期时间，支持仅后端绘框不影响告警保存与推送链路。
