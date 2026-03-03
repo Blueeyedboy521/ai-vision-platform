@@ -1,5 +1,11 @@
 ## Changelog
 
+### v2.8.1 - 2026-03-03
+
+- **告警清洗与异步转发链路**：`ResultHandler` 对推理结果做阈值/区域/变化检测（3 秒窗口 + IoU 变化）后生成告警，先落本地临时截图，再由 `Scheduler` 内部告警线程上传到 Storage（MinIO）并写入 Redis `alarm_queue`，由 app 侧 `AlarmConsumer` 入库并推送 WS/通知。
+- **摄像头在线状态（基于快照）**：`live_heartbeat_monitor` 定期遍历所有摄像头尝试更新快照，成功则设置 `camera:online:{camera_id}`（TTL=100s），失败则删除；摄像头列表/详情与系统看板从 Redis 实时读取在线状态。
+- **前端实时数据对齐**：告警管理/首页告警列表/设备健康等改为调用后端真实接口（`/system/dashboard`、`/alarms`、`/alarms/stats`），并修复告警管理页“视频直播”取流逻辑，复用摄像头管理页的开播/取 `http-flv`/拼 token/开发代理与心跳保活方案。
+
 ### v2.8.0 - 2026-03-02
 
 - **Engine 单进程多线程重构**：原本基于多进程的 Scheduler + InferenceService + Pipeline 架构，重构为单独的 Engine 进程内部通过线程并发的模型，`InferenceService` 与 `PipelineService` 作为高内聚服务类，由 `Scheduler` 只负责根据摄像头/模型状态做调度调用，避免跨进程 `multiprocessing.Queue` 句柄失效与重启带来的问题。

@@ -129,6 +129,7 @@
           @update:checked="handleSelectAll"
         />
         <span class="alarm-list__col alarm-list__col--level">级别</span>
+        <span class="alarm-list__col alarm-list__col--thumb">截图</span>
         <span class="alarm-list__col alarm-list__col--type">类型</span>
         <span class="alarm-list__col alarm-list__col--content">告警内容</span>
         <span class="alarm-list__col alarm-list__col--device">关联设备</span>
@@ -148,6 +149,12 @@
             <span class="level-badge" :class="`level-badge--${alarm.level}`">
               {{ getLevelText(alarm.level) }}
             </span>
+          </div>
+          <div class="alarm-list__col alarm-list__col--thumb">
+            <div class="alarm-thumb">
+              <img v-if="alarm.snapshotUrl" :src="alarm.snapshotUrl" alt="告警截图" />
+              <div v-else class="alarm-thumb__placeholder">—</div>
+            </div>
           </div>
           <div class="alarm-list__col alarm-list__col--type">
             <n-icon :size="16" class="type-icon"><component :is="getTypeIcon(alarm.type)" /></n-icon>
@@ -170,6 +177,14 @@
           <div class="alarm-list__col alarm-list__col--action">
             <n-button text type="primary" size="small" @click="viewAlarm(alarm)">
               <template #icon><n-icon><EyeOutline /></n-icon></template>
+            </n-button>
+            <n-button
+              text
+              type="primary"
+              size="small"
+              @click="handleLivePlay(alarm)"
+            >
+              视频直播
             </n-button>
             <n-button 
               v-if="alarm.status === 'pending'" 
@@ -210,7 +225,7 @@
       v-model:show="showDetailModal" 
       preset="card" 
       title="告警详情"
-      :style="{ width: '700px' }"
+      :style="{ width: '760px' }"
       :bordered="false"
     >
       <div v-if="currentAlarm" class="alarm-detail">
@@ -244,7 +259,11 @@
         <div class="detail-snapshot">
           <h4>告警截图</h4>
           <div class="snapshot-grid">
-            <img src="/camera-warehouse-01.jpg" alt="告警截图" />
+            <img
+              :src="currentAlarm.snapshotUrl || '/camera-warehouse-01.jpg'"
+              alt="告警截图"
+              class="alarm-detail__img"
+            />
           </div>
         </div>
       </div>
@@ -254,6 +273,22 @@
           <n-button type="primary" @click="handleCurrentAlarm">标记已处理</n-button>
         </div>
       </template>
+    </n-modal>
+
+    <!-- Live Player Modal -->
+    <n-modal
+      v-model:show="showPlayer"
+      preset="card"
+      title="实时预览"
+      :style="{ width: '960px' }"
+      @after-leave="handlePlayerClosed"
+    >
+      <div style="width: 100%; aspect-ratio: 16 / 9;">
+        <FlvPlayer
+          v-if="currentPlayUrl"
+          :url="currentPlayUrl"
+        />
+      </div>
     </n-modal>
 
     <!-- Settings Modal -->
@@ -293,7 +328,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, markRaw } from 'vue'
+import { ref, computed, markRaw, onMounted } from 'vue'
 import type { Component } from 'vue'
 import { 
   NButton, NIcon, NSelect, NDatePicker, NInput, NCheckbox,
@@ -307,6 +342,10 @@ import {
   TrashOutline, ShieldCheckmarkOutline, FlameOutline, BodyOutline,
   PersonOutline, CarOutline, BanOutline
 } from '@vicons/ionicons5'
+import { getAlarmList, getAlarmStatistics, type Alarm as ApiAlarm, type AlarmStatistics } from '@/api/alarm'
+import FlvPlayer from '@/components/FlvPlayer.vue'
+import { getCameraPlayUrls, startCamera, stopCamera, cameraLiveHeartbeat } from '@/api/camera'
+import { useUserStore } from '@/stores/user'
 
 interface Alarm {
   id: string
@@ -318,16 +357,19 @@ interface Alarm {
   status: 'pending' | 'processing' | 'resolved'
   selected?: boolean
   location?: string
+  snapshotUrl?: string | null
+  cameraId?: string
 }
 
 const message = useMessage()
+const userStore = useUserStore()
 
-// Stats
+// Stats（从后端统计接口加载）
 const stats = ref({
-  critical: 8,
-  warning: 23,
-  info: 45,
-  resolved: 156
+  critical: 0,
+  warning: 0,
+  info: 0,
+  resolved: 0
 })
 
 // Filters
@@ -369,6 +411,12 @@ const showDetailModal = ref(false)
 const showSettingsModal = ref(false)
 const currentAlarm = ref<Alarm | null>(null)
 
+// Live player modal (reuse camera management approach)
+const showPlayer = ref(false)
+const currentPlayUrl = ref<string | null>(null)
+const livePlayingId = ref<string | null>(null)
+let liveHeartbeatTimer: number | null = null
+
 // Settings
 const settings = ref({
   soundEnabled: true,
@@ -384,19 +432,61 @@ const refreshOptions = [
   { label: '5分钟', value: 300 }
 ]
 
-// Alarm data
-const alarms = ref<Alarm[]>([
-  { id: '1', level: 'critical', type: '入侵检测', content: '检测到A区仓库有未授权人员进入禁区', device: 'CAM-WH-A01', time: '2024-01-15 14:32:15', status: 'pending' },
-  { id: '2', level: 'critical', type: '烟火检测', content: 'B栋办公楼3层走廊检测到烟雾', device: 'CAM-OFFICE-B03', time: '2024-01-15 14:28:42', status: 'processing' },
-  { id: '3', level: 'warning', type: '未戴安全帽', content: '堆场A区施工人员未佩戴安全帽', device: 'CAM-YARD-A01', time: '2024-01-15 14:25:18', status: 'pending' },
-  { id: '4', level: 'warning', type: '人员跌倒', content: '大厅入口处检测到人员跌倒', device: 'CAM-LOBBY-01', time: '2024-01-15 14:20:33', status: 'resolved' },
-  { id: '5', level: 'info', type: '车辆违停', content: '停车场B区检测到车辆违规停放', device: 'CAM-PARK-B02', time: '2024-01-15 14:15:27', status: 'pending' },
-  { id: '6', level: 'warning', type: '设备离线', content: '安防中心监控设备失去连接', device: 'CAM-SEC-02', time: '2024-01-15 14:10:45', status: 'pending' },
-  { id: '7', level: 'critical', type: '入侵检测', content: '夜间检测到围墙区域有异常移动', device: 'CAM-FENCE-01', time: '2024-01-15 13:58:21', status: 'resolved' },
-  { id: '8', level: 'info', type: '设备离线', content: '堆场B区摄像头信号弱', device: 'CAM-YARD-B01', time: '2024-01-15 13:45:12', status: 'resolved' },
-  { id: '9', level: 'warning', type: '未戴安全帽', content: '物料区有人员未按规定穿戴防护装备', device: 'CAM-MATERIAL-01', time: '2024-01-15 13:32:08', status: 'pending' },
-  { id: '10', level: 'info', type: '车辆违停', content: '消防通道有车辆临时停放', device: 'CAM-FIRE-01', time: '2024-01-15 13:20:55', status: 'processing' }
-])
+// Alarm data（从后端接口加载）
+const alarms = ref<Alarm[]>([])
+
+// 将接口 Alarm 转换为本页使用的 Alarm 结构
+function convertApiAlarm(a: ApiAlarm): Alarm {
+  // level 映射：后端 level 字段为 'info' | 'warning' | 'danger' | 'critical'
+  const level = (a.level as any) === 'danger' ? 'warning' : (a.level as any)
+  return {
+    id: a.id,
+    level: level || 'info',
+    type: a.algorithm_name || a.alarm_type || '告警',
+    content: a.title || a.description || '',
+    device: a.camera_name || a.camera_id || '',
+    time: a.alarm_time || a.created_at,
+    // 状态映射：后端 status 字段（如 unconfirmed/confirmed/ignored/processed）
+    status: (a.status as any) === 'processed'
+      ? 'resolved'
+      : ((a.status as any) === 'unconfirmed' ? 'pending' : 'processing'),
+    selected: false,
+    location: undefined,
+    snapshotUrl: (a as any).snapshot_url ?? (a as any).snapshotUrl ?? null,
+    cameraId: a.camera_id,
+  }
+}
+
+// 从后端加载告警列表
+async function loadAlarms() {
+  try {
+    // 后端 page_size 最大 100
+    const res = await getAlarmList({ page: 1, page_size: 100 })
+    const items = (res.data.data || []) as ApiAlarm[]
+    alarms.value = items.map(convertApiAlarm)
+  } catch (e) {
+    message.error('加载告警列表失败')
+    console.error(e)
+  }
+}
+
+// 从后端加载告警统计（顶部四个卡片）
+async function loadAlarmStats() {
+  try {
+    const res = await getAlarmStatistics({ days: 7 })
+    const s: AlarmStatistics = (res.data as any).data || (res.data as any)
+    const byLevel = s.by_level || []
+    const getCount = (lvl: string) => byLevel.find(i => i.label === lvl)?.value ?? 0
+    stats.value = {
+      critical: getCount('critical'),
+      warning: getCount('warning'),
+      info: getCount('info'),
+      resolved: s.processed ?? 0,
+    }
+  } catch (e) {
+    console.error(e)
+  }
+}
 
 const filteredAlarms = computed(() => {
   return alarms.value.filter(alarm => {
@@ -456,6 +546,71 @@ function viewAlarm(alarm: Alarm) {
   showDetailModal.value = true
 }
 
+async function handleLivePlay(alarm: Alarm) {
+  const cameraId = alarm.cameraId
+  if (!cameraId) {
+    message.warning('缺少 camera_id，无法直播')
+    return
+  }
+  try {
+    // 若正在播放同一路摄像头，则点击视为停止
+    if (livePlayingId.value === cameraId) {
+      await stopCamera(cameraId)
+      livePlayingId.value = null
+      if (liveHeartbeatTimer !== null) {
+        window.clearInterval(liveHeartbeatTimer)
+        liveHeartbeatTimer = null
+      }
+      showPlayer.value = false
+      message.success('已停止直播')
+      return
+    }
+
+    await startCamera(cameraId)
+    const res = await getCameraPlayUrls(cameraId)
+    const data = (res.data as any)?.data ?? res.data
+    let flvUrl = (data as any)?.flv_url || (data as any)?.http_flv
+    if (!flvUrl) {
+      message.error('未获取到播放地址')
+      return
+    }
+    const token = userStore.token
+    if (token) {
+      flvUrl += flvUrl.includes('?') ? `&token=${encodeURIComponent(token)}` : `?token=${encodeURIComponent(token)}`
+    }
+    // 开发环境通过 Vite 代理避免跨域，将后端完整地址替换为 /flv 前缀
+    if (flvUrl.startsWith('http://127.0.0.1:8080')) {
+      flvUrl = flvUrl.replace('http://127.0.0.1:8080', '/flv')
+    }
+    currentPlayUrl.value = flvUrl
+    showPlayer.value = true
+    livePlayingId.value = cameraId
+
+    if (liveHeartbeatTimer !== null) {
+      window.clearInterval(liveHeartbeatTimer)
+    }
+    liveHeartbeatTimer = window.setInterval(() => {
+      cameraLiveHeartbeat(cameraId).catch(() => {})
+    }, 60000)
+  } catch (e) {
+    console.error(e)
+    message.error('获取播放地址失败')
+  }
+}
+
+function handlePlayerClosed() {
+  currentPlayUrl.value = null
+  if (livePlayingId.value) {
+    const id = livePlayingId.value
+    stopCamera(id).catch(() => {})
+    livePlayingId.value = null
+  }
+  if (liveHeartbeatTimer !== null) {
+    window.clearInterval(liveHeartbeatTimer)
+    liveHeartbeatTimer = null
+  }
+}
+
 function handleAlarm(alarm: Alarm) {
   alarm.status = 'resolved'
   message.success('告警已处理')
@@ -493,6 +648,12 @@ function saveSettings() {
   message.success('设置已保存')
   showSettingsModal.value = false
 }
+
+// 初始化加载
+onMounted(() => {
+  loadAlarms()
+  loadAlarmStats()
+})
 </script>
 
 <style scoped>
@@ -739,7 +900,36 @@ function saveSettings() {
 .info-item { display: flex; flex-direction: column; gap: 4px; }
 .info-label { font-size: var(--font-size-xs); color: var(--text-muted); }
 .info-value { font-size: var(--font-size-sm); color: var(--text-primary); }
-.snapshot-grid img { width: 100%; border-radius: var(--radius-lg); }
+.snapshot-grid img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: var(--radius-lg);
+  object-fit: contain;
+}
+
+/* Alarm list thumbnail */
+.alarm-list__col--thumb { width: 96px; flex: 0 0 96px; }
+.alarm-thumb {
+  width: 84px;
+  height: 50px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.alarm-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.alarm-thumb__placeholder {
+  color: var(--text-muted);
+  font-size: 12px;
+}
 
 .modal-footer { display: flex; justify-content: flex-end; gap: var(--spacing-sm); }
 

@@ -88,8 +88,33 @@ function calcTrend(current: number, total: number): string {
 async function loadStats() {
   try {
     const response = await getSystemStatistics()
-    if (response.data.data) {
-      stats.value = response.data.data
+    const raw = response.data.data as any
+    if (!raw) return
+
+    // 将后端 /system/dashboard 返回的数据映射到前端 SystemStatistics 结构
+    stats.value = {
+      cameras: {
+        total: raw.cameras?.total ?? 0,
+        online: raw.cameras?.online ?? 0,
+        offline: raw.cameras?.offline ?? 0
+      },
+      algorithms: {
+        total: raw.algorithms?.total ?? 0,
+        enabled: raw.algorithms?.enabled ?? 0
+      },
+      models: {
+        total: raw.models?.total ?? 0,
+        loaded: raw.models?.loaded ?? 0
+      },
+      alarms: {
+        total: raw.today_alarms?.total ?? 0,
+        today: raw.today_alarms?.total ?? 0,
+        pending: raw.today_alarms?.unconfirmed ?? 0
+      },
+      users: {
+        total: raw.users?.total ?? 0,
+        active: raw.users?.active ?? 0
+      }
     }
   } catch (error) {
     console.error('加载统计数据失败:', error)

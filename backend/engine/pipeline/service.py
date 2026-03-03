@@ -28,6 +28,7 @@ class PipelineService:
         models: Dict[str, object],
         request_queues: Dict[str, MemoryQueue],
         result_queues: Dict[str, MemoryQueue],
+        alarm_queue: Optional[object] = None,
     ):
         """
         Args:
@@ -40,6 +41,9 @@ class PipelineService:
         self.models = models
         self.request_queues = request_queues
         self.result_queues = result_queues
+
+        # Engine 级别的告警队列（由 Scheduler 创建），ResultHandler 清洗后的告警通过此队列异步交给调度器写 Redis。
+        self.alarm_queue = alarm_queue
 
         self.pipelines: Dict[str, Pipeline] = {}
         self.pipeline_modes: Dict[str, str] = {}
@@ -178,6 +182,7 @@ class PipelineService:
             config=pipeline_config,
             request_queue=request_queue,
             result_queue=result_queue,
+            alarm_queue=self.alarm_queue,
         )
         pipeline_obj.start()
 

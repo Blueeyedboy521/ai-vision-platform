@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.redis import RedisClient, get_redis_client, RedisKeys
+from common.utils.json_utils import to_json
 from common.logging import logger
 from app.models import Model, Algorithm, Camera
 
@@ -263,6 +264,58 @@ async def delete_camera_from_redis(camera_id: str) -> None:
         logger.info(f"已从 Redis 删除摄像头配置: camera_id={camera_id}")
     except Exception as e:
         logger.error(f"从 Redis 删除摄像头配置失败: {camera_id}, 错误: {e}")
+
+
+# ===================== 告警相关（Engine → AlarmConsumer） =====================
+
+
+def push_alarm_to_queue_sync(alarm: Dict[str, Any]) -> None:
+    """
+    将告警对象同步写入 Redis 告警队列（alarm_queue）。
+
+    供 Engine 调度器（或其他同步上下文）调用，统一通过 app.core.redis 访问 Redis。
+    """
+    try:
+        redis = get_redis()
+        payload = to_json(alarm, ensure_ascii=False)
+        redis.rpush_sync(RedisKeys.ALARM_QUEUE, payload)
+    except Exception as e:
+        logger.error(f"push_alarm_to_queue_sync 写入 Redis 告警队列失败: {e}")
+
+
+async def is_camera_online(camera_id: str) -> bool:
+    """
+    判断摄像头是否在线（根据 live_heartbeat_monitor 设置的 camera:online:{id} 键）。
+    """
+    try:
+        redis = get_redis()
+        key = f"camera:online:{camera_id}"
+        exists = await redis.client.exists(key)
+        return bool(exists)
+    except Exception as e:
+        logger.warning(f"读取摄像头在线状态失败: {camera_id}, err={e}")
+        return False
+
+
+async def get_online_camera_ids() -> Set[str]:
+    """
+    获取当前在线的摄像头 ID 集合（根据 camera:online:{id} 键前缀扫描）。
+    """
+    try:
+        redis = get_redis()
+        pattern = "camera:online:*"
+        ids: Set[str] = set()
+        async for key in redis.client.scan_iter(match=pattern):
+            # key 形如 "camera:online:{id}"
+            if isinstance(key, bytes):
+                key = key.decode("utf-8", errors="ignore")
+            parts = str(key).split(":")
+            if len(parts) >= 3:
+                ids.add(parts[-1])
+        return ids
+    except Exception as e:
+        logger.warning(f"扫描在线摄像头失败: {e}")
+        return set()
 
 
 async def add_camera_live_started(camera_id: str, live_set_ttl_sec: int) -> None:

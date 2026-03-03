@@ -11,6 +11,7 @@
 import os
 import time
 import threading
+from queue import Queue, Empty
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 
@@ -34,7 +35,8 @@ from engine.redis import (
     get_algorithm_config,
     get_camera_algorithm_config,
 )
-from common.redis import RedisChannels
+from common.redis import RedisChannels, RedisKeys
+from app.core.redis import push_alarm_to_queue_sync
 
 
 @dataclass
@@ -96,6 +98,11 @@ class Scheduler:
         # 推理状态：记录已启动推理的摄像头（Engine 自身视角）
         self.inference_started: set[str] = set()
         
+        # 告警队列与处理线程（Engine 内部：ResultHandler -> Scheduler -> Redis alarm_queue）
+        self.alarm_queue: Queue = Queue(maxsize=1000)
+        self._alarm_thread: Optional[threading.Thread] = None
+        self._alarm_running: bool = False
+        
         # 服务层封装
         self.inference_service: Optional[InferenceService] = None
         self.pipeline_service: Optional[PipelineService] = None
@@ -122,7 +129,10 @@ class Scheduler:
             # 5. 按需启动推理服务（仅当存在推理任务时）
             self._reconcile_inference_service()
             
-            # 5. 启动 Redis 配置监听（Engine 订阅 engine:config_update）
+            # 6. 启动告警转发线程（将 Engine 内部告警队列写入 Redis alarm_queue）
+            self._start_alarm_dispatcher()
+            
+            # 7. 启动 Redis 配置监听（Engine 订阅 engine:config_update）
             self._start_config_listener()
             
             logger.info(f"引擎启动完成: {len(self.cameras)} 路摄像头, "
@@ -155,6 +165,12 @@ class Scheduler:
         
         # 停止配置监听线程
         self._stop_config_listener()
+        
+        # 停止告警处理线程
+        if self._alarm_thread is not None:
+            self._alarm_running = False
+            self._alarm_thread.join(timeout=5)
+            self._alarm_thread = None
         
         logger.info("调度器已停止")
 
@@ -195,6 +211,77 @@ class Scheduler:
         self._config_running = False
         if self._config_thread and self._config_thread.is_alive():
             self._config_thread.join(timeout=2)
+
+    def _start_alarm_dispatcher(self) -> None:
+        """启动告警转发线程：从 Engine 内部告警队列读取并写入 Redis alarm_queue。"""
+        if self._alarm_thread and self._alarm_thread.is_alive():
+            return
+        self._alarm_running = True
+
+        def _worker():
+            logger.info("告警转发线程启动")
+            try:
+                while self._alarm_running:
+                    try:
+                        try:
+                            alarm = self.alarm_queue.get(timeout=1.0)
+                        except Empty:
+                            continue
+                        if not alarm:
+                            continue
+
+                        # 将本地截图绘制检测框后上传到 Storage 的正式目录，并写回 snapshot_path
+                        camera_id = str(alarm.get("camera_id") or "")
+                        ts_str = str(alarm.get("timestamp") or "")
+                        local_path = alarm.pop("local_snapshot_path", None)
+                        if local_path and camera_id:
+                            try:
+                                import os
+                                import cv2
+                                from datetime import datetime
+                                from common.storage import get_storage
+                                from engine.inference.draw_utils import draw_detections_inplace
+
+                                # 读取本地原始截图
+                                if not os.path.exists(local_path):
+                                    logger.error(f"本地告警截图不存在: {local_path}")
+                                else:
+                                    img = cv2.imread(local_path)
+                                    if img is None:
+                                        logger.error(f"读取本地告警截图失败: {local_path}")
+                                    else:
+                                        # 先在截图上绘制检测框
+                                        dets = alarm.get("detections") or []
+                                        draw_detections_inplace(img, dets)
+
+                                        storage = get_storage()
+                                        try:
+                                            dt = datetime.fromisoformat(ts_str)
+                                        except Exception:
+                                            dt = datetime.now()
+                                        date_path = dt.strftime("%Y/%m/%d")
+                                        file_id = str(int(dt.timestamp() * 1000))
+                                        rel_path = f"alarm/{date_path}/{camera_id}/{file_id}.jpg"
+
+                                        # 直接通过 save_image 将带框图片保存到正式目录
+                                        snapshot_path = storage.save_image(img, rel_path)
+                                        alarm["snapshot_path"] = snapshot_path or rel_path
+                            except Exception as e:
+                                logger.error(
+                                    f"处理告警截图上传失败: camera_id={camera_id}, path={local_path}, err={e}"
+                                )
+
+                        # 将告警消息写入 Redis 列表，由 app 侧 AlarmConsumer 负责入库与推送
+                        push_alarm_to_queue_sync(alarm)
+                        self.generated_alarms += 1
+                    except Exception as e:
+                        logger.error(f"告警转发线程循环异常: {e}")
+                        time.sleep(0.5)
+            finally:
+                logger.info("告警转发线程退出")
+
+        self._alarm_thread = threading.Thread(target=_worker, daemon=True)
+        self._alarm_thread.start()
 
     def _handle_config_event(self, action: Optional[str], data: dict):
         """
@@ -432,6 +519,7 @@ class Scheduler:
             models=self.models,
             request_queues=self.request_queues,
             result_queues=self.result_queues,
+            alarm_queue=self.alarm_queue,
         )
     
     def _start_inference_service(self):

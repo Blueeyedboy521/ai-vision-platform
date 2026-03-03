@@ -5,12 +5,12 @@
         <div class="title-bar"></div>
         <span>实时动态告警实况</span>
       </div>
-      <a href="#" class="history-link">查看历史追溯</a>
+      <a href="#" class="history-link" @click.prevent="goHistory">查看历史追溯</a>
     </div>
     <div class="alert-items">
       <div
-        v-for="(item, index) in alerts"
-        :key="index"
+        v-for="item in alerts"
+        :key="item.id"
         class="alert-item"
       >
         <div class="alert-thumb">
@@ -52,44 +52,74 @@
 </template>
 
 <script setup lang="ts">
-const alerts = [
-  {
-    thumb: 'https://images.unsplash.com/photo-1557597774-9d273605dfa9?w=240&h=144&fit=crop',
-    title: '区域入侵识别告警',
-    level: 'critical',
-    levelText: '高危',
-    location: 'A栋大厅出口-01',
-    timeAgo: '2 分钟前',
-    datetime: '2023-11-20 14:32:15'
-  },
-  {
-    thumb: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=240&h=144&fit=crop',
-    title: '人员聚集违规告警',
-    level: 'medium',
-    levelText: '中等',
-    location: 'B区员工通道-02',
-    timeAgo: '12 分钟前',
-    datetime: '2023-11-20 14:22:45'
-  },
-  {
-    thumb: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=240&h=144&fit=crop',
-    title: '消防设施占用检测',
-    level: 'warning',
-    levelText: '警告',
-    location: '南门装卸平台-04',
-    timeAgo: '1 小时前',
-    datetime: '2023-11-20 13:30:10'
-  },
-  {
-    thumb: 'https://images.unsplash.com/photo-1564182842519-8a3b2af3e228?w=240&h=144&fit=crop',
-    title: '烟火特征疑似检出',
-    level: 'urgent',
-    levelText: '紧急',
-    location: 'C栋仓储内部-02',
-    timeAgo: '2 小时前',
-    datetime: '2023-11-20 12:35:55'
+import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { getAlarmList, type Alarm } from '@/api/alarm'
+
+interface AlertItem {
+  id: string
+  thumb: string
+  title: string
+  level: string
+  levelText: string
+  location: string
+  timeAgo: string
+  datetime: string
+}
+
+const router = useRouter()
+const alerts = ref<AlertItem[]>([])
+
+function goHistory() {
+  router.push('/alarm')
+}
+
+function levelText(level: string): string {
+  const l = (level || '').toLowerCase()
+  if (l === 'critical') return '高危'
+  if (l === 'danger') return '高危'
+  if (l === 'warning') return '中等'
+  return '提示'
+}
+
+function timeAgoFromIso(iso: string): string {
+  try {
+    const t = new Date(iso).getTime()
+    const diffSec = Math.max(0, Math.floor((Date.now() - t) / 1000))
+    if (diffSec < 60) return `${diffSec} 秒前`
+    const diffMin = Math.floor(diffSec / 60)
+    if (diffMin < 60) return `${diffMin} 分钟前`
+    const diffHour = Math.floor(diffMin / 60)
+    if (diffHour < 24) return `${diffHour} 小时前`
+    const diffDay = Math.floor(diffHour / 24)
+    return `${diffDay} 天前`
+  } catch {
+    return '-'
   }
-]
+}
+
+async function loadAlerts() {
+  try {
+    const res = await getAlarmList({ page: 1, page_size: 4 })
+    const items = (res.data.data || []) as Alarm[]
+    alerts.value = items.map((a) => ({
+      id: a.id,
+      thumb: a.snapshot_url || '/camera-warehouse-01.jpg',
+      title: a.title || a.algorithm_name || '告警',
+      level: a.level || 'info',
+      levelText: levelText(a.level),
+      location: a.camera_name || a.camera_id,
+      timeAgo: timeAgoFromIso(a.alarm_time),
+      datetime: a.alarm_time?.replace('T', ' ') || a.created_at
+    }))
+  } catch (e) {
+    console.error('加载首页告警列表失败:', e)
+  }
+}
+
+onMounted(() => {
+  loadAlerts()
+})
 </script>
 
 <style scoped>

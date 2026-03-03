@@ -32,6 +32,8 @@ class UltralyticsYoloInferencer:
         self.device = device
         self._model = None
         self._names: Dict[int, str] = {}
+        # target_class -> {id, code, name}
+        self._class_algo_map: Dict[str, Dict[str, Any]] = {}
 
     def load(self) -> None:
         """加载 YOLO 模型（如需则先下载）；可选从 Redis model:config 读取 classes 覆盖模型 names"""
@@ -64,6 +66,14 @@ class UltralyticsYoloInferencer:
             self._names = {i: name for i, name in enumerate(redis_classes)}
             logger.info(f"YOLO 使用 Redis 配置的 classes: model_id={self.model_id}, count={len(redis_classes)}")
 
+        # 读取模型下算法与目标类别的映射（供后续在 detections 中标记 algorithm_id）
+        try:
+            from engine.redis import get_model_algorithms_class_map
+
+            self._class_algo_map = get_model_algorithms_class_map(self.model_id) or {}
+        except Exception as e:
+            logger.warning(f\"读取模型算法类别映射失败: model_id={self.model_id}, err={e}\")
+
         try:
             self._model.to(self.device)
         except Exception as e:
@@ -90,6 +100,7 @@ class UltralyticsYoloInferencer:
                 detections=[],
                 inference_time_ms=0.0,
                 timestamp=ts,
+                frame=None,
             )
 
         start = time.perf_counter()
@@ -107,12 +118,22 @@ class UltralyticsYoloInferencer:
                     bbox = box.xyxy[0].tolist()
                 except Exception:
                     continue
-                detections.append({
+                class_name = str(self._names.get(class_id, class_id))
+                algo_id: Optional[str] = None
+                # 按 target_class（class_name）在模型算法映射中查找对应算法 id
+                if self._class_algo_map:
+                    info = self._class_algo_map.get(class_name) or {}
+                    algo_id = str(info.get("id") or "") or None
+
+                det: Dict[str, Any] = {
                     "class_id": class_id,
-                    "class_name": str(self._names.get(class_id, class_id)),
+                    "class_name": class_name,
                     "confidence": conf,
                     "bbox": bbox,
-                })
+                }
+                if algo_id:
+                    det["algorithm_id"] = algo_id
+                detections.append(det)
         inference_time_ms = (time.perf_counter() - start) * 1000
         return InferenceResult(
             request_id=request_id,
@@ -121,6 +142,7 @@ class UltralyticsYoloInferencer:
             detections=detections,
             inference_time_ms=inference_time_ms,
             timestamp=time.time(),
+            frame=frame,
         )
 
     def draw_boxes(self, result: InferenceResult) -> Any:

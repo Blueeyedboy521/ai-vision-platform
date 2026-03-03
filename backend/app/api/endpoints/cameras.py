@@ -25,6 +25,7 @@ from app.core.redis import (
     add_camera_live_started,
     remove_camera_live_started,
     update_camera_live_heartbeat,
+    is_camera_online,
 )
 from app.api.deps import get_current_user
 from app.models import User, Camera, Area, CameraAlgorithm
@@ -128,6 +129,9 @@ async def get_cameras(
                 snapshot_url = storage.get_url(camera.last_snapshot_path)
             except Exception as e:
                 logger.error(f"构建摄像头快照 URL 失败: {e}")
+        # 在线状态：从 Redis 读取 camera:online:{id}
+        online = await is_camera_online(camera.id)
+
         data.append({
             "id": camera.id,
             "name": camera.name,
@@ -146,6 +150,7 @@ async def get_cameras(
             "resolution": camera.resolution,
             "is_enabled": camera.is_enabled,
             "status": camera.status,
+            "online": online,
             "inference_started": camera.id in inference_started,
             "algorithm_count": algo_count,
             "snapshot_url": snapshot_url,
@@ -221,6 +226,7 @@ async def get_camera(
             logger.error(f"构建摄像头快照 URL 失败: {e}")
 
     inference_started = await is_camera_inference_started(camera_id)
+    online = await is_camera_online(camera_id)
     return success_response({
         "id": camera.id,
         "name": camera.name,
@@ -241,6 +247,7 @@ async def get_camera(
         "resolution": camera.resolution,
         "is_enabled": camera.is_enabled,
         "status": camera.status,
+        "online": online,
         "inference_started": inference_started,
         "algorithm_count": algo_count,
         "snapshot_url": snapshot_url,

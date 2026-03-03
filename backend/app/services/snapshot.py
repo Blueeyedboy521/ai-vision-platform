@@ -76,9 +76,9 @@ def save_snapshot(
     if not jpeg:
         return False, None
 
+    # 约定快照路径为 /snapshots/{camera_id}.jpg，每次覆盖为最新一张
     storage = get_storage()
-    import time
-    key = storage.generate_snapshot_path(camera_id, time.time(), extension="jpg")
+    key = f"snapshots/{camera_id}.jpg"
     try:
         storage.save_file(jpeg, key, content_type="image/jpeg")
         return True, key

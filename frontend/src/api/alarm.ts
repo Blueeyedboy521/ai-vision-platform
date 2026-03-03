@@ -1,13 +1,13 @@
 /**
  * 告警管理 API
  */
-import { request, type ApiResponse, type PageResponse } from './request'
+import { request } from './request'
 
-// 告警级别
-export type AlarmLevel = 'info' | 'warning' | 'critical'
+// 告警级别（后端: info/warning/danger/critical）
+export type AlarmLevel = 'info' | 'warning' | 'danger' | 'critical'
 
-// 告警状态
-export type AlarmStatus = 'pending' | 'confirmed' | 'resolved' | 'ignored'
+// 告警状态（后端: unconfirmed/confirmed/ignored/processed）
+export type AlarmStatus = 'unconfirmed' | 'confirmed' | 'ignored' | 'processed'
 
 // 告警信息
 export interface Alarm {
@@ -17,19 +17,19 @@ export interface Alarm {
   algorithm_id: string
   algorithm_name?: string
   alarm_type: string
-  alarm_level: AlarmLevel
-  title: string
-  content: string | null
-  image_path: string | null
-  video_path: string | null
+  level: AlarmLevel
+  title: string | null
+  description: string | null
+  alarm_time: string
+  snapshot_url: string | null
+  video_url: string | null
   detection_data: any | null
   status: AlarmStatus
   confirmed_by: string | null
   confirmed_at: string | null
-  resolved_by: string | null
-  resolved_at: string | null
+  confirm_remark?: string | null
+  is_pushed?: boolean
   created_at: string
-  updated_at: string
 }
 
 // 告警列表查询参数
@@ -38,36 +38,32 @@ export interface AlarmQueryParams {
   page_size?: number
   camera_id?: string
   algorithm_id?: string
-  alarm_type?: string
-  alarm_level?: AlarmLevel
+  level?: AlarmLevel
   status?: AlarmStatus
   start_time?: string
   end_time?: string
   keyword?: string
 }
 
-// 告警统计
+// 告警统计（对接后端 /alarms/stats 返回结构）
 export interface AlarmStatistics {
   total: number
-  pending: number
+  unconfirmed: number
   confirmed: number
-  resolved: number
   ignored: number
-  by_level: {
-    info: number
-    warning: number
-    critical: number
-  }
-  by_type: Record<string, number>
-  today_count: number
-  week_count: number
+  processed: number
+  by_level: { label: string; value: number }[]
+  by_camera: { label: string; value: number }[]
+  by_algorithm: { label: string; value: number }[]
+  trend: { date: string; count: number }[]
 }
 
 /**
  * 获取告警列表
  */
 export function getAlarmList(params?: AlarmQueryParams) {
-  return request.get<PageResponse<Alarm>>('/alarms', { params })
+  // 后端分页结构为 {code,message,data,page_info}
+  return request.get<any>('/alarms', { params })
 }
 
 /**
@@ -113,10 +109,10 @@ export function batchIgnoreAlarms(ids: string[], reason?: string) {
 }
 
 /**
- * 获取告警统计
+ * 获取告警统计（封装 /alarms/stats）
  */
-export function getAlarmStatistics(params?: { camera_id?: string; start_time?: string; end_time?: string }) {
-  return request.get<AlarmStatistics>('/alarms/statistics', { params })
+export function getAlarmStatistics(params?: { days?: number }) {
+  return request.get<AlarmStatistics>('/alarms/stats', { params })
 }
 
 /**

@@ -229,6 +229,7 @@ class OnnxYolo11Inferencer:
                 detections=[],
                 inference_time_ms=0.0,
                 timestamp=ts,
+                frame=None,
             )
 
         start = time.perf_counter()
@@ -254,6 +255,7 @@ class OnnxYolo11Inferencer:
             # 近似将 class_id 映射到某个 target_class：按 key 排序后取第 class_id 个
             algo_code = str(class_id)
             algo_name = str(class_id)
+            algo_id: Optional[str] = None
             if self._class_name_map:
                 sorted_keys = sorted(self._class_name_map.keys())
                 if 0 <= class_id < len(sorted_keys):
@@ -261,13 +263,17 @@ class OnnxYolo11Inferencer:
                     info = self._class_name_map.get(target_class) or {}
                     algo_code = str(info.get("code") or target_class)
                     algo_name = str(info.get("name") or target_class)
-            detections.append({
+                    algo_id = str(info.get("id") or "") or None
+            det: Dict[str, Any] = {
                 "class_id": class_id,
                 "class_name": algo_code,  # 绘框等使用英文 code，避免中文导致 cv2.putText 乱码
                 "confidence": float(score),
                 "bbox": [float(x1), float(y1), float(x2), float(y2)],
                 "algo_name": algo_name,   # 预留中文名称，后续告警推送可以使用
-            })
+            }
+            if algo_id:
+                det["algorithm_id"] = algo_id
+            detections.append(det)
         inference_time_ms = (time.perf_counter() - start) * 1000
         return InferenceResult(
             request_id=request_id,
@@ -276,6 +282,7 @@ class OnnxYolo11Inferencer:
             detections=detections,
             inference_time_ms=inference_time_ms,
             timestamp=time.time(),
+            frame=frame,
         )
 
     def draw_boxes(self, result: InferenceResult) -> Any:

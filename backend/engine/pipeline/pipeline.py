@@ -54,6 +54,7 @@ class Pipeline:
         config: PipelineConfig,
         request_queue: Optional[Any] = None,
         result_queue: Optional[Any] = None,
+        alarm_queue: Optional[Any] = None,
     ):
         """
         初始化 Pipeline。
@@ -66,6 +67,8 @@ class Pipeline:
         self.config = config
         self.request_queue = request_queue
         self.result_queue = result_queue
+        # 告警队列（Scheduler 持有的 Engine 内部队列，用于异步落库/推送）
+        self.alarm_queue = alarm_queue
         
         # 线程
         self.stream_reader: Optional[StreamReader] = None
@@ -240,9 +243,11 @@ class Pipeline:
             if self.result_handler is None:
                 self.result_handler = ResultHandler(
                     camera_id=self.config.camera_id,
+                    camera_name=self.config.camera_name,
                     result_queue=self.result_queue,
                     algorithms=self.config.algorithms or [],
                     overlay_state=self.overlay_state,
+                    alarm_queue=self.alarm_queue,
                 )
                 self.result_handler.start()
         else:

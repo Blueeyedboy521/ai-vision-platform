@@ -584,7 +584,7 @@ D:\workspace\python\ai-vision-platform>D:/software/Anaconda3/Scripts/activate
 
 ## 五、视频处理引擎启动流程 (核心)
 
-视频处理引擎是系统核心，采用**多进程 + 多线程**架构：
+视频处理引擎是系统核心，采用 **单进程 + 多线程** 架构（避免跨进程 `multiprocessing.Queue` 在 Windows spawn/进程重启下句柄失效、队列不可用等问题）：
 
 ```
 启动命令: python engine/main.py
@@ -595,7 +595,7 @@ python -m engine.main
 ┌─────────────────────────────────────────────────────────────────────┐
 │                                                                     │
 │  ┌───────────────────────────────────────────────────────────────┐ │
-│  │  阶段 1: 主进程初始化 (Scheduler)                              │ │
+│  │  阶段 1: Engine 初始化 (Scheduler)                             │ │
 │  └───────────────────────────────────────────────────────────────┘ │
 │      │                                                             │
 │      ├── 1.1 加载全局配置                                          │
@@ -604,79 +604,43 @@ python -m engine.main
 │      │       ├── 流媒体服务器配置                                  │
 │      │       └── 模型文件路径配置                                  │
 │      │                                                             │
-│      ├── 1.2 从数据库读取运行时配置                                │
-│      │       ├── 所有启用的摄像头列表                              │
-│      │       ├── 每个摄像头配置的算法列表                          │
-│      │       ├── 每个算法关联的模型信息                            │
-│      │       └── 每个模型的性能参数 (显存、推理时间)                │
+│      ├── 1.2 从 Redis 恢复快照与状态                               │
+│      │       ├── 摄像头/模型/算法快照（FastAPI 启动时写入）         │
+│      │       ├── live_started / inference_started 集合              │
+│      │       └── 运行时缓存（摄像头→算法→模型映射）                 │
 │      │                                                             │
-│      ├── 1.3 计算 Worker 数量                                      │
-│      │       ├── 统计每个模型被多少摄像头使用                       │
-│      │       ├── 根据摄像头数、帧率、跳帧计算 fps 需求             │
-│      │       ├── 根据模型推理时间计算单 Worker 能力                │
-│      │       └── 计算每个模型需要的 Worker 数 (向上取整 +20%余量)  │
-│      │                                                             │
-│      └── 1.4 创建所有队列                                          │
-│              ├── 为每个模型创建一个请求队列                         │
-│              │   例: yolo_safety_queue, fire_queue                 │
-│              └── 为每个摄像头创建一个结果队列                       │
-│                  例: result_queue_cam_001, result_queue_cam_002    │
+│      └── 1.3 初始化核心 Service                                    │
+│              ├── InferenceService：按模型维度管理推理 Worker 线程   │
+│              └── PipelineService：按摄像头状态机管理 Pipeline 实例  │
 │                                                                     │
 │  ┌───────────────────────────────────────────────────────────────┐ │
-│  │  阶段 2: 启动 InferenceService 进程                            │ │
+│  │  阶段 2: 启动后台线程                                          │ │
 │  └───────────────────────────────────────────────────────────────┘ │
 │      │                                                             │
-│      ├── 2.1 创建 InferenceService 子进程                          │
-│      │       └── 传入: 模型配置列表、各模型队列、Worker 数量       │
-│      │                                                             │
-│      └── 2.2 InferenceService 内部启动                             │
-│              │                                                     │
-│              ├── 遍历每个模型配置                                  │
-│              │   └── 启动 N 个 InferenceWorker 线程               │
-│              │       每个 Worker:                                  │
-│              │       ├── build_inferencer(model_type, ...) 创建推理器实例                      │
-│              │       ├── inferencer.load()（实现类内：下载模型、读 Redis model:config 的 classes）│
-│              │       └── 循环: 取请求 → 组 params → inferencer.infer(params) → 入队；可选 TEST_SAVE_DRAW 时 draw_boxes 并保存 │
-│              │                                                     │
-│              └── 所有 Worker 就绪后，打印日志:                     │
-│                  "InferenceService 启动完成: YOLO 3 Workers, Fire 2 Workers"
+│      ├── 2.1 告警转发线程（Engine 内部队列 → Storage → Redis）      │
+│      └── 2.2 调度循环线程：周期性 reconcile 摄像头 Pipeline 状态     │
 │                                                                     │
 │  ┌───────────────────────────────────────────────────────────────┐ │
-│  │  阶段 3: 启动 Pipeline 进程池                                  │ │
+│  │  阶段 3: 按状态机拉齐 Pipeline（惰性创建）                      │ │
 │  └───────────────────────────────────────────────────────────────┘ │
 │      │                                                             │
-│      ├── 3.1 遍历每个启用的摄像头                                  │
-│      │       └── 为每个摄像头创建一个 Pipeline 子进程              │
-│      │           传入: 摄像头配置、关联的队列引用                  │
-│      │                                                             │
-│      └── 3.2 每个 Pipeline 内部启动                                │
-│              │                                                     │
-│              ├── 启动 Thread 1: StreamReader (拉流线程)            │
-│              │   ├── 连接 RTSP 流                                  │
-│              │   ├── 循环读取帧                                    │
-│              │   ├── 帧 → 推流队列 (给 StreamWriter)               │
-│              │   └── 帧 → 模型请求队列 (按跳帧策略)                │
-│              │                                                     │
-│              ├── 启动 Thread 2: StreamWriter (推流线程)            │
-│              │   ├── 从推流队列取帧                                │
-│              │   └── 编码推送到流媒体服务器                        │
-│              │                                                     │
-│              └── 启动 Thread 3: ResultHandler (结果处理线程)       │
-│                  ├── 从结果队列取推理结果                          │
-│                  ├── 去重过滤                                      │
-│                  ├── 生成告警 (写库、WebSocket)                    │
-│                  └── 触发消息推送                                  │
+│      ├── 3.1 Scheduler 读 live/infer 状态                           │
+│      └── 3.2 PipelineService.reconcile_camera 幂等拉齐：             │
+│              - S0 无需 Pipeline：停止并回收线程                      │
+│              - S1 live_only：Reader + Writer                         │
+│              - S2 inference_only：Reader + ResultHandler              │
+│              - S3 full：Reader + Writer + ResultHandler               │
 │                                                                     │
 │  ┌───────────────────────────────────────────────────────────────┐ │
 │  │  阶段 4: 健康监控循环                                          │ │
 │  └───────────────────────────────────────────────────────────────┘ │
 │      │                                                             │
-│      └── 主进程进入监控循环                                        │
-│          ├── 定期检查各子进程状态                                  │
+│      └── 主线程进入监控循环                                        │
+│          ├── 定期检查各线程状态                                    │
 │          ├── 检查队列积压情况                                      │
-│          ├── 子进程异常退出时自动重启                              │
+│          ├── 线程异常时日志告警（必要时可重建 Pipeline/Worker）      │
 │          ├── 响应配置变更 (新增/删除摄像头)                        │
-│          └── 优雅关闭: 收到 SIGTERM 时依次停止各子进程             │
+│          └── 优雅关闭: 收到 SIGTERM 时依次停止各线程               │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -690,49 +654,30 @@ python -m engine.main
 │                         视频处理引擎进程结构                                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│   Main Process (主进程/调度器)                                              │
+│   Engine Process (单进程)                                                   │
 │   │                                                                         │
-│   ├── 职责: 配置加载、进程管理、健康监控                                     │
+│   ├── Scheduler（调度线程/循环）                                            │
+│   ├── Alarm Dispatcher（告警转发线程：本地临时截图→Storage→Redis）           │
 │   │                                                                         │
-│   ├── InferenceService Process (推理服务进程，1个)                          │
-│   │   │                                                                     │
-│   │   ├── 职责: 管理所有推理 Worker                                        │
-│   │   │                                                                     │
-│   │   ├── YOLO 模型组                                                      │
-│   │   │   ├── Worker-1 (线程) ← 独立模型实例                               │
-│   │   │   ├── Worker-2 (线程) ← 独立模型实例                               │
-│   │   │   └── Worker-N (线程) ← 独立模型实例                               │
-│   │   │                                                                     │
-│   │   ├── Fire 模型组                                                      │
-│   │   │   ├── Worker-1 (线程) ← 独立模型实例                               │
-│   │   │   └── Worker-N (线程) ← 独立模型实例                               │
-│   │   │                                                                     │
-│   │   └── ... 其他模型组                                                   │
+│   ├── InferenceService（按模型维度管理 Worker 线程）                        │
+│   │   ├── model_A: Worker-1..N (线程) ← 每个 Worker 独立模型实例             │
+│   │   ├── model_B: Worker-1..N (线程)                                      │
+│   │   └── ...                                                               │
 │   │                                                                         │
-│   ├── Pipeline Process - cam_001 (进程)                                    │
-│   │   ├── StreamReader  (线程) - 拉流                                      │
-│   │   ├── StreamWriter  (线程) - 推流                                      │
-│   │   └── ResultHandler (线程) - 结果处理                                  │
-│   │                                                                         │
-│   ├── Pipeline Process - cam_002 (进程)                                    │
-│   │   ├── StreamReader  (线程)                                             │
-│   │   ├── StreamWriter  (线程)                                             │
-│   │   └── ResultHandler (线程)                                             │
-│   │                                                                         │
-│   └── Pipeline Process - cam_N (进程)                                      │
-│       ├── StreamReader  (线程)                                             │
-│       ├── StreamWriter  (线程)                                             │
-│       └── ResultHandler (线程)                                             │
+│   ├── PipelineService（按摄像头管理 Pipeline 实例）                          │
+│   │   ├── Pipeline - cam_001: Reader/Writer/ResultHandler (线程集合)         │
+│   │   ├── Pipeline - cam_002: Reader/Writer/ResultHandler (线程集合)         │
+│   │   └── Pipeline - cam_N  : Reader/Writer/ResultHandler (线程集合)         │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-进程总数: 1 (主) + 1 (推理服务) + N (摄像头数)
-线程总数: 推理 Worker 数 + N × 3 (每摄像头3个线程)
+进程总数: 1（Engine）
+线程总数: 推理 Worker 数 + 摄像头 Pipeline 线程数 + 其他后台线程
 ```
 
 ### 6.1 摄像头 Pipeline 状态机与调度
 
-在 Engine 内部，**每个摄像头始终只对应一个 Pipeline 进程**，该进程内有三个线程：
+在 Engine 内部，**每个摄像头始终只对应一个 Pipeline 实例（线程集合）**，包含最多三个线程：
 
 - `StreamReader`：负责拉流、按 fps/skip 规则投递原始帧
 - `StreamWriter`：负责推流（HTTP-FLV/RTMP），可选在后端叠加绘框
@@ -745,7 +690,7 @@ python -m engine.main
 
 在 `has_algorithms=True` 时，单摄像头的理想状态如下（S0–S3）：
 
-| 状态 | live_started | inference_started | Pipeline 进程 | 线程组合 |
+| 状态 | live_started | inference_started | Pipeline 实例 | 线程组合 |
 |------|--------------|-------------------|---------------|----------|
 | S0 空闲          | false | false | 无       | 无线程 |
 | S1 仅推流        | true  | false | 有       | `StreamReader` + `StreamWriter` |
@@ -841,17 +786,17 @@ python -m engine.main
 
 ## 八、关键设计决策
 
-### 7.1 为什么是多进程 + 多线程混合?
+### 8.1 为什么是单进程 + 多线程?
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                                                                             │
-│  为什么 InferenceService 和 Pipeline 是独立进程?                            │
+│  为什么 Engine 采用单进程 + 多线程?                                         │
 │                                                                             │
-│  ├── Python GIL 限制: 多线程无法利用多核 CPU                                │
-│  ├── 进程隔离: 一个 Pipeline 崩溃不影响其他                                 │
-│  ├── 资源隔离: 每个进程独立的内存空间                                       │
-│  └── 扩展性: 可以分布到不同机器                                             │
+│  ├── 可靠性: 避免 `multiprocessing.Queue` 在 spawn/重启下的句柄/管道问题      │
+│  ├── 简化: 不再需要跨进程传递大帧数据，状态恢复与幂等调度更直接               │
+│  ├── 性能: 拉流/推流为 I/O 密集，GPU 推理在 C++ 层执行，线程化收益明显         │
+│  └── 可演进: 若未来出现 CPU 密集瓶颈，可按模块再引入多进程/分布式（不阻碍）    │
 │                                                                             │
 │  为什么 InferenceService 内部是多线程?                                      │
 │                                                                             │

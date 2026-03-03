@@ -24,6 +24,7 @@ from app.schemas.alarm import (
 )
 from app.schemas.common import success_response, page_response
 from common.logging import logger
+from common.storage import get_storage
 
 
 router = APIRouter()
@@ -86,6 +87,7 @@ async def get_alarms(
     
     # 获取关联信息
     data = []
+    storage = get_storage()
     for alarm in alarms:
         # 获取摄像头和算法名称
         cam_result = await db.execute(
@@ -98,6 +100,17 @@ async def get_alarms(
         )
         algo_name = algo_result.scalar_one_or_none()
         
+        snapshot_url = alarm.snapshot_url
+        video_url = alarm.video_url
+        # 将存储 key 转换为可访问 URL（兼容 local/minio）
+        try:
+            if snapshot_url:
+                snapshot_url = storage.get_url(snapshot_url)
+            if video_url:
+                video_url = storage.get_url(video_url)
+        except Exception as e:
+            logger.error(f"构建告警资源 URL 失败: {e}")
+
         data.append({
             "id": alarm.id,
             "camera_id": alarm.camera_id,
@@ -109,8 +122,8 @@ async def get_alarms(
             "title": alarm.title,
             "description": alarm.description,
             "alarm_time": alarm.alarm_time.isoformat(),
-            "snapshot_url": alarm.snapshot_url,
-            "video_url": alarm.video_url,
+            "snapshot_url": snapshot_url,
+            "video_url": video_url,
             "detection_data": alarm.detection_data,
             "status": alarm.status,
             "confirmed_by": alarm.confirmed_by,

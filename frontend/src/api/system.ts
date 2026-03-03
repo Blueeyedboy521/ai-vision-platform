@@ -94,10 +94,10 @@ export function getSystemInfo() {
 }
 
 /**
- * 获取系统统计
+ * 获取系统统计（使用后端 /system/dashboard 实时数据）
  */
 export function getSystemStatistics() {
-  return request.get<SystemStatistics>('/system/statistics')
+  return request.get<SystemStatistics>('/system/dashboard')
 }
 
 /**

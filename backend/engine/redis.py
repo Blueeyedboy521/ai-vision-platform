@@ -6,11 +6,11 @@ Engine Redis 模块
 - 封装 Engine 进程内所有 Redis 操作（同步客户端），高内聚低耦合
 - 供 Scheduler、StreamWriter、Inferencer 等调用，不直接操作 redis client
 """
-import json
 from typing import Any, Dict, List, Optional, Set
 
 from common.redis import get_redis_client, RedisChannels, RedisKeys
 from common.logging import logger
+from common.utils.json_utils import to_json, from_json
 
 
 def get_sync_client():
@@ -103,7 +103,7 @@ def get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
         raw = r.get(RedisKeys.model_config(model_id))
         if not raw:
             return None
-        return json.loads(_val_str(raw))
+        return from_json(_val_str(raw))
     except Exception as e:
         logger.warning(f"读取模型配置失败: model_id={model_id}, err={e}")
         return None
@@ -120,9 +120,9 @@ def get_model_classes(model_id: str) -> Optional[List[str]]:
     return None
 
 
-def get_model_algorithms_class_map(model_id: str) -> Optional[Dict[str, Dict[str, str]]]:
+def get_model_algorithms_class_map(model_id: str) -> Optional[Dict[str, Dict[str, Any]]]:
     """
-    从 model:config.algorithms 构造 {target_class -> {code, name}} 映射（供 ONNX Inferencer 使用）
+    从 model:config.algorithms 构造 {target_class -> {id, code, name}} 映射（供推理器使用）
     """
     cfg = get_model_config(model_id)
     if not cfg:
@@ -130,18 +130,19 @@ def get_model_algorithms_class_map(model_id: str) -> Optional[Dict[str, Dict[str
     algorithms_cfg = cfg.get("algorithms")
     if not isinstance(algorithms_cfg, list):
         return None
-    class_map: Dict[str, Dict[str, str]] = {}
+    class_map: Dict[str, Dict[str, Any]] = {}
     for item in algorithms_cfg:
         if not isinstance(item, dict):
             continue
+        algo_id = str(item.get("id") or "")
         code = str(item.get("code") or "")
         name = str(item.get("name") or "")
         targets = item.get("target_classes") or []
-        if not code or not isinstance(targets, list):
+        if not algo_id or not code or not isinstance(targets, list):
             continue
         for t in targets:
             if t is not None:
-                class_map[str(t)] = {"code": code, "name": name}
+                class_map[str(t)] = {"id": algo_id, "code": code, "name": name}
     return class_map if class_map else None
 
 
@@ -152,7 +153,7 @@ def get_algorithm_config(algorithm_id: str) -> Optional[Dict[str, Any]]:
         raw = r.get(RedisKeys.algorithm_config(algorithm_id))
         if not raw:
             return None
-        return json.loads(_val_str(raw))
+        return from_json(_val_str(raw))
     except Exception as e:
         logger.warning(f"读取算法配置失败: algorithm_id={algorithm_id}, err={e}")
         return None
@@ -165,7 +166,7 @@ def get_camera_config(camera_id: str) -> Optional[Dict[str, Any]]:
         raw = r.get(RedisKeys.camera_config(camera_id))
         if not raw:
             return None
-        return json.loads(_val_str(raw))
+        return from_json(_val_str(raw))
     except Exception as e:
         logger.warning(f"读取摄像头配置失败: camera_id={camera_id}, err={e}")
         return None
@@ -179,7 +180,7 @@ def get_camera_algorithm_config(camera_id: str, algorithm_id: str) -> Optional[D
         raw = r.get(key)
         if not raw:
             return None
-        return json.loads(_val_str(raw))
+        return from_json(_val_str(raw))
     except Exception as e:
         logger.warning(f"读取摄像头算法配置失败: camera_id={camera_id}, algo={algorithm_id}, err={e}")
         return None
@@ -196,7 +197,7 @@ def scan_camera_algorithm_configs(camera_id: str) -> List[Dict[str, Any]]:
             if not raw:
                 continue
             try:
-                cfg = json.loads(_val_str(raw))
+                cfg = from_json(_val_str(raw))
             except Exception:
                 continue
             if not cfg.get("is_enabled", True):
@@ -230,7 +231,7 @@ def scan_model_configs() -> List[tuple]:
             if not raw:
                 continue
             try:
-                cfg = json.loads(_val_str(raw))
+                cfg = from_json(_val_str(raw))
             except Exception:
                 continue
             if not cfg.get("is_enabled", True):
@@ -253,7 +254,7 @@ def scan_camera_configs() -> List[tuple]:
             if not raw:
                 continue
             try:
-                cfg = json.loads(_val_str(raw))
+                cfg = from_json(_val_str(raw))
             except Exception:
                 continue
             if not cfg.get("is_enabled", True):
@@ -266,6 +267,9 @@ def scan_camera_configs() -> List[tuple]:
     return result
 
 
+# ===================== 告警队列写入封装 =====================
+
+
 def scan_camera_algorithm_bindings() -> List[tuple]:
     """扫描所有摄像头-算法绑定配置，返回 (camera_id, algorithm_id, cfg_dict) 列表"""
     result: List[tuple] = []
@@ -276,7 +280,7 @@ def scan_camera_algorithm_bindings() -> List[tuple]:
             if not raw:
                 continue
             try:
-                cfg = json.loads(_val_str(raw))
+                cfg = from_json(_val_str(raw))
             except Exception:
                 continue
             if not cfg.get("is_enabled", True):

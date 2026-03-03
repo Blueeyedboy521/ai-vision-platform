@@ -366,7 +366,8 @@ function convertCamera(camera: Camera): CameraInfo {
     location: camera.area_name || '未分配',
     ip: camera.ip_address || '-',
     thumbnail: thumb,
-    online: camera.status === 'online',
+    // 在线状态直接使用后端返回的 online 字段，fallback 到 status 仅为兼容旧数据
+    online: (camera as any).online ?? (camera.status === 'online'),
     algorithmEnabled: ((camera as any).algorithm_count ?? 0) > 0,
     inferenceStarted: (camera as any).inference_started ?? (camera as any).inferenceStarted ?? false
   }

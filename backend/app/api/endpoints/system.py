@@ -12,6 +12,7 @@ from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.redis import get_online_camera_ids
 from app.core.config import settings
 from app.api.deps import get_current_user, get_current_admin
 from app.models import User, Camera, Area, Algorithm, Alarm
@@ -45,15 +46,14 @@ async def system_info(
     """
     获取系统信息
     """
-    # 统计各种数量
+    # 统计摄像头总数
     camera_count = (await db.execute(
         select(func.count(Camera.id))
     )).scalar() or 0
-    
-    online_camera_count = (await db.execute(
-        select(func.count(Camera.id))
-        .where(Camera.status == "online")
-    )).scalar() or 0
+
+    # 在线摄像头数量从 Redis 读取（camera:online:{id}）
+    online_ids = await get_online_camera_ids()
+    online_camera_count = len(online_ids)
     
     area_count = (await db.execute(
         select(func.count(Area.id))
@@ -111,25 +111,14 @@ async def dashboard(
     """
     获取仪表盘数据
     """
-    # 摄像头状态
+    # 摄像头状态（总数仍来自 DB，在线数改用 Redis）
     total_cameras = (await db.execute(
         select(func.count(Camera.id))
     )).scalar() or 0
-    
-    online_cameras = (await db.execute(
-        select(func.count(Camera.id))
-        .where(Camera.status == "online")
-    )).scalar() or 0
-    
-    offline_cameras = (await db.execute(
-        select(func.count(Camera.id))
-        .where(Camera.status == "offline")
-    )).scalar() or 0
-    
-    error_cameras = (await db.execute(
-        select(func.count(Camera.id))
-        .where(Camera.status == "error")
-    )).scalar() or 0
+
+    online_cameras = len(await get_online_camera_ids())
+    offline_cameras = max(total_cameras - online_cameras, 0)
+    error_cameras = 0  # 如需更精细状态可后续从 DB 或其他指标计算
     
     # 今日告警
     from datetime import timedelta

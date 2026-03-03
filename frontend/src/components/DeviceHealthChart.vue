@@ -10,32 +10,57 @@
     <div class="health-stats">
       <div class="health-stat">
         <div class="health-stat-label">设备总数</div>
-        <div class="health-stat-value">144</div>
+        <div class="health-stat-value">{{ total }}</div>
       </div>
       <div class="health-divider"></div>
       <div class="health-stat">
         <div class="health-stat-label">离线异常</div>
-        <div class="health-stat-value danger">16</div>
+        <div class="health-stat-value danger">{{ offline }}</div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { PieChart } from 'echarts/charts'
 import { TooltipComponent, LegendComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { useAppStore } from '@/stores/app'
+import { getSystemStatistics } from '@/api/system'
 
 use([PieChart, TooltipComponent, LegendComponent, CanvasRenderer])
 
 const appStore = useAppStore()
 
+const total = ref(0)
+const online = ref(0)
+const offline = ref(0)
+
+async function loadHealth() {
+  try {
+    const res = await getSystemStatistics()
+    const raw = res.data.data as any
+    total.value = raw?.cameras?.total ?? 0
+    online.value = raw?.cameras?.online ?? 0
+    offline.value = raw?.cameras?.offline ?? Math.max(total.value - online.value, 0)
+  } catch (e) {
+    console.error('加载设备健康数据失败:', e)
+  }
+}
+
+onMounted(() => {
+  loadHealth()
+})
+
 const chartOption = computed(() => {
   const dark = appStore.isDarkMode
+  const t = total.value || 0
+  const o = online.value || 0
+  const off = offline.value || Math.max(t - o, 0)
+  const pct = t > 0 ? Math.round((o / t) * 100) : 0
   return {
     tooltip: { trigger: 'item' },
     series: [
@@ -47,7 +72,7 @@ const chartOption = computed(() => {
         label: {
           show: true,
           position: 'center',
-          formatter: () => '{a|89%}\n{b|在线占比}',
+          formatter: () => `{a|${pct}%}\n{b|在线占比}`,
           rich: {
             a: {
               fontSize: 32,
@@ -68,7 +93,7 @@ const chartOption = computed(() => {
         labelLine: { show: false },
         data: [
           {
-            value: 128,
+            value: o,
             name: '在线设备',
             itemStyle: {
               color: {
@@ -82,7 +107,7 @@ const chartOption = computed(() => {
             }
           },
           {
-            value: 16,
+            value: off,
             name: '离线设备',
             itemStyle: { color: dark ? '#3a3a40' : '#e8e8e8' }
           }
