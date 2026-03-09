@@ -133,6 +133,13 @@ class Camera(Base, AuditMixin):
         default=25,
         comment="帧率"
     )
+
+    inference_interval_sec: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=5,
+        comment="识别间隔(秒)，控制该摄像头后台推理抽帧频率"
+    )
     
     resolution: Mapped[Optional[str]] = mapped_column(
         String(20),

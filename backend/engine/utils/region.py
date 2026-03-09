@@ -57,7 +57,7 @@ class RegionDetector:
     def bbox_in_region(
         self,
         bbox: Tuple[float, float, float, float],
-        mode: str = "center"
+        mode: str = "intersect",
     ) -> bool:
         """
         判断边界框是否在区域内
@@ -65,6 +65,7 @@ class RegionDetector:
         Args:
             bbox: 边界框 (x1, y1, x2, y2)
             mode: 检测模式
+                - "intersect": 边界框与区域有交叉即可（默认）
                 - "center": 中心点在区域内
                 - "any": 任意角点在区域内
                 - "all": 所有角点在区域内
@@ -73,7 +74,24 @@ class RegionDetector:
             是否在区域内
         """
         x1, y1, x2, y2 = bbox
-        
+        # 规范化，确保 x1<=x2, y1<=y2
+        if x1 > x2:
+            x1, x2 = x2, x1
+        if y1 > y2:
+            y1, y2 = y2, y1
+
+        if mode == "intersect":
+            # 1) 任一角点在区域内
+            corners = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+            if any(self.point_in_region(x, y) for x, y in corners):
+                return True
+            # 2) 区域顶点有任一点落在 bbox 内
+            for px, py in self.polygon:
+                if x1 <= px <= x2 and y1 <= py <= y2:
+                    return True
+            # （更复杂的“边与边相交”情形此处不再细分，认为交集很小可忽略）
+            return False
+
         if mode == "center":
             cx = (x1 + x2) / 2
             cy = (y1 + y2) / 2

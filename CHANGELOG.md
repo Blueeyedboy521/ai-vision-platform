@@ -8,6 +8,11 @@
 - **Engine 配置热刷新收口**：Engine 侧 Redis 配置读取收口到 `Scheduler`，模型/摄像头/算法/绑定增改事件会刷新 `self.models/self.cameras`；启停推理/直播时会再拉取一次该摄像头最新配置。`PipelineService` 与推理器不再直接读 Redis 配置。
 - **区域过滤按算法维度**：`ResultHandler._clean_detections` 将 `regions` 按 `algorithm_id` 分组过滤，避免不同算法区域互相干扰。
 - **摄像头-算法配置扩展**：Redis `camera:algorithm:config:{camera_id}:{algorithm_id}` 增加 `inference_interval_sec` / `alarm_interval_sec` 字段并在 API 返回中透出。
+- **多模型推理与摄像头级识别间隔**：`Scheduler` 统一在摄像头维度维护 `inference_interval_sec`，按摄像头 fps 计算 `skip_frames`，并通过 `_MultiModelRequestQueue` 支持同一摄像头多模型共享一份帧数据；`InferenceService` 以「摄像头→模型集合」维度统计模型使用，按需扩缩 Worker。
+- **算法级告警触发策略下沉**：告警触发策略抽象为 `AlertTrigger`（`instant`/`duration`/`count`），各 Trigger 内部自维护告警间隔与历史状态（持续时间、轨迹等）；`ResultHandler` 仅按 `algorithm_id` 分组并调用对应 Trigger，多算法在同一帧上独立评估是否触发告警。
+- **告警截图上传去重与回收**：`Scheduler._start_alarm_dispatcher` 对相同 `local_snapshot_path` 维护 `{snapshot_path,total,seen}` 缓存，首次出现时绘框并上传，后续复用已上传路径；当 `seen >= total` 时删除本地临时文件并清理缓存，避免多算法告警重复上传同一帧图片。
+- **告警检测数据结构统一**：Engine 在告警链路中直接将整帧 `detections` 列表写入 `alarm_data.detections`，`AlarmConsumer` 持久化为 `Alarm.detection_data(JSON)`；`/alarms` 与 `/alarms/{id}` 接口通过 `detection_data` 字段透出包含 `bbox/class_name/confidence/algorithm_id` 的检测结果，供前端绘框与展示置信度。
+- **前端告警页增强**：首页 `AlertList` 与告警管理页 `AlarmManagement` 通过 `detection_data` 将检测框与类别/置信度叠加在截图上展示；告警管理页改为使用后端分页（`page/page_size/page_info.total`），支持页码与每页条数切换，避免一次性加载全部历史告警。
 
 ### v2.8.0 - 2026-03-02
 

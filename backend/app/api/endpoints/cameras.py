@@ -241,6 +241,7 @@ async def get_camera(
         "latitude": camera.latitude,
         "fps": camera.fps,
         "resolution": camera.resolution,
+        "inference_interval_sec": getattr(camera, "inference_interval_sec", 5),
         "is_enabled": camera.is_enabled,
         "status": camera.status,
         "online": online,

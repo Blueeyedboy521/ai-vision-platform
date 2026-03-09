@@ -586,7 +586,8 @@ async function handleSaveCamera(data: any) {
       ip_address: ipMatch ? ipMatch[0] : undefined,
       is_enabled: true,
       ...(data.fps != null && { fps: data.fps }),
-      ...(data.resolution && { resolution: data.resolution })
+      ...(data.resolution && { resolution: data.resolution }),
+      ...(data.inferenceIntervalSec != null && { inference_interval_sec: data.inferenceIntervalSec })
     }
     if (data.id) {
       await updateCamera(data.id, payload)

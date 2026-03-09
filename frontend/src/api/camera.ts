@@ -27,6 +27,8 @@ export interface Camera {
   online?: boolean
   fps: number
   resolution: string | null
+  /** 识别间隔(秒)，控制该摄像头推理抽帧频率 */
+  inference_interval_sec: number
   algorithm_count?: number
   inference_started?: boolean
   snapshot_url?: string | null
@@ -50,6 +52,7 @@ export interface CreateCameraRequest {
   is_enabled?: boolean
   fps?: number
   resolution?: string
+  inference_interval_sec?: number
 }
 
 // 更新摄像头请求
@@ -68,6 +71,7 @@ export interface UpdateCameraRequest {
   is_enabled?: boolean
   fps?: number
   resolution?: string
+  inference_interval_sec?: number
 }
 
 // 摄像头列表查询参数

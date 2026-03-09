@@ -4,7 +4,7 @@
 """
 from typing import Any, Dict, List
 
-from .base import AlertTrigger, TriggerContext
+from .base import AlertTrigger
 from .instant import InstantTrigger
 from .duration import DurationTrigger
 from .count import CountTrigger
@@ -12,7 +12,6 @@ from . import bbox_utils
 
 __all__ = [
     "get_trigger",
-    "TriggerContext",
     "AlertTrigger",
     "bbox_utils",
 ]
@@ -28,9 +27,7 @@ def get_trigger(trigger_type: str, config: Dict[str, Any]) -> AlertTrigger:
     """
     t = (trigger_type or "").strip().lower()
     if t == "duration":
-        sec = float(config.get("duration_seconds") or 3)
-        return DurationTrigger(duration_seconds=sec)
+        return DurationTrigger(config)
     if t == "count":
-        th = int(config.get("count_threshold") or 1)
-        return CountTrigger(count_threshold=th)
-    return InstantTrigger()
+        return CountTrigger(config)
+    return InstantTrigger(config)

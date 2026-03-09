@@ -238,6 +238,11 @@ class Scheduler:
             return
         self._alarm_running = True
 
+        # 本地截图上传去重与回收：
+        # key: local_snapshot_path
+        # value: {"snapshot_path": str, "total": int, "seen": int}
+        uploaded_snapshots: Dict[str, dict] = {}
+
         def _worker():
             logger.info("告警转发线程启动")
             try:
@@ -250,42 +255,66 @@ class Scheduler:
                         if not alarm:
                             continue
 
-                        # 将本地截图绘制检测框后上传到 Storage 的正式目录，并写回 snapshot_path
+                        # 将本地截图上传到 Storage 的正式目录，并写回 snapshot_path（不再在后端绘制检测框，前端负责绘框）
                         camera_id = str(alarm.get("camera_id") or "")
                         ts_str = str(alarm.get("timestamp") or "")
                         local_path = alarm.pop("local_snapshot_path", None)
+                        # local_snapshot_ref_total 表示同一 local_path 预计被多少条告警复用
+                        ref_total_raw = alarm.get("local_snapshot_ref_total") or 1
+                        try:
+                            ref_total = int(ref_total_raw)
+                        except Exception:
+                            ref_total = 1
+
                         if local_path and camera_id:
                             try:
                                 import os
-                                import cv2
                                 from datetime import datetime
                                 from common.storage import get_storage
-                                from engine.inference.draw_utils import draw_detections_inplace
 
-                                # 读取本地原始截图
-                                if not os.path.exists(local_path):
-                                    logger.error(f"本地告警截图不存在: {local_path}")
-                                else:
-                                    img = cv2.imread(local_path)
-                                    if img is None:
-                                        logger.error(f"读取本地告警截图失败: {local_path}")
+                                entry = uploaded_snapshots.get(local_path)
+                                if entry is None:
+                                    # 读取本地原始截图并绘制检测框，仅在首次出现该 local_path 时执行
+                                    if not os.path.exists(local_path):
+                                        logger.error(f"本地告警截图不存在: {local_path}")
                                     else:
-                                        # 先在截图上绘制检测框
-                                        dets = alarm.get("detections") or []
-                                        draw_detections_inplace(img, dets)
+                                        import cv2
 
-                                        storage = get_storage()
-                                        try:
-                                            dt = datetime.fromisoformat(ts_str)
-                                        except Exception:
-                                            dt = datetime.now()
-                                        date_path = dt.strftime("%Y/%m/%d")
-                                        file_id = str(int(dt.timestamp() * 1000))
-                                        rel_path = f"alarm/{date_path}/{camera_id}/{file_id}.jpg"
+                                        img = cv2.imread(local_path)
+                                        if img is None:
+                                            logger.error(f"读取本地告警截图失败: {local_path}")
+                                        else:
+                                            storage = get_storage()
+                                            try:
+                                                dt = datetime.fromisoformat(ts_str)
+                                            except Exception:
+                                                dt = datetime.now()
+                                            date_path = dt.strftime("%Y/%m/%d")
+                                            file_id = str(int(dt.timestamp() * 1000))
+                                            rel_path = f"alarm/{date_path}/{camera_id}/{file_id}.jpg"
 
-                                        # 直接通过 save_image 将带框图片保存到正式目录
-                                        snapshot_path = storage.save_image(img, rel_path)
-                                        alarm["snapshot_path"] = snapshot_path or rel_path
+                                            # 直接通过 save_image 将原始截图保存到正式目录（前端负责绘框）
+                                            snapshot_path = storage.save_image(img, rel_path) or rel_path
+                                            alarm["snapshot_path"] = snapshot_path
+                                            uploaded_snapshots[local_path] = {
+                                                "snapshot_path": snapshot_path,
+                                                "total": max(1, ref_total),
+                                                "seen": 1,
+                                            }
+                                else:
+                                    # 已经上传过该本地截图：直接复用远程路径
+                                    alarm["snapshot_path"] = entry["snapshot_path"]
+                                    entry["seen"] += 1
+
+                                # 判断是否所有引用都已消费完，若是则回收本地文件与缓存
+                                if entry and entry["seen"] >= entry["total"]:
+                                    try:
+                                        if os.path.exists(local_path):
+                                            os.remove(local_path)
+                                    except Exception as e:
+                                        logger.warning(f"删除本地告警截图失败(可忽略): {e}")
+                                    finally:
+                                        uploaded_snapshots.pop(local_path, None)
                             except Exception as e:
                                 logger.error(
                                     f"处理告警截图上传失败: camera_id={camera_id}, path={local_path}, err={e}"
@@ -371,11 +400,15 @@ class Scheduler:
             # 通知 InferenceService 某个摄像头开始推理，由服务内部自行计数与扩缩容
             if self.inference_service:
                 camera = self.cameras.get(camera_id)
-                model_id = None
                 if camera and camera.algorithms:
-                    first_algo = camera.algorithms[0] or {}
-                    model_id = first_algo.get("model_id")
-                self.inference_service.on_camera_inference_start(camera_id, model_id or "")
+                    # 同一摄像头可能绑定多个模型：为每个模型分别绑定一次
+                    model_ids = []
+                    for algo in camera.algorithms:
+                        mid = (algo or {}).get("model_id")
+                        if mid and mid not in model_ids:
+                            model_ids.append(str(mid))
+                    for mid in model_ids:
+                        self.inference_service.on_camera_inference_start(camera_id, mid)
             self._reconcile_inference_service()
 
         if action == "camera_inference_stop":
@@ -546,12 +579,14 @@ class Scheduler:
             camera = self.cameras.get(cam_id)
             if not camera or not getattr(camera, "algorithms", None):
                 continue
-            first_algo = (camera.algorithms[0] or {}) if camera.algorithms else {}
-            model_id = first_algo.get("model_id")
-            if not model_id:
-                continue
             try:
-                self.inference_service.on_camera_inference_start(cam_id, model_id)
+                model_ids = []
+                for algo in camera.algorithms:
+                    mid = (algo or {}).get("model_id")
+                    if mid and mid not in model_ids:
+                        model_ids.append(str(mid))
+                for mid in model_ids:
+                    self.inference_service.on_camera_inference_start(cam_id, mid)
             except Exception as e:
                 logger.error(f"为摄像头 {cam_id} 恢复推理绑定失败: {e}")
     
@@ -626,7 +661,7 @@ class Scheduler:
                 name=(cfg.get("name", camera_id) if cfg else camera_id),
                 rtsp_url=(cfg.get("rtsp_url", "") if cfg else ""),
                 fps=int((cfg.get("fps", 25) if cfg else 25)),
-                skip_frames=int((cfg.get("skip_frames", 3) if cfg else 3)),
+                skip_frames=0,
                 algorithms=[],
             )
         if camera_id not in self.result_queues:
@@ -638,7 +673,9 @@ class Scheduler:
             cam.name = cfg.get("name", cam.name)
             cam.rtsp_url = cfg.get("rtsp_url", cam.rtsp_url)
             cam.fps = int(cfg.get("fps", cam.fps))
-            cam.skip_frames = int(cfg.get("skip_frames", cam.skip_frames))
+            # 摄像头级识别间隔(秒)，用于统一控制抽帧频率；若未配置则默认 5 秒
+            interval_sec = int(cfg.get("inference_interval_sec", 5))
+            cam.skip_frames = max(0, int(cam.fps * interval_sec) - 1)
         camera = self.cameras.get(camera_id)
         if not camera:
             return
@@ -647,14 +684,6 @@ class Scheduler:
         except Exception as e:
             logger.error(f"刷新摄像头算法配置失败: {camera_id}, {e}")
             return
-        # 按算法识别间隔重算 skip_frames
-        if camera.algorithms:
-            intervals = [
-                (a.get("config") or {}).get("inference_interval_sec", 5)
-                for a in camera.algorithms
-            ]
-            min_interval = min(intervals) if intervals else 5
-            camera.skip_frames = max(0, int(camera.fps * min_interval) - 1)
 
     def _reconcile_camera_pipeline(self, camera_id: str):
         """根据状态机将单路摄像头的目标模式委托给 PipelineService。"""

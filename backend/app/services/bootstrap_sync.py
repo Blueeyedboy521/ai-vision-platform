@@ -73,6 +73,7 @@ async def sync_configs_to_redis_and_streams() -> None:
               "name": camera.name,
               "rtsp_url": camera.full_rtsp_url,
               "fps": camera.fps,
+              "inference_interval_sec": getattr(camera, "inference_interval_sec", 5),
               "is_enabled": camera.is_enabled,
             },
             ensure_ascii=False,

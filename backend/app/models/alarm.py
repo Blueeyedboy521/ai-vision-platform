@@ -108,7 +108,7 @@ class Alarm(Base, AuditMixin):
         "detection_data",
         JSON,
         nullable=True,
-        comment="检测详细数据 (JSON)"
+        comment="检测详细数据 (JSON，通常为检测结果列表)"
     )
     
     # ==================== 处理状态 ====================
@@ -157,29 +157,31 @@ class Alarm(Base, AuditMixin):
         return f"<Alarm(id={self.id}, camera_id={self.camera_id}, level={self.level}, status={self.status})>"
     
     @property
-    def detection_data(self) -> Dict[str, Any]:
+    def detection_data(self) -> Any:
         """
-        获取检测数据
-        
-        Returns:
-            检测数据字典，包含:
-            - class_name: 检测类别
-            - confidence: 置信度
-            - bbox: 边界框 [x1, y1, x2, y2]
-            - 其他扩展字段
+        获取检测数据。
+
+        兼容历史与当前两种存储格式：
+        - 旧版本：dict
+        - 当前版本：list[dict]（直接存整帧的 detections 列表，用于前端绘框）
         """
         if self._detection_data is None:
-            return {}
-        if isinstance(self._detection_data, str):
+            return []
+        raw = self._detection_data
+        # 字符串时尝试反序列化
+        if isinstance(raw, str):
             try:
-                return json.loads(self._detection_data)
+                raw = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
-                return {}
-        return self._detection_data if isinstance(self._detection_data, dict) else {}
+                return []
+        # dict 或 list 都直接透出，交给上层按需使用
+        if isinstance(raw, (dict, list)):
+            return raw
+        return []
     
     @detection_data.setter
-    def detection_data(self, value: Dict[str, Any]) -> None:
-        """设置检测数据"""
+    def detection_data(self, value: Any) -> None:
+        """设置检测数据，允许 dict 或 list"""
         self._detection_data = value
     
     @property

@@ -16,7 +16,7 @@ from loguru import logger
 
 from .overlay_state import OverlayState
 from engine.utils.region import RegionDetector
-from .alert import get_trigger, TriggerContext, bbox_utils
+from .alert import get_trigger
 import uuid
 
 
@@ -58,36 +58,31 @@ class ResultHandler:
         self.thread: Optional[threading.Thread] = None
         self.running = False
         
-        # 告警去重
+        # 告警去重（遗留结构，当前主要依赖各算法 Trigger 内部状态）
         self.recent_alarms: Dict[str, float] = {}  # alarm_key -> timestamp
         self.dedup_window = 10.0  # 去重窗口 (秒)
         # 告警输出队列（交给 Scheduler 统一写入 Redis alarm_queue）
         self.alarm_queue = alarm_queue
-        # 上一次用于比对的检测快照（用于 3 秒窗口内的结果对比）
-        self._last_snapshot: Optional[Dict[str, Any]] = None
-        # 告警间隔(秒)：从算法配置取最大值；同一告警在此间隔后若区域偏差小则视为同一条不重复推送
-        self._alarm_interval_sec = 30.0
-        if algorithms:
-            secs = [
-                float((a.get("config") or {}).get("alarm_interval_sec", 30))
-                for a in algorithms
-            ]
-            if secs:
-                self._alarm_interval_sec = max(secs)
-        # 上一条告警的时间与检测结果，用于间隔后同区域判定
-        self._last_alarm_ts: float = 0.0
-        self._last_alarm_detections: List[dict] = []
 
-        # 告警触发策略（从算法 alert_config 取 trigger_type，高内聚由 alert 包实现）
-        alert_config = {}
-        if algorithms:
-            for a in algorithms:
-                cfg = (a.get("config") or {}).get("alert_config") or {}
-                if cfg:
-                    alert_config = cfg
-                    break
-        trigger_type = (alert_config.get("trigger_type") or "instant").strip().lower()
-        self._alert_trigger = get_trigger(trigger_type, alert_config)
+        # 告警触发策略（算法级别）：algo_id -> alert_config / trigger
+        self._algo_alert_configs: Dict[str, Dict[str, Any]] = {}
+        self._algo_triggers: Dict[str, Any] = {}
+        for a in algorithms or []:
+            algo_id = str((a or {}).get("id") or "")
+            if not algo_id:
+                continue
+            base_cfg = (a.get("config") or {})
+            alert_cfg = dict(base_cfg.get("alert_config") or {})
+            # 将算法级告警间隔透传给 Trigger，由各自策略内部维护节流状态
+            if "alarm_interval_sec" not in alert_cfg:
+                alert_cfg["alarm_interval_sec"] = float(
+                    base_cfg.get("alarm_interval_sec", 30.0)
+                )
+            self._algo_alert_configs[algo_id] = alert_cfg
+            trigger_type = (alert_cfg.get("trigger_type") or "instant").strip().lower()
+            self._algo_triggers[algo_id] = get_trigger(trigger_type, alert_cfg)
+        # 默认触发器：当某个算法未配置 alert_config 时使用
+        self._default_trigger = get_trigger("instant", {})
 
         # 统计
         self.processed_results = 0
@@ -139,8 +134,9 @@ class ResultHandler:
                 # 在不阻塞实时绘框链路的前提下，执行结果清洗与告警判定
                 try:
                     cleaned = self._clean_detections(result, detections)
+                    logger.info(f"ResultHandler 清洗后的检测结果: {cleaned}")
                     if cleaned:
-                        # self._maybe_raise_alarm(result, cleaned)
+                        self._maybe_raise_alarm(result, cleaned)
                         pass
                 except Exception as e:
                     logger.error(f"ResultHandler 告警清洗异常: {e}")
@@ -160,42 +156,58 @@ class ResultHandler:
 
     # ==== 新增：检测结果清洗与告警判定 ====
 
-    def _clean_detections(self, result: Any, detections: List[dict]) -> List[dict]:
+    def _filter_by_algorithm_and_confidence(self, detections: List[dict]) -> List[dict]:
         """
-        按摄像头/算法配置对检测结果做一级清洗：
-        1. 置信度阈值过滤（按算法维度：每个 detection 尽量使用其对应算法的 confidence）
-        2. 区域过滤（若配置了检测区域，仅保留在任一区域内的目标）
+        第一步：按摄像头配置的算法列表和置信度阈值做过滤。
+
+        仅保留：
+        - algorithm_id 在当前摄像头启用算法列表中的检测结果；
+        - 且 detection.confidence ≥ 对应算法配置的 confidence（若未配置则跳过该算法）。
         """
         if not detections:
             return []
 
-        # 1. 置信度阈值：从 camera_algorithms 配置中提取（按算法维度）
-        #   self.algorithms 结构示例：
-        #   {"id": algorithm_id, "model_id": ..., "config": {"confidence": ..., "alert_config": ..., "regions": ...}}
         algo_thresholds: Dict[str, float] = {}
-        default_threshold = 0.5
+        enabled_algo_ids: set[str] = set()
         for algo in self.algorithms or []:
             try:
                 algo_id = str((algo or {}).get("id") or "")
+                if not algo_id:
+                    continue
+                enabled_algo_ids.add(algo_id)
                 cfg = (algo or {}).get("config") or {}
                 conf = cfg.get("confidence")
-                if algo_id and isinstance(conf, (int, float)) and conf > 0:
+                if isinstance(conf, (int, float)) and conf > 0:
                     algo_thresholds[algo_id] = float(conf)
-                    if default_threshold > float(conf):
-                        default_threshold = float(conf)
             except Exception:
                 continue
-        logger.debug(f"algo_thresholds: {algo_thresholds}, default_threshold: {default_threshold}")
+        # logger.debug( f"[ResultHandler] algo_thresholds={algo_thresholds}, enabled_algo_ids={enabled_algo_ids}, "  f"detections={detections}" )
+
         filtered: List[dict] = []
         for d in detections:
             conf = float(d.get("confidence", 0.0))
-            algo_id = d.get("algorithm_id")
-            # 优先使用 detection 上的 algorithm_id 找到专属阈值；否则退回到默认阈值
-            thr = algo_thresholds.get(str(algo_id), default_threshold)
-            if conf >= thr:
+            algo_id_raw = d.get("algorithm_id")
+            algo_id = str(algo_id_raw) if algo_id_raw is not None else ""
+            # 仅保留在当前摄像头启用算法列表里的检测结果
+            if enabled_algo_ids and algo_id and algo_id not in enabled_algo_ids:
+                continue
+            thr = algo_thresholds.get(algo_id)
+            if thr is not None and conf >= thr:
                 filtered.append(d)
 
-        # 2. 区域过滤：按算法维度，每个算法有自己的 regions；检测结果用其 algorithm_id 对应的区域判断
+        # logger.debug(f"[ResultHandler] after threshold filter: {filtered}")
+        return filtered
+
+    def _filter_by_regions(self, detections: List[dict]) -> List[dict]:
+        """
+        第二步：按算法维度进行区域过滤。
+
+        - 每个算法有自己的 regions 列表；
+        - detection 按其 algorithm_id 找到对应算法的区域，采用 bbox 与区域「有交叉即可」的模式。
+        """
+        if not detections:
+            return []
+
         # regions_by_algo: algorithm_id -> list of polygons (每个 polygon 为 (x,y) 元组列表)
         regions_by_algo: Dict[str, List[List[tuple]]] = {}
         for algo in self.algorithms or []:
@@ -226,11 +238,12 @@ class ResultHandler:
                 regions_by_algo[algo_id] = polygons
 
         if not regions_by_algo:
-            return filtered
+            return detections
 
+        # logger.debug(f"[ResultHandler] regions_by_algo: {regions_by_algo}")
         # 每个 detection 按其 algorithm_id 取对应算法的区域做过滤
         result2: List[dict] = []
-        for d in filtered:
+        for d in detections:
             bbox = d.get("bbox") or []
             if len(bbox) < 4:
                 continue
@@ -244,7 +257,8 @@ class ResultHandler:
             keep = False
             for polygon in regions:
                 det = RegionDetector(polygon=polygon)
-                if det.bbox_in_region((x1, y1, x2, y2), mode="center"):
+                # 默认使用 bbox 与区域有交集的模式
+                if det.bbox_in_region((x1, y1, x2, y2), mode="intersect"):
                     keep = True
                     break
             if keep:
@@ -252,79 +266,150 @@ class ResultHandler:
 
         return result2
 
+    def _clean_detections(self, result: Any, detections: List[dict]) -> List[dict]:
+        """
+        按摄像头/算法配置对检测结果做两步清洗：
+        1. 置信度 + 算法列表过滤；
+        2. 区域过滤（若配置了检测区域，仅保留与区域有交叉的目标）。
+        """
+        if not detections:
+            return []
+
+        step1 = self._filter_by_algorithm_and_confidence(detections)
+        if not step1:
+            return []
+
+        return self._filter_by_regions(step1)
+
     def _maybe_raise_alarm(self, result: Any, detections: List[dict]) -> None:
         """
         告警判定：由 alert 包按 trigger_type 策略判断是否应触发；
-        再经告警间隔与同区域去重后决定是否推送。
+        告警间隔等状态全部由各算法 Trigger 内部维护，这里仅负责按算法分组与多算法快照复用。
         """
         if not detections or self.alarm_queue is None:
             return
 
         now_ts = float(getattr(result, "timestamp", time.time()))
-        prev = self._last_snapshot
-        prev_ts = prev.get("timestamp", 0.0) if prev else 0.0
 
-        context = TriggerContext(
-            now_ts=now_ts,
-            last_snapshot=prev,
-            last_snapshot_ts=prev_ts,
-            snapshot_window_sec=3.0,
-        )
-        if not self._alert_trigger.should_raise(detections, context):
+        # 按算法级别的告警策略判断是否需要触发：
+        # 先按 algorithm_id 分组 detections，再为每个算法调用其 Trigger。
+        grouped: Dict[str, List[dict]] = {}
+        for d in detections:
+            algo_id_raw = d.get("algorithm_id")
+            algo_id = str(algo_id_raw) if algo_id_raw is not None else ""
+            if not algo_id:
+                continue
+            grouped.setdefault(algo_id, []).append(d)
+
+        # 逐算法执行触发判断，收集最终需要发出的算法告警列表
+        alarms_to_emit: List[Dict[str, Any]] = []
+        for algo_id, dets in grouped.items():
+            trigger = self._algo_triggers.get(algo_id, self._default_trigger)
+            try:
+                should_raise = trigger.should_raise(dets, now_ts)
+                logger.info(f"算法 {algo_id} 告警触发判断: {should_raise}，now_ts: {now_ts}，detections: {dets}")
+                if not should_raise:
+                    continue
+
+                alarms_to_emit.append(
+                    {
+                        "algorithm_id": algo_id,
+                        "detections": dets,
+                    }
+                )
+            except Exception as e:
+                logger.error(f"算法 {algo_id} 告警触发判断异常: {e}")
+
+        if not alarms_to_emit:
             return
 
-        if now_ts - self._last_alarm_ts < self._alarm_interval_sec:
-            return
+        # 计算同一帧中算法告警数量，用于后续 Snapshot 上传去重
+        ref_total = len(alarms_to_emit)
 
-        if self._last_alarm_detections and bbox_utils.is_same_alarm_region(
-            detections, self._last_alarm_detections
-        ):
-            return
+        # 统一抓取一份本地截图，供多算法告警复用
+        local_snapshot_path = self._save_local_snapshot(result)
 
-        self._emit_alarm(result, detections, now_ts)
-        self._last_snapshot = {"timestamp": now_ts, "detections": list(detections)}
-        self._last_alarm_ts = now_ts
-        self._last_alarm_detections = list(detections)
+        # 逐算法输出告警
+        for item in alarms_to_emit:
+            algo_id = item["algorithm_id"]
+            dets = item["detections"]
+            self._emit_alarm(
+                result=result,
+                detections=dets,
+                ts=now_ts,
+                ref_total=ref_total,
+                local_snapshot_path=local_snapshot_path,
+            )
 
-    def _emit_alarm(self, result: Any, detections: List[dict], ts: float) -> None:
+    def _save_local_snapshot(self, result: Any) -> Optional[str]:
         """
-        组装清洗后的告警数据，并写入 Engine 内部告警队列，后续由 Scheduler 写 Redis。
-        同时在本地/对象存储中保存截图（使用 StorageInterface.save_image）。
+        从当前推理结果中抓取一份截图并保存到本地临时目录。
+        返回 local_snapshot_path，失败时返回 None。
         """
         try:
             frame = getattr(result, "frame", None)
         except Exception:
             frame = None
+        if frame is None:
+            return None
+
+        try:
+            import os
+            import cv2
+            from config.settings import settings
+            import uuid as _uuid
+
+            base_dir = getattr(settings, "LOCAL_STORAGE_PATH", ".")
+            temp_dir = os.path.join(base_dir, "alarm", "camera")
+            os.makedirs(temp_dir, exist_ok=True)
+            filename = f"{_uuid.uuid4().hex}.jpg"
+            local_path = os.path.join(temp_dir, filename)
+            cv2.imwrite(local_path, frame)
+            return local_path
+        except Exception as e:
+            logger.error(f"保存本地告警截图失败: camera_id={self.camera_id}, err={e}")
+            return None
+
+    def _emit_alarm(
+        self,
+        result: Any,
+        detections: List[dict],
+        ts: float,
+        ref_total: int = 1,
+        local_snapshot_path: Optional[str] = None,
+    ) -> None:
+        """
+        组装清洗后的告警数据，并写入 Engine 内部告警队列，后续由 Scheduler 写 Redis。
+        同时在本地/对象存储中保存截图（使用 StorageInterface.save_image）。
+        """
         # alarm_id = 32位uuid字符串
         alarm_id = uuid.uuid4().hex
-        # 1. 先将截图保存到本地临时目录：LOCAL_STORAGE_PATH + '/alarm/camera/{camera_id}.jpg'
-        local_snapshot_path = None
-        if frame is not None:
-            try:
-                import os
-                import cv2
-                from config.settings import settings
 
-                base_dir = getattr(settings, "LOCAL_STORAGE_PATH", ".")
-                temp_dir = os.path.join(base_dir, "alarm", "camera")
-                os.makedirs(temp_dir, exist_ok=True)
-                # 临时文件命名：每路摄像头一个文件，始终覆盖为最新一帧
-                filename = f"{alarm_id}.jpg"
-                local_snapshot_path = os.path.join(temp_dir, filename)
-                cv2.imwrite(local_snapshot_path, frame)
-            except Exception as e:
-                logger.error(f"保存本地告警截图失败: camera_id={self.camera_id}, err={e}")
-
-        # 取第一个算法作为主算法（后续可扩展为按 detection 关联）
-        algo = (self.algorithms or [None])[0] or {}
-        algorithm_id = algo.get("id")
-        # 从检测结果中尽量获取更友好的算法名称与代码（比如 algo_name / class_name）
+        # 取当前告警主算法：优先从检测结果的 algorithm_id 找到对应算法配置
         first_det = (detections or [None])[0] or {}
+        det_algo_id = first_det.get("algorithm_id")
+        algorithm_id: Optional[str] = None
+        model_id: Optional[str] = None
+        cfg: Dict[str, Any] = {}
+        if det_algo_id:
+            algo_id_str = str(det_algo_id)
+            for a in self.algorithms or []:
+                if str((a or {}).get("id") or "") == algo_id_str:
+                    algorithm_id = algo_id_str
+                    model_id = (a or {}).get("model_id")
+                    cfg = (a or {}).get("config") or {}
+                    break
+        # fallback：仍然兼容旧逻辑
+        if algorithm_id is None:
+            algo = (self.algorithms or [None])[0] or {}
+            algorithm_id = algo.get("id")
+            model_id = algo.get("model_id")
+            cfg = (algo or {}).get("config") or {}
+
+        # 从检测结果中尽量获取更友好的算法名称与代码（比如 algo_name / class_name）
         algorithm_name = first_det.get("algo_name") or ""
         algorithm_code = first_det.get("class_name") or ""
         # 额外输出模型维度与告警配置，便于前端展示与筛选
-        model_id = algo.get("model_id")
-        cfg = (algo or {}).get("config") or {}
         alert_config = cfg.get("alert_config") or {}
         regions = cfg.get("regions") or []
 
@@ -343,6 +428,8 @@ class ResultHandler:
             "detections": detections,
             # 本地临时截图路径，由 Scheduler 的告警转发线程上传到正式存储目录后再写入 snapshot_path
             "local_snapshot_path": local_snapshot_path,
+            # 同一 local_snapshot_path 预计会被引用的次数（多算法时用于上传去重与本地文件回收）
+            "local_snapshot_ref_total": max(1, int(ref_total)),
             # 告警配置与区域信息直接透出，前端可用于渲染与过滤
             "alert_config": alert_config,
             "regions": regions,

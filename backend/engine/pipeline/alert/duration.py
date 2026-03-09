@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-持续触发：同一目标持续存在 N 秒才触发（跨帧轨迹关联）
+持续触发：同一目标持续存在 N 秒才触发（跨帧轨迹关联）。
+内部自维护轨迹与告警间隔，无需外部上下文。
 """
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from .base import TriggerContext
 from .bbox_utils import calculate_iou
 
 DURATION_IOU_MATCH_THRESHOLD = 0.3
@@ -12,16 +12,26 @@ TRACK_EXPIRE_SEC = 5.0
 
 
 class DurationTrigger:
-    """有状态：维护每个目标的首次出现时间，持续 duration_seconds 后触发。"""
+    """有状态：维护每个目标的首次出现时间，持续 duration_seconds 后触发，并内置告警间隔控制。"""
 
-    def __init__(self, duration_seconds: float):
-        self.duration_seconds = max(0.0, float(duration_seconds))
+    def __init__(self, config: Dict[str, Any]):
+        self.duration_seconds = max(
+            0.0, float(config.get("duration_seconds") or 3.0)
+        )
+        # 同一算法的告警间隔（秒）
+        self.alarm_interval_sec: float = float(
+            config.get("alarm_interval_sec", 30.0)
+        )
         self._tracks: Dict[int, _Track] = {}
         self._alarmed: set = set()
         self._next_id = 0
+        self._last_alarm_ts: float = 0.0
 
-    def should_raise(self, detections: List[dict], context: TriggerContext) -> bool:
-        now_ts = context.now_ts
+    def should_raise(self, detections: List[dict], now_ts: float) -> bool:
+        # 告警节流：同一算法内部维护自己的间隔
+        if now_ts - self._last_alarm_ts < self.alarm_interval_sec:
+            return False
+
         self._prune_expired(now_ts)
 
         for d in detections:
@@ -33,11 +43,13 @@ class DurationTrigger:
             track_id = self._match_or_create_track(class_name, bbox_t, now_ts)
             if track_id is None:
                 continue
+            # 对同一 track 只告警一次；如需重复告警可移除此判断
             if track_id in self._alarmed:
                 continue
             first_ts = self._tracks[track_id].first_ts
             if now_ts - first_ts >= self.duration_seconds:
                 self._alarmed.add(track_id)
+                self._last_alarm_ts = now_ts
                 return True
 
         return False

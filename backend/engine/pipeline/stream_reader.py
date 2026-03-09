@@ -402,7 +402,8 @@ class StreamReader:
                         f"total_frames={self.total_frames}, "
                         f"inference_frames={self.inference_frames}, "
                         f"dropped_frames={self.dropped_frames}, "
-                        f"use_ffmpeg={self.use_ffmpeg}"
+                        f"use_ffmpeg={self.use_ffmpeg}",
+                        f"skip_frames={self.skip_frames}"
                     )
 
                 # 调试：在 StreamReader 内部用 FFmpeg 直接推到远端，用于定位播放延迟来源

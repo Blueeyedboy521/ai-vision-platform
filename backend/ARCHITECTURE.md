@@ -1557,6 +1557,30 @@ app = FastAPI(lifespan=lifespan)
 
 ---
 
+### 12.x 实现更新（v2.8.1）
+
+> 本小节补充说明告警链路在 v2.8.1 版本中的具体实现演进，与上文示例代码在细节上略有差异。
+
+- **告警检测数据结构统一为 detections 列表**  
+  Engine 在告警链路中直接将整帧推理结果中的 `detections: List[dict]` 写入 `alarm_data["detections"]`，`AlarmConsumer.save_alarm_to_db` 将其持久化到 `Alarm.detection_data (JSON)` 字段。  
+  前端通过 `/api/v1/alarms` 与 `/api/v1/alarms/{id}` 的 `detection_data` 字段拿到包含 `bbox / class_name / confidence / algorithm_id` 等信息的原始检测结果，用于在告警截图上绘制检测框并展示置信度。
+
+- **算法级告警触发策略与间隔下沉到 Trigger**  
+  告警触发逻辑抽象为 `AlertTrigger` 协议，内置三种策略：
+  `InstantTrigger`（立即触发）、`DurationTrigger`（持续触发）、`CountTrigger`（数量触发）。  
+  每个算法实例根据自身 `alert_config` 与 `alarm_interval_sec` 创建专属 Trigger，并在内部维护告警间隔与必要的历史状态（如持续时长/轨迹等）；`ResultHandler` 仅按 `algorithm_id` 将清洗后的 `detections` 分组，逐算法调用对应 Trigger 判定是否在当前帧触发告警。
+
+- **多算法共享快照的截图上传去重与回收**  
+  `ResultHandler` 在同一帧上可能为多个算法生成多条告警消息，这些告警共用同一份本地截图路径 `local_snapshot_path`，并通过 `local_snapshot_ref_total` 字段告知后续链路该截图预计会被复用的次数。  
+  `Scheduler._start_alarm_dispatcher` 内部维护 `uploaded_snapshots: {local_path -> {snapshot_path,total,seen}}` 缓存：  
+  首次遇到某个 `local_path` 时读取本地截图、绘制检测框并通过 `StorageInterface.save_image` 上传到正式存储，仅上传一次并写回统一的 `snapshot_path`；后续遇到相同 `local_path` 的告警只复用已上传路径并增加 `seen` 计数，当 `seen >= total` 时删除本地临时文件并清理缓存，避免多算法告警导致重复上传与磁盘泄漏。
+
+- **告警管理前端分页与前端绘框**  
+  告警管理页 `AlarmManagement.vue` 与首页实时告警卡片 `AlertList.vue` 均调用 `/alarms` 接口的分页能力（`page/page_size/page_info.total`），避免一次性加载所有历史告警；  
+  点击告警截图时会打开统一的 `ImageViewer` 组件，组件根据 `detection_data` 中的 `bbox` 与图片原始尺寸计算百分比坐标，在前端 Overlay 层绘制矩形框，并在标签中显示「类别 + 置信度」，实现端到端的可视化闭环。
+
+---
+
 ## 十三、配置热更新设计
 
 ### 12.1 热更新通信方式选择

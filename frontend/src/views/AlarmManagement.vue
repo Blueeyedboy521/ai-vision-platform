@@ -155,8 +155,8 @@
               class="alarm-thumb alarm-thumb--clickable"
               role="button"
               tabindex="0"
-              @click="openImageViewer(alarm.snapshotUrl)"
-              @keydown.enter="openImageViewer(alarm.snapshotUrl)"
+              @click="openImageViewer(alarm)"
+              @keydown.enter="openImageViewer(alarm)"
             >
               <img v-if="alarm.snapshotUrl" :src="alarm.snapshotUrl" alt="告警截图" />
               <div v-else class="alarm-thumb__placeholder">—</div>
@@ -218,11 +218,12 @@
       <n-pagination
         v-model:page="currentPage"
         :page-size="pageSize"
-        :item-count="filteredAlarms.length"
+        :item-count="pageInfo.total"
         show-size-picker
         show-quick-jumper
         :page-sizes="[10, 20, 50]"
         @update:page-size="handlePageSizeChange"
+        @update:page="handlePageChange"
       />
     </div>
 
@@ -271,8 +272,8 @@
               class="alarm-detail__img alarm-detail__img--clickable"
               role="button"
               tabindex="0"
-              @click="openImageViewer(currentAlarm.snapshotUrl || '/camera-warehouse-01.jpg')"
-              @keydown.enter="openImageViewer(currentAlarm.snapshotUrl || '/camera-warehouse-01.jpg')"
+              @click="openImageViewer(currentAlarm)"
+              @keydown.enter="openImageViewer(currentAlarm)"
             />
           </div>
         </div>
@@ -305,6 +306,7 @@
     <ImageViewer
       v-model:show="showImageViewer"
       :src="imageViewerSrc"
+      :detections="imageViewerDetections"
     />
 
     <!-- Settings Modal -->
@@ -376,6 +378,7 @@ interface Alarm {
   location?: string
   snapshotUrl?: string | null
   cameraId?: string
+  detectionData?: any | null
 }
 
 const message = useMessage()
@@ -419,9 +422,14 @@ const statusOptions = [
   { label: '已处理', value: 'resolved' }
 ]
 
-// Pagination
+// Pagination（服务端分页）
 const currentPage = ref(1)
 const pageSize = ref(10)
+const pageInfo = ref<{ page: number; page_size: number; total: number }>({
+  page: 1,
+  page_size: 10,
+  total: 0,
+})
 
 // Modal
 const showDetailModal = ref(false)
@@ -435,9 +443,12 @@ const currentPlayUrl = ref<string | null>(null)
 // 图片查看弹框（点击告警截图放大，支持滚轮缩放、拖拽平移）
 const showImageViewer = ref(false)
 const imageViewerSrc = ref<string | null>(null)
-function openImageViewer(url: string | null | undefined) {
-  if (!url) return
-  imageViewerSrc.value = url
+const imageViewerDetections = ref<any[] | null>(null)
+function openImageViewer(alarm: Alarm | null | undefined) {
+  if (!alarm || !alarm.snapshotUrl) return
+  imageViewerSrc.value = alarm.snapshotUrl
+  // detection_data 中通常为包含 bbox 等信息的数组，供前端绘框使用
+  imageViewerDetections.value = (alarm.detectionData as any[]) || null
   showImageViewer.value = true
 }
 const livePlayingId = ref<string | null>(null)
@@ -458,7 +469,7 @@ const refreshOptions = [
   { label: '5分钟', value: 300 }
 ]
 
-// Alarm data（从后端接口加载）
+// Alarm data（从后端接口加载，已分页）
 const alarms = ref<Alarm[]>([])
 
 // 将接口 Alarm 转换为本页使用的 Alarm 结构
@@ -480,16 +491,26 @@ function convertApiAlarm(a: ApiAlarm): Alarm {
     location: undefined,
     snapshotUrl: (a as any).snapshot_url ?? (a as any).snapshotUrl ?? null,
     cameraId: a.camera_id,
+    detectionData: (a as any).detection_data ?? null,
   }
 }
 
-// 从后端加载告警列表
-async function loadAlarms() {
+// 从后端加载告警列表（服务端分页）
+async function loadAlarms(page = currentPage.value, size = pageSize.value) {
   try {
+    currentPage.value = page
+    pageSize.value = size
     // 后端 page_size 最大 100
-    const res = await getAlarmList({ page: 1, page_size: 10 })
-    const items = (res.data.data || []) as ApiAlarm[]
+    const res = await getAlarmList({ page, page_size: size })
+    const payload = res.data as any
+    const items = (payload.data || []) as ApiAlarm[]
     alarms.value = items.map(convertApiAlarm)
+    const pi = (payload.page_info as any) || {}
+    pageInfo.value = {
+      page: pi.page ?? page,
+      page_size: pi.page_size ?? size,
+      total: pi.total ?? items.length,
+    }
   } catch (e) {
     message.error('加载告警列表失败')
     console.error(e)
@@ -514,6 +535,7 @@ async function loadAlarmStats() {
   }
 }
 
+// 过滤仅作用于当前页（如需全量过滤可改为后端查询）
 const filteredAlarms = computed(() => {
   return alarms.value.filter(alarm => {
     if (filters.value.level && alarm.level !== filters.value.level) return false
@@ -527,10 +549,8 @@ const filteredAlarms = computed(() => {
   })
 })
 
-const paginatedAlarms = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  return filteredAlarms.value.slice(start, start + pageSize.value)
-})
+// 当前页数据直接来自服务端 + 本地过滤，不再二次切片
+const paginatedAlarms = computed(() => filteredAlarms.value)
 
 const selectedCount = computed(() => alarms.value.filter(a => a.selected).length)
 const isAllSelected = computed(() => paginatedAlarms.value.length > 0 && paginatedAlarms.value.every(a => a.selected))
@@ -562,9 +582,12 @@ function handleSelectAll(checked: boolean) {
   paginatedAlarms.value.forEach(a => a.selected = checked)
 }
 
-function handlePageSizeChange(size: number) {
-  pageSize.value = size
-  currentPage.value = 1
+async function handlePageSizeChange(size: number) {
+  await loadAlarms(1, size)
+}
+
+async function handlePageChange(page: number) {
+  await loadAlarms(page, pageSize.value)
 }
 
 function viewAlarm(alarm: Alarm) {
@@ -677,7 +700,7 @@ function saveSettings() {
 
 // 初始化加载
 onMounted(() => {
-  loadAlarms()
+  loadAlarms(1, pageSize.value)
   loadAlarmStats()
 })
 </script>

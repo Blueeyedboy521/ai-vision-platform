@@ -34,8 +34,9 @@ class InferenceService:
         self.result_queues = result_queues
 
         self.workers: Dict[str, List[InferenceWorker]] = {}  # model_id -> workers
-        # 记录“当前有哪些摄像头在使用哪个模型”，供内部自行计数与扩缩容
-        self._camera_model: Dict[str, str] = {}  # camera_id -> model_id
+        # 记录“当前有哪些摄像头在使用哪些模型”，供内部自行计数与扩缩容
+        # camera_id -> set(model_id)
+        self._camera_models: Dict[str, set[str]] = {}
         self.running: bool = False
 
     # ==== 生命周期 ====
@@ -85,16 +86,22 @@ class InferenceService:
         if not model_id:
             return
 
-        # 1. 更新 camera -> model 映射（若原来绑定的是其他 model，可认为切换模型）
-        prev_model = self._camera_model.get(camera_id)
-        self._camera_model[camera_id] = model_id
+        # 1. 更新 camera -> models 映射（同一摄像头可绑定多个模型）
+        models = self._camera_models.get(camera_id)
+        if models is None:
+            models = set()
+            self._camera_models[camera_id] = models
+        models.add(model_id)
 
         # 2. 基于最新映射重新统计每个模型被多少摄像头使用
         model_usage: Dict[str, int] = {}
-        for cam, mid in self._camera_model.items():
-            if not mid:
+        for _cam, mids in self._camera_models.items():
+            if not mids:
                 continue
-            model_usage[mid] = model_usage.get(mid, 0) + 1
+            for mid in mids:
+                if not mid:
+                    continue
+                model_usage[mid] = model_usage.get(mid, 0) + 1
 
         # 3. 调整各模型 Worker 数量
         self._reconcile_workers(model_usage)
@@ -114,17 +121,20 @@ class InferenceService:
         if not self.running:
             return
 
-        # 1. 移除 camera -> model 绑定
-        prev_model = self._camera_model.pop(camera_id, None)
-        if not prev_model:
+        # 1. 移除 camera -> models 绑定
+        prev_models = self._camera_models.pop(camera_id, None)
+        if not prev_models:
             return
 
         # 2. 基于最新映射重新统计每个模型被多少摄像头使用
         model_usage: Dict[str, int] = {}
-        for cam, mid in self._camera_model.items():
-            if not mid:
+        for _cam, mids in self._camera_models.items():
+            if not mids:
                 continue
-            model_usage[mid] = model_usage.get(mid, 0) + 1
+            for mid in mids:
+                if not mid:
+                    continue
+                model_usage[mid] = model_usage.get(mid, 0) + 1
 
         # 3. 调整各模型 Worker 数量
         self._reconcile_workers(model_usage)

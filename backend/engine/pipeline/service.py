@@ -9,12 +9,59 @@ PipelineService
 - 根据 Scheduler 传入的状态（has_algorithms / is_live / is_infer）决定目标模式
 - 调用 Pipeline.start/stop/set_mode，内部管理 StreamReader/StreamWriter/ResultHandler 线程
 """
-from typing import Dict, Optional
+from typing import Dict, Optional, Any, List
+from queue import Full
 
 from loguru import logger
 
 from engine.queue.memory_queue import MemoryQueue
 from .pipeline import Pipeline, PipelineConfig
+
+
+class _MultiModelRequestQueue:
+    """
+    伪装成单队列接口的多模型分发队列：
+    - StreamReader 仍然认为自己在往一个 request_queue 里写
+    - 内部根据摄像头当前启用算法列表，将同一个 request 分发到多个 model_id 对应的真实队列
+    """
+
+    def __init__(
+        self,
+        camera_id: str,
+        cameras: Dict[str, object],
+        request_queues: Dict[str, MemoryQueue],
+        maxsize: int = 2,
+    ) -> None:
+        self.camera_id = camera_id
+        self.cameras = cameras
+        self.request_queues = request_queues
+        self.maxsize = maxsize
+
+    def _get_model_ids(self) -> List[str]:
+        camera = self.cameras.get(self.camera_id)
+        if not camera:
+            return []
+        algos = getattr(camera, "algorithms", None) or []
+        ids = []
+        for a in algos:
+            mid = (a or {}).get("model_id")
+            if mid and mid not in ids:
+                ids.append(str(mid))
+        return ids
+
+    def put_nowait(self, request: Any) -> None:
+        model_ids = self._get_model_ids()
+        if not model_ids:
+            return
+        for model_id in model_ids:
+            if model_id not in self.request_queues:
+                self.request_queues[model_id] = MemoryQueue(maxsize=self.maxsize)
+            q = self.request_queues[model_id]
+            try:
+                q.put_nowait(request)
+            except Full:
+                # 丢弃该模型本次请求，不影响其他模型
+                logger.debug(f"MultiModelRequestQueue 丢弃请求: camera_id={self.camera_id}, model_id={model_id}")
 
 
 class PipelineService:
@@ -165,14 +212,14 @@ class PipelineService:
         )
 
         # 获取/创建相关队列
-        request_queue: Optional[MemoryQueue] = None
+        request_queue: Optional[Any] = None
         if mode in ("full", "inference_only") and camera.algorithms:
-            model_id = camera.algorithms[0].get("model_id")
-            if model_id:
-                if model_id not in self.request_queues:
-                    logger.info(f"PipelineService: 为模型{model_id} 创建请求队列（首次启用算法）")
-                    self.request_queues[model_id] = MemoryQueue(maxsize=100)
-                request_queue = self.request_queues.get(model_id)
+            # 多模型支持：为同一摄像头绑定的所有模型分发相同请求
+            request_queue = _MultiModelRequestQueue(
+                camera_id=camera_id,
+                cameras=self.cameras,
+                request_queues=self.request_queues,
+            )
 
         result_queue = self.result_queues.get(camera_id)
         if result_queue is None:

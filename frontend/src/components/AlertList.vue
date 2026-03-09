@@ -17,8 +17,8 @@
           class="alert-thumb alert-thumb--clickable"
           role="button"
           tabindex="0"
-          @click="openImageViewer(item.thumb)"
-          @keydown.enter="openImageViewer(item.thumb)"
+          @click="openImageViewer(item)"
+          @keydown.enter="openImageViewer(item)"
         >
           <img :src="item.thumb" :alt="item.title" />
           <span class="live-badge">LIVE</span>
@@ -57,6 +57,7 @@
     <ImageViewer
       v-model:show="showImageViewer"
       :src="imageViewerSrc"
+      :detections="imageViewerDetections"
     />
   </div>
 </template>
@@ -76,6 +77,7 @@ interface AlertItem {
   location: string
   timeAgo: string
   datetime: string
+  detectionData?: any | null
 }
 
 const router = useRouter()
@@ -83,8 +85,11 @@ const alerts = ref<AlertItem[]>([])
 
 const showImageViewer = ref(false)
 const imageViewerSrc = ref<string | null>(null)
-function openImageViewer(url: string) {
-  imageViewerSrc.value = url
+const imageViewerDetections = ref<any[] | null>(null)
+function openImageViewer(item: AlertItem) {
+  if (!item.thumb) return
+  imageViewerSrc.value = item.thumb
+  imageViewerDetections.value = (item.detectionData as any[]) || null
   showImageViewer.value = true
 }
 
@@ -128,7 +133,8 @@ async function loadAlerts() {
       levelText: levelText(a.level),
       location: a.camera_name || a.camera_id,
       timeAgo: timeAgoFromIso(a.alarm_time),
-      datetime: a.alarm_time?.replace('T', ' ') || a.created_at
+      datetime: a.alarm_time?.replace('T', ' ') || a.created_at,
+      detectionData: (a as any).detection_data ?? null,
     }))
   } catch (e) {
     console.error('加载首页告警列表失败:', e)

@@ -76,6 +76,18 @@
               <span v-if="streamInfo.fps"> · {{ streamInfo.fps }} fps</span>
               <span v-if="streamInfo.resolution"> · {{ streamInfo.resolution }}</span>
             </div>
+            <div class="form-field__row">
+              <div class="form-field form-field--flex">
+                <label class="form-field__label">识别间隔(秒)</label>
+                <n-input-number
+                  v-model:value="formData.inferenceIntervalSec"
+                  :min="1"
+                  :max="3600"
+                  placeholder="例如：5（每 5 秒推理一次）"
+                  style="width: 100%"
+                />
+              </div>
+            </div>
           </div>
         </section>
         </div>
@@ -160,7 +172,6 @@
               <span class="algorithm-list__col algorithm-list__col--enable">启用</span>
               <span class="algorithm-list__col algorithm-list__col--name">算法类型</span>
               <span class="algorithm-list__col algorithm-list__col--confidence">置信度 (%)</span>
-              <span class="algorithm-list__col algorithm-list__col--interval">识别间隔(秒)</span>
               <span class="algorithm-list__col algorithm-list__col--alarm-int">告警间隔(秒)</span>
               <span class="algorithm-list__col algorithm-list__col--strategy">告警策略</span>
               <span class="algorithm-list__col algorithm-list__col--region">检测范围</span>
@@ -191,17 +202,6 @@
                   />
                   <span class="algorithm-list__confidence-value">{{ algo.confidence }}%</span>
                 </div>
-                <div class="algorithm-list__col algorithm-list__col--interval">
-                  <n-input-number
-                    v-model:value="algo.inferenceIntervalSec"
-                    :min="1"
-                    :max="300"
-                    :disabled="!algo.enabled"
-                    size="small"
-                    placeholder="5"
-                    style="width: 72px"
-                  />
-                </div>
                 <div class="algorithm-list__col algorithm-list__col--alarm-int">
                   <n-input-number
                     v-model:value="algo.alarmIntervalSec"
@@ -212,7 +212,6 @@
                     placeholder="30"
                     style="width: 72px"
                   />
-                  <span v-if="algo.enabled && (algo.alarmIntervalSec || 0) < (algo.inferenceIntervalSec || 5)" class="algorithm-list__hint">须≥识别间隔</span>
                 </div>
                 <div class="algorithm-list__col algorithm-list__col--strategy">
                   <n-button
@@ -478,7 +477,6 @@ interface Algorithm {
   nameEn?: string
   enabled: boolean
   confidence: number
-  inferenceIntervalSec: number
   alarmIntervalSec: number
   alertConfigOverride?: AlertStrategyConfig | null
   effectiveAlertConfig?: AlertStrategyConfig
@@ -507,7 +505,8 @@ const formData = ref({
   location: null as string | null,
   rtspUrl: '',
   fps: null as number | null,
-  resolution: null as string | null
+  resolution: null as string | null,
+  inferenceIntervalSec: null as number | null
 })
 
 const message = useMessage()
@@ -877,7 +876,8 @@ async function loadCameraDetail(id: string) {
       location: c.area_id ?? null,
       rtspUrl: c.rtsp_url ?? '',
       fps: c.fps ?? null,
-      resolution: c.resolution ?? null
+      resolution: c.resolution ?? null,
+      inferenceIntervalSec: (c as any).inference_interval_sec ?? null
     }
     if (c.snapshot_url) {
       const base = import.meta.env.VITE_API_BASE_URL || ''
@@ -1009,7 +1009,6 @@ function syncAlgorithmsFromConfigs() {
       (cfg as any).effective_confidence ??
       (cfg as any).confidence ??
       0.9
-    const inferenceSec = (cfg as any).inference_interval_sec ?? 5
     const alarmSec = (cfg as any).alarm_interval_sec ?? 30
     const rawAlert = (cfg as any).alert_config as Record<string, unknown> | null | undefined
     const rawEffective = (cfg as any).effective_alert_config as Record<string, unknown> | undefined
@@ -1030,7 +1029,6 @@ function syncAlgorithmsFromConfigs() {
       name: cfg.algorithm_name || cfg.algorithm_id,
       enabled: cfg.is_enabled,
       confidence: Math.round(conf * 100),
-      inferenceIntervalSec: inferenceSec,
       alarmIntervalSec: alarmSec,
       alertConfigOverride: rawAlert ? toStrategy(rawAlert) ?? undefined : null,
       effectiveAlertConfig: toStrategy(rawEffective || rawAlert),
@@ -1052,7 +1050,7 @@ onMounted(() => {
 watch(() => props.cameraId, (id) => {
   if (id) loadCameraDetail(id)
   else {
-    formData.value = { name: '', location: null, rtspUrl: '', fps: null, resolution: null }
+    formData.value = { name: '', location: null, rtspUrl: '', fps: null, resolution: null, inferenceIntervalSec: null }
     streamInfo.value = null
     previewImage.value = '/camera-warehouse-01.jpg'
     snapshots.value = []
@@ -1071,6 +1069,7 @@ async function handleSave() {
     rtspUrl: formData.value.rtspUrl,
     fps: formData.value.fps ?? undefined,
     resolution: formData.value.resolution ?? undefined,
+    inferenceIntervalSec: formData.value.inferenceIntervalSec ?? undefined,
     algorithms: algorithms.value.filter(a => a.enabled)
   }
 
@@ -1084,16 +1083,11 @@ async function handleSave() {
       const payload: {
         confidence?: number
         is_enabled?: boolean
-        inference_interval_sec?: number
         alarm_interval_sec?: number
       } = {
         confidence: algo.confidence / 100,
         is_enabled: algo.enabled,
-        inference_interval_sec: Math.max(1, Math.min(300, algo.inferenceIntervalSec ?? 5)),
         alarm_interval_sec: Math.max(1, Math.min(3600, algo.alarmIntervalSec ?? 30))
-      }
-      if ((payload.alarm_interval_sec as number) < (payload.inference_interval_sec as number)) {
-        payload.alarm_interval_sec = payload.inference_interval_sec
       }
       updatePromises.push(
         updateCameraAlgorithmConfig(cameraId, algo.configId, payload)

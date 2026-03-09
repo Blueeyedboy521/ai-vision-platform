@@ -27,7 +27,7 @@ class AlarmResponse(BaseModel):
     alarm_time: datetime = Field(description="告警时间")
     snapshot_url: Optional[str] = Field(description="告警截图URL")
     video_url: Optional[str] = Field(description="告警视频URL")
-    detection_data: Dict[str, Any] = Field(description="检测数据")
+    detection_data: Any = Field(description="检测数据（通常为检测结果列表）")
     status: str = Field(description="处理状态")
     confirmed_by: Optional[str] = Field(description="确认人ID")
     confirmed_at: Optional[datetime] = Field(description="确认时间")

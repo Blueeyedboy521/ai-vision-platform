@@ -73,6 +73,12 @@ class CameraBase(BaseModel):
         le=60,
         description="帧率"
     )
+    inference_interval_sec: int = Field(
+        default=5,
+        ge=1,
+        le=3600,
+        description="识别间隔(秒)，控制该摄像头推理抽帧频率"
+    )
     resolution: Optional[str] = Field(
         default=None,
         max_length=20,
@@ -150,6 +156,12 @@ class CameraUpdate(BaseModel):
         le=60,
         description="帧率"
     )
+    inference_interval_sec: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=3600,
+        description="识别间隔(秒)，控制该摄像头推理抽帧频率"
+    )
     resolution: Optional[str] = Field(
         default=None,
         description="分辨率"
@@ -179,6 +191,7 @@ class CameraResponse(BaseModel):
     longitude: Optional[float] = Field(description="经度")
     latitude: Optional[float] = Field(description="纬度")
     fps: int = Field(description="帧率")
+    inference_interval_sec: int = Field(description="识别间隔(秒)")
     resolution: Optional[str] = Field(description="分辨率")
     is_enabled: bool = Field(description="是否启用")
     status: str = Field(description="在线状态")
