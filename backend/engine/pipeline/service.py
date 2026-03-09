@@ -150,6 +150,8 @@ class PipelineService:
             self.pipeline_modes[camera_id] = mode
             return
 
+        # 算法配置由 Scheduler 按事件从 Redis 刷新到 self.cameras，此处直接使用
+        algorithms = camera.algorithms if mode != "live_only" else []
         # 构造 PipelineConfig
         pipeline_config = PipelineConfig(
             camera_id=camera.id,
@@ -157,7 +159,7 @@ class PipelineService:
             rtsp_url=camera.rtsp_url,
             fps=camera.fps,
             skip_frames=camera.skip_frames,
-            algorithms=camera.algorithms if mode != "live_only" else [],
+            algorithms=algorithms,
             mode=mode,
             draw_model=self._build_draw_model(camera),
         )

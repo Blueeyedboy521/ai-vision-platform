@@ -173,6 +173,18 @@ class CameraAlgorithmBase(BaseModel):
         default=None,
         description="检测区域"
     )
+    inference_interval_sec: Optional[int] = Field(
+        default=5,
+        ge=1,
+        le=300,
+        description="识别间隔(秒)，控制后台算法抽帧分析间隔"
+    )
+    alarm_interval_sec: Optional[int] = Field(
+        default=30,
+        ge=1,
+        le=3600,
+        description="告警间隔(秒)，同一告警在此间隔内不重复推送，须>=识别间隔"
+    )
 
 
 class CameraAlgorithmCreate(CameraAlgorithmBase):
@@ -209,6 +221,18 @@ class CameraAlgorithmUpdate(BaseModel):
         default=None,
         description="是否启用"
     )
+    inference_interval_sec: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=300,
+        description="识别间隔(秒)"
+    )
+    alarm_interval_sec: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=3600,
+        description="告警间隔(秒)"
+    )
 
 
 class CameraAlgorithmResponse(BaseModel):
@@ -228,6 +252,8 @@ class CameraAlgorithmResponse(BaseModel):
     alert_config: Optional[Dict[str, Any]] = Field(description="告警配置")
     effective_alert_config: Dict[str, Any] = Field(description="生效的告警配置")
     regions: List[List[List[float]]] = Field(description="检测区域")
+    inference_interval_sec: int = Field(default=5, description="识别间隔(秒)")
+    alarm_interval_sec: int = Field(default=30, description="告警间隔(秒)")
     is_enabled: bool = Field(description="是否启用")
     created_at: datetime = Field(description="创建时间")
     updated_at: datetime = Field(description="更新时间")

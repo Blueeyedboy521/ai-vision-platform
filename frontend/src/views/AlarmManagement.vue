@@ -151,7 +151,13 @@
             </span>
           </div>
           <div class="alarm-list__col alarm-list__col--thumb">
-            <div class="alarm-thumb">
+            <div
+              class="alarm-thumb alarm-thumb--clickable"
+              role="button"
+              tabindex="0"
+              @click="openImageViewer(alarm.snapshotUrl)"
+              @keydown.enter="openImageViewer(alarm.snapshotUrl)"
+            >
               <img v-if="alarm.snapshotUrl" :src="alarm.snapshotUrl" alt="告警截图" />
               <div v-else class="alarm-thumb__placeholder">—</div>
             </div>
@@ -262,7 +268,11 @@
             <img
               :src="currentAlarm.snapshotUrl || '/camera-warehouse-01.jpg'"
               alt="告警截图"
-              class="alarm-detail__img"
+              class="alarm-detail__img alarm-detail__img--clickable"
+              role="button"
+              tabindex="0"
+              @click="openImageViewer(currentAlarm.snapshotUrl || '/camera-warehouse-01.jpg')"
+              @keydown.enter="openImageViewer(currentAlarm.snapshotUrl || '/camera-warehouse-01.jpg')"
             />
           </div>
         </div>
@@ -290,6 +300,12 @@
         />
       </div>
     </n-modal>
+
+    <!-- 图片查看（缩放/平移） -->
+    <ImageViewer
+      v-model:show="showImageViewer"
+      :src="imageViewerSrc"
+    />
 
     <!-- Settings Modal -->
     <n-modal 
@@ -344,6 +360,7 @@ import {
 } from '@vicons/ionicons5'
 import { getAlarmList, getAlarmStatistics, type Alarm as ApiAlarm, type AlarmStatistics } from '@/api/alarm'
 import FlvPlayer from '@/components/FlvPlayer.vue'
+import ImageViewer from '@/components/ImageViewer.vue'
 import { getCameraPlayUrls, startCamera, stopCamera, cameraLiveHeartbeat } from '@/api/camera'
 import { useUserStore } from '@/stores/user'
 
@@ -414,6 +431,15 @@ const currentAlarm = ref<Alarm | null>(null)
 // Live player modal (reuse camera management approach)
 const showPlayer = ref(false)
 const currentPlayUrl = ref<string | null>(null)
+
+// 图片查看弹框（点击告警截图放大，支持滚轮缩放、拖拽平移）
+const showImageViewer = ref(false)
+const imageViewerSrc = ref<string | null>(null)
+function openImageViewer(url: string | null | undefined) {
+  if (!url) return
+  imageViewerSrc.value = url
+  showImageViewer.value = true
+}
 const livePlayingId = ref<string | null>(null)
 let liveHeartbeatTimer: number | null = null
 
@@ -461,7 +487,7 @@ function convertApiAlarm(a: ApiAlarm): Alarm {
 async function loadAlarms() {
   try {
     // 后端 page_size 最大 100
-    const res = await getAlarmList({ page: 1, page_size: 100 })
+    const res = await getAlarmList({ page: 1, page_size: 10 })
     const items = (res.data.data || []) as ApiAlarm[]
     alarms.value = items.map(convertApiAlarm)
   } catch (e) {
@@ -907,6 +933,13 @@ onMounted(() => {
   border-radius: var(--radius-lg);
   object-fit: contain;
 }
+.alarm-detail__img--clickable {
+  cursor: zoom-in;
+}
+.alarm-detail__img--clickable:hover {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
 
 /* Alarm list thumbnail */
 .alarm-list__col--thumb { width: 96px; flex: 0 0 96px; }
@@ -919,6 +952,14 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.alarm-thumb--clickable {
+  cursor: pointer;
+}
+.alarm-thumb--clickable:hover {
+  opacity: 0.9;
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
 }
 .alarm-thumb img {
   width: 100%;

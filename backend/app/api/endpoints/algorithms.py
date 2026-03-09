@@ -354,6 +354,8 @@ async def get_camera_algorithm_configs(
             "alert_config": config.alert_config,
             "effective_alert_config": config.get_effective_alert_config(),
             "regions": config.regions,
+            "inference_interval_sec": getattr(config, "inference_interval_sec", 5),
+            "alarm_interval_sec": getattr(config, "alarm_interval_sec", 30),
             "is_enabled": config.is_enabled,
             "created_at": config.created_at.isoformat(),
             "updated_at": config.updated_at.isoformat()
@@ -404,6 +406,8 @@ async def create_camera_algorithm_config(
         model_id=config_data.model_id,
         confidence=config_data.confidence,
         is_enabled=config_data.is_enabled,
+        inference_interval_sec=getattr(config_data, "inference_interval_sec", None) or 5,
+        alarm_interval_sec=getattr(config_data, "alarm_interval_sec", None) or 30,
         created_by=current_user.id,
         updated_by=current_user.id
     )
@@ -431,6 +435,8 @@ async def create_camera_algorithm_config(
                     "confidence": effective_confidence,
                     "alert_config": effective_alert_config,
                     "regions": regions,
+                    "inference_interval_sec": config.inference_interval_sec,
+                    "alarm_interval_sec": config.alarm_interval_sec,
                     "is_enabled": config.is_enabled,
                 },
                 ensure_ascii=False,
@@ -498,9 +504,9 @@ async def update_camera_algorithm_config(
     await db.commit()
     # 无需 refresh：下面用 config 自身属性即可，避免懒加载
 
-    # 更新 Redis 中的摄像头-算法配置（用当前覆盖值，避免访问 relationship）
+    # 更新 Redis 中的摄像头-算法配置（alert_config 用合并后的生效配置，空覆盖时回退算法默认）
     effective_confidence = config.confidence if config.confidence is not None else 0.5
-    effective_alert_config = config.alert_config or {}
+    effective_alert_config = config.get_effective_alert_config()
     try:
         redis = get_redis()
         await redis.client.set(
@@ -513,6 +519,8 @@ async def update_camera_algorithm_config(
                     "confidence": effective_confidence,
                     "alert_config": effective_alert_config,
                     "regions": config.regions,
+                    "inference_interval_sec": getattr(config, "inference_interval_sec", 5),
+                    "alarm_interval_sec": getattr(config, "alarm_interval_sec", 30),
                     "is_enabled": config.is_enabled,
                 },
                 ensure_ascii=False,

@@ -366,8 +366,8 @@ function convertCamera(camera: Camera): CameraInfo {
     location: camera.area_name || '未分配',
     ip: camera.ip_address || '-',
     thumbnail: thumb,
-    // 在线状态直接使用后端返回的 online 字段，fallback 到 status 仅为兼容旧数据
-    online: (camera as any).online ?? (camera.status === 'online'),
+    // 在线状态：后端从 Redis camera:online:{id} 读取
+    online: camera.online ?? (camera.status === 'online'),
     algorithmEnabled: ((camera as any).algorithm_count ?? 0) > 0,
     inferenceStarted: (camera as any).inference_started ?? (camera as any).inferenceStarted ?? false
   }
@@ -583,8 +583,6 @@ async function handleSaveCamera(data: any) {
       name: data.name || '新摄像头',
       area_id: isUuid ? areaId : undefined,
       rtsp_url: data.rtspUrl,
-      rtsp_username: data.username || undefined,
-      rtsp_password: data.password || undefined,
       ip_address: ipMatch ? ipMatch[0] : undefined,
       is_enabled: true,
       ...(data.fps != null && { fps: data.fps }),

@@ -13,6 +13,8 @@ from queue import Full
 
 import numpy as np
 from loguru import logger
+
+from engine.utils.ffmpeg_path import resolve_ffmpeg_path, resolve_ffprobe_path
 from datetime import datetime
 
 # 可选：OpenCV 仅作备用
@@ -32,8 +34,10 @@ def _probe_rtsp_resolution(rtsp_url: str, timeout_sec: int = 10) -> Tuple[int, i
         (width, height)，失败时返回 (1920, 1080) 作为默认。
     """
     try:
+        from config.settings import settings
+        ffprobe_exe = resolve_ffprobe_path(settings.FFPROBE_PATH or None)
         cmd = [
-            "ffprobe",
+            ffprobe_exe,
             "-v", "error",
             "-select_streams", "v:0",
             "-show_entries", "stream=width,height",
@@ -178,9 +182,11 @@ class StreamReader:
         self._push_width, self._push_height = w, h
 
         try:
+            from config.settings import settings
+            ffmpeg_exe = resolve_ffmpeg_path(settings.FFMPEG_PATH or None)
             self._close_push_ffmpeg()
             cmd = [
-                "ffmpeg",
+                ffmpeg_exe,
                 "-y",
                 "-fflags", "nobuffer",
                 "-flags", "low_delay",
@@ -250,12 +256,14 @@ class StreamReader:
     def _connect_ffmpeg(self) -> bool:
         """使用 FFmpeg 子进程拉 RTSP，输出 rawvideo BGR24 到 pipe"""
         try:
+            from config.settings import settings
+            ffmpeg_exe = resolve_ffmpeg_path(settings.FFMPEG_PATH or None)
             self._close_ffmpeg()
             width, height = _probe_rtsp_resolution(self.rtsp_url)
             self._ffmpeg_width = width
             self._ffmpeg_height = height
             cmd = [
-                "ffmpeg",
+                ffmpeg_exe,
                 "-y",
                 "-rtsp_transport", "tcp",
                 # 低延迟拉流参数

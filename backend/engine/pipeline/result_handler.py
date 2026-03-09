@@ -16,7 +16,10 @@ from loguru import logger
 
 from .overlay_state import OverlayState
 from engine.utils.region import RegionDetector
+from .alert import get_trigger, TriggerContext, bbox_utils
 import uuid
+
+
 class ResultHandler:
     """
     结果处理线程
@@ -62,7 +65,30 @@ class ResultHandler:
         self.alarm_queue = alarm_queue
         # 上一次用于比对的检测快照（用于 3 秒窗口内的结果对比）
         self._last_snapshot: Optional[Dict[str, Any]] = None
-        
+        # 告警间隔(秒)：从算法配置取最大值；同一告警在此间隔后若区域偏差小则视为同一条不重复推送
+        self._alarm_interval_sec = 30.0
+        if algorithms:
+            secs = [
+                float((a.get("config") or {}).get("alarm_interval_sec", 30))
+                for a in algorithms
+            ]
+            if secs:
+                self._alarm_interval_sec = max(secs)
+        # 上一条告警的时间与检测结果，用于间隔后同区域判定
+        self._last_alarm_ts: float = 0.0
+        self._last_alarm_detections: List[dict] = []
+
+        # 告警触发策略（从算法 alert_config 取 trigger_type，高内聚由 alert 包实现）
+        alert_config = {}
+        if algorithms:
+            for a in algorithms:
+                cfg = (a.get("config") or {}).get("alert_config") or {}
+                if cfg:
+                    alert_config = cfg
+                    break
+        trigger_type = (alert_config.get("trigger_type") or "instant").strip().lower()
+        self._alert_trigger = get_trigger(trigger_type, alert_config)
+
         # 统计
         self.processed_results = 0
         self.generated_alarms = 0
@@ -114,7 +140,8 @@ class ResultHandler:
                 try:
                     cleaned = self._clean_detections(result, detections)
                     if cleaned:
-                        self._maybe_raise_alarm(result, cleaned)
+                        # self._maybe_raise_alarm(result, cleaned)
+                        pass
                 except Exception as e:
                     logger.error(f"ResultHandler 告警清洗异常: {e}")
                 
@@ -158,7 +185,7 @@ class ResultHandler:
                         default_threshold = float(conf)
             except Exception:
                 continue
-
+        logger.debug(f"algo_thresholds: {algo_thresholds}, default_threshold: {default_threshold}")
         filtered: List[dict] = []
         for d in detections:
             conf = float(d.get("confidence", 0.0))
@@ -168,12 +195,16 @@ class ResultHandler:
             if conf >= thr:
                 filtered.append(d)
 
-        # 2. 区域过滤：若任一算法配置了 regions，则仅保留在这些区域内的目标
-        regions = []
+        # 2. 区域过滤：按算法维度，每个算法有自己的 regions；检测结果用其 algorithm_id 对应的区域判断
+        # regions_by_algo: algorithm_id -> list of polygons (每个 polygon 为 (x,y) 元组列表)
+        regions_by_algo: Dict[str, List[List[tuple]]] = {}
         for algo in self.algorithms or []:
+            algo_id = str((algo or {}).get("id") or "")
+            if not algo_id:
+                continue
             cfg = (algo or {}).get("config") or {}
+            polygons: List[List[tuple]] = []
             for reg in cfg.get("regions") or []:
-                # 约定: reg = {"points": [{"x":0.1,"y":0.2}, ...]} 或 [[x,y],...]
                 pts = reg.get("points") if isinstance(reg, dict) else reg
                 if not pts:
                     continue
@@ -190,21 +221,29 @@ class ResultHandler:
                     except Exception:
                         continue
                 if len(norm_points) >= 3:
-                    regions.append(norm_points)
+                    polygons.append(norm_points)
+            if polygons:
+                regions_by_algo[algo_id] = polygons
 
-        if not regions:
+        if not regions_by_algo:
             return filtered
 
-        # 假设 bbox 与区域点使用同一坐标系（若为归一化坐标，需在上游统一）
-        detectors = [RegionDetector(polygon=pts) for pts in regions]
+        # 每个 detection 按其 algorithm_id 取对应算法的区域做过滤
         result2: List[dict] = []
         for d in filtered:
             bbox = d.get("bbox") or []
             if len(bbox) < 4:
                 continue
+            algo_id = str(d.get("algorithm_id") or "")
+            regions = regions_by_algo.get(algo_id) if algo_id else None
+            if not regions:
+                # 该算法未配置区域或 detection 无 algorithm_id，保留
+                result2.append(d)
+                continue
             x1, y1, x2, y2 = bbox[:4]
             keep = False
-            for det in detectors:
+            for polygon in regions:
+                det = RegionDetector(polygon=polygon)
                 if det.bbox_in_region((x1, y1, x2, y2), mode="center"):
                     keep = True
                     break
@@ -215,71 +254,37 @@ class ResultHandler:
 
     def _maybe_raise_alarm(self, result: Any, detections: List[dict]) -> None:
         """
-        基于最近一次快照对比判断是否生成有效告警：
-        1. 检测数量变化（len 不同）
-        2. 检测类别集合变化（class_names 不同）
-        3. 在 3 秒窗口内，同名目标的位置偏移较大（IoU 低于阈值）
+        告警判定：由 alert 包按 trigger_type 策略判断是否应触发；
+        再经告警间隔与同区域去重后决定是否推送。
         """
         if not detections or self.alarm_queue is None:
             return
 
         now_ts = float(getattr(result, "timestamp", time.time()))
         prev = self._last_snapshot
+        prev_ts = prev.get("timestamp", 0.0) if prev else 0.0
 
-        # 若无历史快照，直接视为有效告警并更新快照
-        if prev is None or now_ts - prev.get("timestamp", 0) >= 3.0:
-            is_alarm = False
-            prev_dets = (prev or {}).get("detections", [])
+        context = TriggerContext(
+            now_ts=now_ts,
+            last_snapshot=prev,
+            last_snapshot_ts=prev_ts,
+            snapshot_window_sec=3.0,
+        )
+        if not self._alert_trigger.should_raise(detections, context):
+            return
 
-            if not prev_dets:
-                is_alarm = True
-            elif len(detections) != len(prev_dets):
-                is_alarm = True
-            else:
-                names_now = sorted(d.get("class_name", "") for d in detections)
-                names_prev = sorted(d.get("class_name", "") for d in prev_dets)
-                if names_now != names_prev:
-                    is_alarm = True
-                else:
-                    # 比较同名目标的框偏移：IoU 低说明偏移大
-                    iou_threshold = 0.3
-                    for cls in set(names_now):
-                        now_box = self._first_bbox_by_class(detections, cls)
-                        prev_box = self._first_bbox_by_class(prev_dets, cls)
-                        if not now_box or not prev_box:
-                            continue
-                        iou = self._calculate_iou(now_box, prev_box)
-                        if iou < iou_threshold:
-                            is_alarm = True
-                            break
+        if now_ts - self._last_alarm_ts < self._alarm_interval_sec:
+            return
 
-            if is_alarm:
-                self._emit_alarm(result, detections, now_ts)
-                self._last_snapshot = {"timestamp": now_ts, "detections": list(detections)}
+        if self._last_alarm_detections and bbox_utils.is_same_alarm_region(
+            detections, self._last_alarm_detections
+        ):
+            return
 
-    def _first_bbox_by_class(self, detections: List[dict], class_name: str) -> Optional[tuple]:
-        for d in detections:
-            if d.get("class_name") != class_name:
-                continue
-            bbox = d.get("bbox") or []
-            if len(bbox) >= 4:
-                return tuple(bbox[:4])
-        return None
-
-    def _calculate_iou(self, bbox1: tuple, bbox2: tuple) -> float:
-        x1 = max(bbox1[0], bbox2[0])
-        y1 = max(bbox1[1], bbox2[1])
-        x2 = min(bbox1[2], bbox2[2])
-        y2 = min(bbox1[3], bbox2[3])
-        if x2 <= x1 or y2 <= y1:
-            return 0.0
-        inter = (x2 - x1) * (y2 - y1)
-        area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
-        area2 = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
-        union = area1 + area2 - inter
-        if union <= 0:
-            return 0.0
-        return inter / union
+        self._emit_alarm(result, detections, now_ts)
+        self._last_snapshot = {"timestamp": now_ts, "detections": list(detections)}
+        self._last_alarm_ts = now_ts
+        self._last_alarm_detections = list(detections)
 
     def _emit_alarm(self, result: Any, detections: List[dict], ts: float) -> None:
         """

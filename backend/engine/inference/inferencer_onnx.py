@@ -17,17 +17,6 @@ from loguru import logger
 from .inferencer import InferenceResult, MODEL_DOWNLOAD_PATH
 from .draw_utils import draw_detections_inplace
 
-def _read_classes_from_redis(model_id: str) -> Optional[Dict[str, Dict[str, str]]]:
-    """
-    从 Redis 读取模型配置的 algorithms，并构造 {target_class -> {code, name}} 的映射。
-    """
-    from engine.redis import get_model_algorithms_class_map
-    result = get_model_algorithms_class_map(model_id)
-    if result:
-        logger.info(
-            f"ONNX 从 model:config.algorithms 构造 target_class->{{code,name}} 映射: model_id={model_id}, count={len(result)}"
-        )
-    return result
 
 
 def _safe_class_name(class_id: int, class_names: Optional[List[str]]) -> str:
@@ -163,7 +152,7 @@ def _decode_yolo11_outputs(outputs, input_hw: Tuple[int, int], conf_thres: float
 
 
 class OnnxYolo11Inferencer:
-    """ONNX YOLO11 推理器：load() 下载模型、读 Redis classes、创建 Session，infer() 返回 InferenceResult"""
+    """ONNX YOLO11 推理器：load() 下载模型、创建 Session，class_algo_map 由 Scheduler 传入，不再读 Redis"""
 
     def __init__(
         self,
@@ -173,21 +162,22 @@ class OnnxYolo11Inferencer:
         input_size: tuple,
         conf_thres: float = 0.25,
         iou_thres: float = 0.45,
+        class_algo_map: Optional[Dict[str, Dict[str, Any]]] = None,
     ):
         self.model_id = model_id
-        self.model_path = model_path  # 存储路径，load 时下载到本地
+        self.model_path = model_path
         self.device = device
         self.input_size = input_size or (640, 640)
         self.conf_thres = conf_thres
         self.iou_thres = iou_thres
+        self._class_algo_map = class_algo_map or {}
         self._sess = None
         self._info: Optional[_OnnxSessionInfo] = None
-        # target_class -> {code, name} 的映射（来自 model_config.algorithms）
         self._class_name_map: Optional[Dict[str, Dict[str, str]]] = None
         self._local_path: Optional[str] = None
 
     def load(self) -> None:
-        """下载模型到本地（若非绝对路径）、从 Redis 读取 classes、创建 ONNX Session"""
+        """下载模型到本地（若非绝对路径）、使用 Scheduler 传入的 class_algo_map、创建 ONNX Session"""
         if os.path.isabs(self.model_path) and os.path.exists(self.model_path):
             self._local_path = self.model_path
         else:
@@ -200,10 +190,10 @@ class OnnxYolo11Inferencer:
                 get_storage().download_file(self.model_path, local_path)
             self._local_path = local_path
 
-        self._class_name_map = _read_classes_from_redis(self.model_id)
+        self._class_name_map = self._class_algo_map if self._class_algo_map else None
         if not self._class_name_map:
-            logger.warning(
-                f"ONNX 未从 Redis 读取到 classes 映射，将使用 class_id 作为 class_name: model_id={self.model_id}"
+            logger.debug(
+                f"ONNX 未配置 class_algo_map，将使用 class_id 作为 class_name: model_id={self.model_id}"
             )
 
         input_hw = None

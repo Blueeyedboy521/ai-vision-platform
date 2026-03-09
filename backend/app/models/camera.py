@@ -70,21 +70,9 @@ class Camera(Base, AuditMixin):
     rtsp_url: Mapped[str] = mapped_column(
         String(500),
         nullable=False,
-        comment="RTSP 流地址"
+        comment="RTSP 流地址（可含认证，如 rtsp://user:pass@host/path）"
     )
-    
-    rtsp_username: Mapped[Optional[str]] = mapped_column(
-        String(50),
-        nullable=True,
-        comment="RTSP 用户名"
-    )
-    
-    rtsp_password: Mapped[Optional[str]] = mapped_column(
-        String(100),
-        nullable=True,
-        comment="RTSP 密码"
-    )
-    
+
     # ==================== 设备信息 ====================
     manufacturer: Mapped[Optional[str]] = mapped_column(
         String(50),
@@ -183,13 +171,5 @@ class Camera(Base, AuditMixin):
     
     @property
     def full_rtsp_url(self) -> str:
-        """获取完整的 RTSP URL (包含认证信息)"""
-        if not self.rtsp_username or not self.rtsp_password:
-            return self.rtsp_url
-        
-        # 解析并插入认证信息
-        if "://" in self.rtsp_url:
-            protocol, rest = self.rtsp_url.split("://", 1)
-            return f"{protocol}://{self.rtsp_username}:{self.rtsp_password}@{rest}"
-        
+        """RTSP 地址（认证已包含在 rtsp_url 中）"""
         return self.rtsp_url

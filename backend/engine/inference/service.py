@@ -239,6 +239,8 @@ class InferenceService:
                 input_size=cfg.get("input_size", (640, 640)),
                 request_queue=request_queue,
                 result_queues=self.result_queues,
+                classes=cfg.get("classes"),
+                class_algo_map=cfg.get("class_algo_map"),
             )
             worker.start()
             workers.append(worker)

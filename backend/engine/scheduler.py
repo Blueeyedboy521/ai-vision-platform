@@ -32,8 +32,7 @@ from engine.redis import (
     scan_camera_algorithm_bindings,
     scan_camera_algorithm_configs,
     get_model_config,
-    get_algorithm_config,
-    get_camera_algorithm_config,
+    get_camera_config,
 )
 from common.redis import RedisChannels, RedisKeys
 from app.core.redis import push_alarm_to_queue_sync
@@ -50,6 +49,26 @@ class CameraConfig:
     algorithms: List[dict] = field(default_factory=list)
 
 
+def _model_algorithms_to_class_map(algorithms: List[dict]) -> Dict[str, dict]:
+    """从 model config 的 algorithms 列表构造 {target_class -> {id, code, name}}，与 engine.redis.get_model_algorithms_class_map 逻辑一致。"""
+    if not algorithms:
+        return {}
+    out: Dict[str, dict] = {}
+    for item in algorithms if isinstance(algorithms, list) else []:
+        if not isinstance(item, dict):
+            continue
+        algo_id = str(item.get("id") or "")
+        code = str(item.get("code") or "")
+        name = str(item.get("name") or "")
+        targets = item.get("target_classes") or []
+        if not algo_id or not code or not isinstance(targets, list):
+            continue
+        for t in targets:
+            if t is not None:
+                out[str(t)] = {"id": algo_id, "code": code, "name": name}
+    return out
+
+
 @dataclass
 class ModelConfig:
     """模型配置"""
@@ -59,6 +78,7 @@ class ModelConfig:
     model_type: str  # yolo, onnx, tensorrt
     input_size: tuple = (640, 640)
     classes: List[str] = field(default_factory=list)
+    algorithms: List[dict] = field(default_factory=list)  # 用于生成 class_algo_map，不直接给推理器
     inference_time_ms: float = 30.0
     gpu_memory_mb: int = 500
 
@@ -286,49 +306,46 @@ class Scheduler:
     def _handle_config_event(self, action: Optional[str], data: dict):
         """
         处理来自 FastAPI 的配置事件。
-        当前版本主要负责从 Redis 读取最新配置并打印日志，后续可在此处热更新 self.cameras/self.models。
+        模型/摄像头/算法增改时从 Redis 刷新运行时配置；启停推理/直播时再拉取最新配置并控制 Pipeline。
         """
         if not action:
             return
         
         logger.info(f"Engine 收到配置事件: {action} - {data}")
         
-        # 模型相关：从 Redis 读取最新模型配置
+        # 模型增改：从 Redis 刷新该模型配置到 self.models，并确保 request_queues 存在
         if action in ("model_add", "model_update"):
             model_id = data.get("model_id")
             if model_id:
-                cfg = get_model_config(model_id)
-                if cfg:
-                    logger.info(f"Engine 读取模型配置: {cfg}")
+                self._apply_model_config_from_redis(model_id)
+                logger.info(f"Engine 已刷新模型配置: {model_id}")
+
+        # 摄像头增改：从 Redis 刷新该摄像头基础配置与算法绑定到 self.cameras
+        if action in ("camera_add", "camera_update"):
+            camera_id = data.get("camera_id")
+            if camera_id:
+                self._refresh_camera_from_redis(camera_id)
+                logger.info(f"Engine 已刷新摄像头配置: {camera_id}")
         
-        # 算法相关：从 Redis 读取最新算法配置
+        # 算法增改：刷新所有摄像头的算法列表（来自 Redis 的摄像头-算法绑定会反映算法变更）
         if action in ("algorithm_add", "algorithm_update"):
-            algorithm_id = data.get("algorithm_id")
-            if algorithm_id:
-                cfg = get_algorithm_config(algorithm_id)
-                if cfg:
-                    logger.info(f"Engine 读取算法配置: {cfg}")
+            self._refresh_all_cameras_algorithms_from_redis()
+            logger.info("Engine 已刷新所有摄像头的算法配置")
         
-        # 摄像头-算法绑定：从 Redis 读取最新绑定配置
+        # 摄像头-算法绑定增改：刷新该摄像头的算法配置
         if action in ("camera_algorithm_add", "camera_algorithm_update"):
             camera_id = data.get("camera_id")
-            algorithm_id = data.get("algorithm_id")
-            if camera_id and algorithm_id:
-                cfg = get_camera_algorithm_config(camera_id, algorithm_id)
-                if cfg:
-                    logger.info(f"Engine 读取摄像头算法配置: {cfg}")
-            
-            # 重新加载该摄像头的算法列表（简单做法：从 Redis scan 一遍该 camera_id 前缀）
-            # 注意：这里仅更新配置与 Pipeline，不直接改变 InferenceService 的调度状态
-            self._refresh_camera_algorithms_from_redis(camera_id)
-            self._reconcile_camera_pipeline(camera_id)
+            if camera_id:
+                self._refresh_camera_from_redis(camera_id)
+                logger.info(f"Engine 已刷新摄像头算法绑定: {camera_id}")
         
-        # 摄像头启动/停止：控制 Pipeline
+        # 摄像头启动/停止：先从 Redis 拉取最新摄像头与算法配置，再控制 Pipeline
         if action == "camera_start":
             camera_id = data.get("camera_id")
             if not camera_id:
                 return
             logger.info(f"Engine 收到摄像头启动命令: {camera_id}")
+            self._refresh_camera_from_redis(camera_id)
             self.live_started.add(camera_id)
             # 点播开始：默认 live_only；若同时启动推理且存在启用算法，则 full
             self._reconcile_camera_pipeline(camera_id)
@@ -338,6 +355,7 @@ class Scheduler:
             if not camera_id:
                 return
             logger.info(f"Engine 收到摄像头停止命令: {camera_id}")
+            self._refresh_camera_from_redis(camera_id)
             self.live_started.discard(camera_id)
             # 点播结束：不点播则只可能保留 inference_only（需要显式启动推理）
             self._reconcile_camera_pipeline(camera_id)
@@ -347,8 +365,8 @@ class Scheduler:
             if not camera_id:
                 return
             logger.info(f"Engine 收到摄像头推理启动命令: {camera_id}")
+            self._refresh_camera_from_redis(camera_id)
             self.inference_started.add(camera_id)
-            self._refresh_camera_algorithms_from_redis(camera_id)
             self._reconcile_camera_pipeline(camera_id)
             # 通知 InferenceService 某个摄像头开始推理，由服务内部自行计数与扩缩容
             if self.inference_service:
@@ -365,6 +383,7 @@ class Scheduler:
             if not camera_id:
                 return
             logger.info(f"Engine 收到摄像头推理停止命令: {camera_id}")
+            self._refresh_camera_from_redis(camera_id)
             self.inference_started.discard(camera_id)
             self._reconcile_camera_pipeline(camera_id)
             # 通知 InferenceService 某个摄像头停止推理
@@ -417,59 +436,31 @@ class Scheduler:
                         int(cfg.get("input_width", 640)),
                     ),
                     classes=list(cfg.get("classes") or []),
+                    algorithms=list(cfg.get("algorithms") or []),
                     inference_time_ms=float(cfg.get("inference_ms", 30.0)),
                     gpu_memory_mb=int(cfg.get("gpu_memory_mb", 500)),
                 )
         except Exception as e:
             logger.error(f"从 Redis 加载模型配置失败: {e}")
-        
-        # 2. 加载摄像头基础配置
+
+        # 2/3/4 合并：收集摄像头 ID → 逐个从 Redis 刷新摄像头基础配置 + 算法配置 + skip_frames，并做心跳恢复
+        camera_ids: set[str] = set()
         try:
-            for camera_id, cfg in scan_camera_configs():
-                self.cameras[camera_id] = CameraConfig(
-                    id=camera_id,
-                    name=cfg.get("name", camera_id),
-                    rtsp_url=cfg.get("rtsp_url", ""),
-                    fps=int(cfg.get("fps", 25)),
-                    skip_frames=int(cfg.get("skip_frames", 3)),
-                    algorithms=[],
-                )
+            for camera_id, _cfg in scan_camera_configs():
+                if camera_id:
+                    camera_ids.add(camera_id)
         except Exception as e:
-            logger.error(f"从 Redis 加载摄像头配置失败: {e}")
-        
-        # 3. 加载摄像头-算法绑定配置
+            logger.error(f"从 Redis 扫描摄像头配置失败: {e}")
         try:
-            for camera_id, algorithm_id, cfg in scan_camera_algorithm_bindings():
-                model_id = cfg.get("model_id")
-                if not camera_id or not model_id:
-                    continue
-                
-                # 如果摄像头基础配置还不存在，创建一个占位配置
-                if camera_id not in self.cameras:
-                    self.cameras[camera_id] = CameraConfig(
-                        id=camera_id,
-                        name=camera_id,
-                        rtsp_url="",
-                        fps=int(cfg.get("fps", 25)),
-                        skip_frames=int(cfg.get("skip_frames", 3)),
-                        algorithms=[],
-                    )
-                
-                algo_entry = {
-                    "id": algorithm_id,
-                    "model_id": model_id,
-                    "config": {
-                        "confidence": cfg.get("confidence"),
-                        "alert_config": cfg.get("alert_config"),
-                        "regions": cfg.get("regions") or [],
-                    },
-                }
-                self.cameras[camera_id].algorithms.append(algo_entry)
+            for camera_id, _algorithm_id, _cfg in scan_camera_algorithm_bindings():
+                if camera_id:
+                    camera_ids.add(camera_id)
         except Exception as e:
-            logger.error(f"从 Redis 加载摄像头算法绑定配置失败: {e}")
-        
-        # 4. Engine 重启恢复：若某摄像头心跳 Key 仍有效（前端在点播中），确保加入 live_started 以启动 Writer
-        for camera_id in list(self.cameras.keys()):
+            logger.error(f"从 Redis 扫描摄像头算法绑定失败: {e}")
+
+        for camera_id in list(camera_ids):
+            self._refresh_camera_from_redis(camera_id)
+            # Engine 重启恢复：若某摄像头心跳 Key 仍有效（前端在点播中），确保加入 live_started 以启动 Writer
             if is_camera_heartbeat_active(camera_id):
                 self.live_started.add(camera_id)
                 logger.info(f"Engine 重启恢复: 摄像头 {camera_id} 心跳有效，已加入 live_started")
@@ -505,6 +496,7 @@ class Scheduler:
                 "model_type": model.model_type,
                 "input_size": model.input_size,
                 "classes": model.classes,
+                "class_algo_map": _model_algorithms_to_class_map(model.algorithms),
             }
             for model_id, model in self.models.items()
         }
@@ -526,7 +518,7 @@ class Scheduler:
         """启动推理服务（单进程内创建 Worker 线程）"""
         logger.info("启动推理服务...")
         
-        # 准备配置（按模型维度）
+        # 准备配置（按模型维度），含 class_algo_map 供推理器使用，不再在推理器内读 Redis
         models_config = {
             model_id: {
                 "id": model.id,
@@ -535,6 +527,7 @@ class Scheduler:
                 "model_type": model.model_type,
                 "input_size": model.input_size,
                 "classes": model.classes,
+                "class_algo_map": _model_algorithms_to_class_map(model.algorithms),
             }
             for model_id, model in self.models.items()
         }
@@ -575,16 +568,6 @@ class Scheduler:
             # 对每个摄像头做一次状态对齐：进入 S0/S1/S2/S3 中的一个
             self._reconcile_camera_pipeline(camera_id)
     
-    def _start_pipeline(self, camera_id: str, mode: str = "full"):
-        """
-        启动或切换单个 Pipeline（full / live_only / inference_only）。
-        具体实现委托给 PipelineService。
-        """
-        if not self.pipeline_service:
-            logger.error("PipelineService 未初始化，无法启动 Pipeline")
-            return
-        self.pipeline_service._ensure_pipeline(camera_id, mode)
-
     def _stop_pipeline(self, camera_id: str):
         """
         停止某个摄像头的 Pipeline，并清理相关状态。
@@ -592,8 +575,70 @@ class Scheduler:
         if self.pipeline_service:
             self.pipeline_service.stop_pipeline(camera_id)
 
-    def _refresh_camera_algorithms_from_redis(self, camera_id: str):
-        """从 Redis 刷新某个摄像头的 algorithms 列表（仅读取该 camera_id 的绑定配置）"""
+    def _apply_model_config_from_redis(self, model_id: str) -> None:
+        """从 Redis 读取模型配置并更新 self.models，新模型时创建 request_queue。"""
+        cfg = get_model_config(model_id)
+        if not cfg or not cfg.get("is_enabled", True):
+            return
+        self.models[model_id] = ModelConfig(
+            id=model_id,
+            name=cfg.get("name", model_id),
+            path=cfg.get("model_path", ""),
+            model_type=cfg.get("model_type", "yolo"),
+            input_size=(
+                int(cfg.get("input_height", 640)),
+                int(cfg.get("input_width", 640)),
+            ),
+            classes=list(cfg.get("classes") or []),
+            algorithms=list(cfg.get("algorithms") or []),
+            inference_time_ms=float(cfg.get("inference_ms", 30.0)),
+            gpu_memory_mb=int(cfg.get("gpu_memory_mb", 500)),
+        )
+        if model_id not in self.request_queues:
+            self.request_queues[model_id] = MemoryQueue(maxsize=10)
+
+    def _refresh_all_cameras_algorithms_from_redis(self) -> None:
+        """刷新所有摄像头的算法列表（来自 Redis），并重算各摄像头的 skip_frames。"""
+        for camera_id in list(self.cameras.keys()):
+            camera = self.cameras.get(camera_id)
+            if not camera:
+                continue
+            try:
+                camera.algorithms = scan_camera_algorithm_configs(camera_id)
+            except Exception as e:
+                logger.error(f"刷新摄像头算法配置失败: {camera_id}, {e}")
+                continue
+            if camera.algorithms:
+                intervals = [
+                    (a.get("config") or {}).get("inference_interval_sec", 5)
+                    for a in camera.algorithms
+                ]
+                min_interval = min(intervals) if intervals else 5
+                camera.skip_frames = max(0, int(camera.fps * min_interval) - 1)
+
+    def _refresh_camera_from_redis(self, camera_id: str):
+        """启停推理/直播时从 Redis 拉取该摄像头最新基础配置与算法配置，并回写 self.cameras。"""
+        cfg = get_camera_config(camera_id)
+        # 允许“只有算法绑定但没有 camera_config”的占位摄像头：先确保 self.cameras[camera_id] 存在
+        if camera_id not in self.cameras:
+            self.cameras[camera_id] = CameraConfig(
+                id=camera_id,
+                name=(cfg.get("name", camera_id) if cfg else camera_id),
+                rtsp_url=(cfg.get("rtsp_url", "") if cfg else ""),
+                fps=int((cfg.get("fps", 25) if cfg else 25)),
+                skip_frames=int((cfg.get("skip_frames", 3) if cfg else 3)),
+                algorithms=[],
+            )
+        if camera_id not in self.result_queues:
+            self.result_queues[camera_id] = MemoryQueue(maxsize=10)
+
+        # 若存在 camera_config，则覆盖更新基础字段
+        if cfg:
+            cam = self.cameras[camera_id]
+            cam.name = cfg.get("name", cam.name)
+            cam.rtsp_url = cfg.get("rtsp_url", cam.rtsp_url)
+            cam.fps = int(cfg.get("fps", cam.fps))
+            cam.skip_frames = int(cfg.get("skip_frames", cam.skip_frames))
         camera = self.cameras.get(camera_id)
         if not camera:
             return
@@ -601,6 +646,15 @@ class Scheduler:
             camera.algorithms = scan_camera_algorithm_configs(camera_id)
         except Exception as e:
             logger.error(f"刷新摄像头算法配置失败: {camera_id}, {e}")
+            return
+        # 按算法识别间隔重算 skip_frames
+        if camera.algorithms:
+            intervals = [
+                (a.get("config") or {}).get("inference_interval_sec", 5)
+                for a in camera.algorithms
+            ]
+            min_interval = min(intervals) if intervals else 5
+            camera.skip_frames = max(0, int(camera.fps * min_interval) - 1)
 
     def _reconcile_camera_pipeline(self, camera_id: str):
         """根据状态机将单路摄像头的目标模式委托给 PipelineService。"""
@@ -637,31 +691,3 @@ class Scheduler:
             self._start_inference_service()
         # Worker 的扩缩容由 InferenceService 内部根据 on_camera_inference_start/stop 的记录自行处理，
         # 这里不再进行模型使用计数逻辑，保持 Scheduler 的职责简单。
-    
-    def add_camera(self, camera_config: CameraConfig):
-        """动态添加摄像头"""
-        camera_id = camera_config.id
-        if camera_id in self.cameras:
-            logger.warning(f"摄像头已存在: {camera_id}")
-            return
-        
-        self.cameras[camera_id] = camera_config
-        self.result_queues[camera_id] = MemoryQueue(maxsize=100)
-        self._reconcile_camera_pipeline(camera_id)
-        logger.info(f"已添加摄像头: {camera_config.name}")
-    
-    def remove_camera(self, camera_id: str):
-        """动态移除摄像头"""
-        if camera_id not in self.cameras:
-            logger.warning(f"摄像头不存在: {camera_id}")
-            return
-        
-        # 停止 Pipeline 并清理控制队列
-        self._stop_pipeline(camera_id)
-        # 清理资源
-        del self.result_queues[camera_id]
-        del self.cameras[camera_id]
-        self.live_started.discard(camera_id)
-        self.inference_started.discard(camera_id)
-        
-        logger.info(f"已移除摄像头: {camera_id}")

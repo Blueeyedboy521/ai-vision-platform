@@ -41,7 +41,9 @@ class InferenceWorker:
         model_type: str,
         input_size: tuple,
         request_queue: Any,
-        result_queues: Dict[str, Any]
+        result_queues: Dict[str, Any],
+        classes: Optional[list] = None,
+        class_algo_map: Optional[Dict[str, Any]] = None,
     ):
         self.worker_id = worker_id
         self.model_id = model_id
@@ -50,6 +52,8 @@ class InferenceWorker:
         self.input_size = input_size
         self.request_queue = request_queue
         self.result_queues = result_queues
+        self._classes = classes
+        self._class_algo_map = class_algo_map or {}
 
         self.inferencer: Optional[Inferencer] = None
         self.thread: Optional[threading.Thread] = None
@@ -84,6 +88,8 @@ class InferenceWorker:
                 model_path=self.model_path,
                 device=device,
                 input_size=self.input_size,
+                classes=self._classes,
+                class_algo_map=self._class_algo_map,
             )
             self.inferencer.load()
             logger.info(f"Worker {self.worker_id} 模型加载完成")

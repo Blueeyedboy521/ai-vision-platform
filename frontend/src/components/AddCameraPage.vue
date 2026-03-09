@@ -17,12 +17,13 @@
       </div>
     </div>
 
-    <!-- Content -->
+    <!-- Content: 上下布局，上排左右各半，下排算法全宽 -->
     <div class="add-camera-page__content">
-      <!-- Left Column -->
-      <div class="add-camera-page__left">
-        <!-- Network & Media Config -->
-        <section class="config-card">
+      <!-- 上排：左 网络与流媒体，右 实时预监 -->
+      <div class="add-camera-page__top">
+        <div class="add-camera-page__top-left">
+          <!-- Network & Media Config -->
+          <section class="config-card">
           <h3 class="config-card__title">
             <span class="config-card__indicator"></span>
             网络与流媒体配置
@@ -70,16 +71,6 @@
                 </n-button>
               </div>
             </div>
-            <div class="form-field form-field--row">
-              <div class="form-field form-field--flex">
-                <label class="form-field__label">RTSP 用户名</label>
-                <n-input v-model:value="formData.username" placeholder="可选" />
-              </div>
-              <div class="form-field form-field--flex">
-                <label class="form-field__label">RTSP 密码</label>
-                <n-input v-model:value="formData.password" type="password" show-password-on="click" placeholder="可选" />
-              </div>
-            </div>
             <div v-if="streamInfo" class="stream-info">
               <span>宽 {{ streamInfo.width }} × 高 {{ streamInfo.height }}</span>
               <span v-if="streamInfo.fps"> · {{ streamInfo.fps }} fps</span>
@@ -87,9 +78,10 @@
             </div>
           </div>
         </section>
+        </div>
 
-        <!-- Preview Section -->
-        <section class="config-card config-card--preview">
+        <!-- Preview Section 右上 -->
+        <section class="config-card config-card--preview add-camera-page__top-right">
           <div class="config-card__header">
             <h3 class="config-card__title">
               <span class="config-card__indicator"></span>
@@ -139,10 +131,10 @@
         </section>
       </div>
 
-      <!-- Right Column -->
-      <div class="add-camera-page__right">
+      <!-- 下排：算法能力与阈值配置 宽度100% -->
+      <div class="add-camera-page__bottom">
         <!-- Algorithm Config -->
-        <section class="config-card">
+        <section class="config-card add-camera-page__algorithm-section">
           <div class="config-card__header">
             <h3 class="config-card__title">
               <span class="config-card__indicator"></span>
@@ -168,6 +160,9 @@
               <span class="algorithm-list__col algorithm-list__col--enable">启用</span>
               <span class="algorithm-list__col algorithm-list__col--name">算法类型</span>
               <span class="algorithm-list__col algorithm-list__col--confidence">置信度 (%)</span>
+              <span class="algorithm-list__col algorithm-list__col--interval">识别间隔(秒)</span>
+              <span class="algorithm-list__col algorithm-list__col--alarm-int">告警间隔(秒)</span>
+              <span class="algorithm-list__col algorithm-list__col--strategy">告警策略</span>
               <span class="algorithm-list__col algorithm-list__col--region">检测范围</span>
               <span class="algorithm-list__col algorithm-list__col--time">时间计划</span>
               <span class="algorithm-list__col algorithm-list__col--action">操作</span>
@@ -195,6 +190,44 @@
                     class="algorithm-list__slider"
                   />
                   <span class="algorithm-list__confidence-value">{{ algo.confidence }}%</span>
+                </div>
+                <div class="algorithm-list__col algorithm-list__col--interval">
+                  <n-input-number
+                    v-model:value="algo.inferenceIntervalSec"
+                    :min="1"
+                    :max="300"
+                    :disabled="!algo.enabled"
+                    size="small"
+                    placeholder="5"
+                    style="width: 72px"
+                  />
+                </div>
+                <div class="algorithm-list__col algorithm-list__col--alarm-int">
+                  <n-input-number
+                    v-model:value="algo.alarmIntervalSec"
+                    :min="1"
+                    :max="3600"
+                    :disabled="!algo.enabled"
+                    size="small"
+                    placeholder="30"
+                    style="width: 72px"
+                  />
+                  <span v-if="algo.enabled && (algo.alarmIntervalSec || 0) < (algo.inferenceIntervalSec || 5)" class="algorithm-list__hint">须≥识别间隔</span>
+                </div>
+                <div class="algorithm-list__col algorithm-list__col--strategy">
+                  <n-button
+                    v-if="algo.enabled && algo.configId && cameraId"
+                    text
+                    type="primary"
+                    size="small"
+                    @click="openAlertStrategyModal(algo)"
+                  >
+                    <template #icon>
+                      <n-icon :size="14"><SettingsOutline /></n-icon>
+                    </template>
+                    {{ algo.alertConfigOverride ? '已覆盖' : '配置' }}
+                  </n-button>
+                  <span v-else class="algorithm-list__disabled">—</span>
                 </div>
                 <div class="algorithm-list__col algorithm-list__col--region">
                   <n-button
@@ -326,6 +359,55 @@
       @save="handleSaveRegions"
     />
 
+    <!-- 告警策略弹框：覆盖算法的默认告警配置，不配置则使用算法默认 -->
+    <n-modal
+      v-model:show="showAlertStrategyModal"
+      preset="card"
+      title="告警策略"
+      :style="{ width: '480px' }"
+      @after-enter="initAlertStrategyForm"
+    >
+      <n-form label-placement="left" label-width="100">
+        <n-form-item label="触发方式">
+          <n-radio-group v-model:value="alertStrategyForm.trigger_type">
+            <n-radio-button value="instant">立即触发</n-radio-button>
+            <n-radio-button value="duration">持续触发</n-radio-button>
+            <n-radio-button value="count">数量触发</n-radio-button>
+          </n-radio-group>
+        </n-form-item>
+        <n-form-item v-if="alertStrategyForm.trigger_type === 'duration'" label="持续时间(秒)">
+          <n-input-number v-model:value="alertStrategyForm.duration_seconds" :min="1" style="width: 100%" />
+        </n-form-item>
+        <n-form-item v-if="alertStrategyForm.trigger_type === 'count'" label="数量阈值(个)">
+          <n-input-number v-model:value="alertStrategyForm.count_threshold" :min="1" style="width: 100%" />
+        </n-form-item>
+        <n-form-item label="冷却时间(秒)">
+          <n-input-number v-model:value="alertStrategyForm.cooldown_seconds" :min="0" style="width: 100%" />
+          <template #feedback>同一位置重复告警的最小间隔</template>
+        </n-form-item>
+        <n-form-item label="告警级别">
+          <n-select
+            v-model:value="alertStrategyForm.alert_level"
+            :options="[
+              { label: '提示', value: 'info' },
+              { label: '警告', value: 'warning' },
+              { label: '危险', value: 'danger' }
+            ]"
+            style="width: 100%"
+          />
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <n-space justify="space-between">
+          <n-button @click="restoreDefaultAlertStrategy">恢复默认</n-button>
+          <n-space>
+            <n-button @click="showAlertStrategyModal = false">取消</n-button>
+            <n-button type="primary" :loading="alertStrategySaving" @click="saveAlertStrategy">保存</n-button>
+          </n-space>
+        </n-space>
+      </template>
+    </n-modal>
+
     <!-- 实时预览弹窗 -->
     <n-modal
       v-model:show="showLivePlayer"
@@ -349,7 +431,8 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import {
   NInput, NTreeSelect, NButton, NIcon, NSwitch,
-  NSlider, NPopover, NTimePicker, NModal, NForm, NFormItem, NSelect, NInputNumber, NSpace
+  NSlider, NPopover, NTimePicker, NModal, NForm, NFormItem, NSelect, NInputNumber, NSpace,
+  NRadioGroup, NRadioButton
 } from 'naive-ui'
 import type { TreeSelectOption } from 'naive-ui'
 import {
@@ -357,7 +440,8 @@ import {
   CameraOutline,
   SaveOutline,
   ScanOutline,
-  TimeOutline
+  TimeOutline,
+  SettingsOutline
 } from '@vicons/ionicons5'
 import { useUserStore } from '@/stores/user'
 import DrawRegionModal from './DrawRegionModal.vue'
@@ -379,19 +463,32 @@ interface Region {
   type: string
 }
 
+/** 告警策略配置（算法默认 + 摄像头可覆盖） */
+interface AlertStrategyConfig {
+  trigger_type: 'instant' | 'duration' | 'count'
+  duration_seconds: number
+  count_threshold: number
+  cooldown_seconds: number
+  alert_level: 'info' | 'warning' | 'danger'
+}
+
 interface Algorithm {
   id: string
   name: string
   nameEn?: string
   enabled: boolean
   confidence: number
+  inferenceIntervalSec: number
+  alarmIntervalSec: number
+  alertConfigOverride?: AlertStrategyConfig | null
+  effectiveAlertConfig?: AlertStrategyConfig
   regionCount?: number
   timeRange?: string
   startTime?: number
   endTime?: number
   regions?: Region[]
-  configId?: string      // 后端 CameraAlgorithm 配置 ID（与 id 相同）
-  algorithmId?: string   // 算法 ID（与后端一致）
+  configId?: string
+  algorithmId?: string
 }
 
 const props = defineProps<{
@@ -409,8 +506,6 @@ const formData = ref({
   name: '',
   location: null as string | null,
   rtspUrl: '',
-  username: '',
-  password: '',
   fps: null as number | null,
   resolution: null as string | null
 })
@@ -439,6 +534,80 @@ const addAlgorithmSubmitting = ref(false)
 // Draw Region Modal
 const showDrawRegionModal = ref(false)
 const currentAlgorithm = ref<Algorithm | null>(null)
+
+// 告警策略弹框
+const showAlertStrategyModal = ref(false)
+const currentAlertStrategyAlgo = ref<Algorithm | null>(null)
+const alertStrategySaving = ref(false)
+const alertStrategyForm = ref<AlertStrategyConfig>({
+  trigger_type: 'instant',
+  duration_seconds: 0,
+  count_threshold: 0,
+  cooldown_seconds: 30,
+  alert_level: 'warning'
+})
+
+function openAlertStrategyModal(algo: Algorithm) {
+  currentAlertStrategyAlgo.value = algo
+  showAlertStrategyModal.value = true
+}
+
+function initAlertStrategyForm() {
+  const algo = currentAlertStrategyAlgo.value
+  if (!algo) return
+  const cfg = algo.effectiveAlertConfig || {
+    trigger_type: 'instant' as const,
+    duration_seconds: 0,
+    count_threshold: 0,
+    cooldown_seconds: 30,
+    alert_level: 'warning' as const
+  }
+  alertStrategyForm.value = {
+    trigger_type: cfg.trigger_type || 'instant',
+    duration_seconds: cfg.duration_seconds ?? 0,
+    count_threshold: cfg.count_threshold ?? 0,
+    cooldown_seconds: cfg.cooldown_seconds ?? 30,
+    alert_level: cfg.alert_level || 'warning'
+  }
+}
+
+async function saveAlertStrategy() {
+  const algo = currentAlertStrategyAlgo.value
+  const cameraId = props.cameraId
+  if (!algo?.configId || !cameraId) return
+  alertStrategySaving.value = true
+  try {
+    await updateCameraAlgorithmConfig(cameraId, algo.configId, {
+      alert_config: { ...alertStrategyForm.value }
+    })
+    message.success('告警策略已保存')
+    showAlertStrategyModal.value = false
+    await loadCameraAlgorithmConfigs(cameraId)
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || e?.message || '保存失败')
+  } finally {
+    alertStrategySaving.value = false
+  }
+}
+
+async function restoreDefaultAlertStrategy() {
+  const algo = currentAlertStrategyAlgo.value
+  const cameraId = props.cameraId
+  if (!algo?.configId || !cameraId) return
+  alertStrategySaving.value = true
+  try {
+    await updateCameraAlgorithmConfig(cameraId, algo.configId, {
+      alert_config: null
+    })
+    message.success('已恢复为算法默认配置')
+    showAlertStrategyModal.value = false
+    await loadCameraAlgorithmConfigs(cameraId)
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || e?.message || '恢复失败')
+  } finally {
+    alertStrategySaving.value = false
+  }
+}
 
 // Time Popover
 const activeTimePopover = ref<string | null>(null)
@@ -494,8 +663,6 @@ async function testConnection() {
   try {
     const res = await probeStream({
       rtsp_url: formData.value.rtspUrl,
-      rtsp_username: formData.value.username || undefined,
-      rtsp_password: formData.value.password || undefined
     })
     const data = (res.data as any)?.data ?? res.data
     if (data?.width != null && data?.height != null) {
@@ -703,12 +870,12 @@ async function loadCameraDetail(id: string) {
     const res = await getCamera(id)
     const c = (res.data as any)?.data ?? res.data
     if (!c) return
+    // 网络状态使用 Redis 在线状态（后端从 camera:online:{id} 读取）
+    connectionStatus.value = (c.online === true) ? 'online' : 'offline'
     formData.value = {
       name: c.name ?? '',
       location: c.area_id ?? null,
       rtspUrl: c.rtsp_url ?? '',
-      username: c.rtsp_username ?? '',
-      password: c.rtsp_password ?? '',
       fps: c.fps ?? null,
       resolution: c.resolution ?? null
     }
@@ -842,13 +1009,31 @@ function syncAlgorithmsFromConfigs() {
       (cfg as any).effective_confidence ??
       (cfg as any).confidence ??
       0.9
+    const inferenceSec = (cfg as any).inference_interval_sec ?? 5
+    const alarmSec = (cfg as any).alarm_interval_sec ?? 30
+    const rawAlert = (cfg as any).alert_config as Record<string, unknown> | null | undefined
+    const rawEffective = (cfg as any).effective_alert_config as Record<string, unknown> | undefined
+    const toStrategy = (r: Record<string, unknown> | null | undefined): AlertStrategyConfig | undefined => {
+      if (!r || typeof r !== 'object') return undefined
+      return {
+        trigger_type: (r.trigger_type as any) || 'instant',
+        duration_seconds: Number(r.duration_seconds) || 0,
+        count_threshold: Number(r.count_threshold) || 0,
+        cooldown_seconds: Number(r.cooldown_seconds) || 30,
+        alert_level: (r.alert_level as any) || 'warning'
+      }
+    }
     return {
-      id: cfg.id,                      // 配置 ID
+      id: cfg.id,
       configId: cfg.id,
       algorithmId: cfg.algorithm_id,
       name: cfg.algorithm_name || cfg.algorithm_id,
       enabled: cfg.is_enabled,
       confidence: Math.round(conf * 100),
+      inferenceIntervalSec: inferenceSec,
+      alarmIntervalSec: alarmSec,
+      alertConfigOverride: rawAlert ? toStrategy(rawAlert) ?? undefined : null,
+      effectiveAlertConfig: toStrategy(rawEffective || rawAlert),
       regionCount: uiRegions.length,
       timeRange: '00:00 - 23:59',
       startTime: 0,
@@ -867,7 +1052,7 @@ onMounted(() => {
 watch(() => props.cameraId, (id) => {
   if (id) loadCameraDetail(id)
   else {
-    formData.value = { name: '', location: null, rtspUrl: '', username: '', password: '', fps: null, resolution: null }
+    formData.value = { name: '', location: null, rtspUrl: '', fps: null, resolution: null }
     streamInfo.value = null
     previewImage.value = '/camera-warehouse-01.jpg'
     snapshots.value = []
@@ -884,8 +1069,6 @@ async function handleSave() {
   const data = {
     ...formData.value,
     rtspUrl: formData.value.rtspUrl,
-    username: formData.value.username || undefined,
-    password: formData.value.password || undefined,
     fps: formData.value.fps ?? undefined,
     resolution: formData.value.resolution ?? undefined,
     algorithms: algorithms.value.filter(a => a.enabled)
@@ -898,9 +1081,19 @@ async function handleSave() {
     for (const algo of algorithms.value) {
       if (!algo.configId) continue
       // 将 0-100 的置信度转换为 0-1 发送给后端
-      const payload: { confidence?: number; is_enabled?: boolean } = {
+      const payload: {
+        confidence?: number
+        is_enabled?: boolean
+        inference_interval_sec?: number
+        alarm_interval_sec?: number
+      } = {
         confidence: algo.confidence / 100,
-        is_enabled: algo.enabled
+        is_enabled: algo.enabled,
+        inference_interval_sec: Math.max(1, Math.min(300, algo.inferenceIntervalSec ?? 5)),
+        alarm_interval_sec: Math.max(1, Math.min(3600, algo.alarmIntervalSec ?? 30))
+      }
+      if ((payload.alarm_interval_sec as number) < (payload.inference_interval_sec as number)) {
+        payload.alarm_interval_sec = payload.inference_interval_sec
       }
       updatePromises.push(
         updateCameraAlgorithmConfig(cameraId, algo.configId, payload)
@@ -965,26 +1158,42 @@ async function handleSave() {
   gap: var(--spacing-md);
 }
 
-/* Content */
+/* Content: 上排左右 50/50，下排算法全宽 */
 .add-camera-page__content {
   flex: 1;
   display: flex;
+  flex-direction: column;
   gap: var(--spacing-xl);
   padding-top: var(--spacing-xl);
   overflow-y: auto;
 }
 
-.add-camera-page__left {
-  flex: 0 0 45%;
-  max-width: 500px;
+.add-camera-page__top {
   display: flex;
-  flex-direction: column;
-  gap: var(--spacing-lg);
+  gap: var(--spacing-xl);
+  flex: 0 0 auto;
 }
 
-.add-camera-page__right {
+.add-camera-page__top-left {
   flex: 1;
   min-width: 0;
+  max-width: 50%;
+}
+
+.add-camera-page__top-right {
+  flex: 1;
+  min-width: 0;
+  max-width: 50%;
+}
+
+.add-camera-page__bottom {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.add-camera-page__algorithm-section {
+  width: 100%;
 }
 
 /* Config Card */
@@ -1221,6 +1430,24 @@ async function handleSave() {
 .algorithm-list__col--confidence {
   flex: 1.2;
   gap: var(--spacing-sm);
+}
+
+.algorithm-list__col--interval,
+.algorithm-list__col--alarm-int {
+  width: 100px;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.algorithm-list__hint {
+  font-size: 10px;
+  color: var(--error-color, #d03050);
+  white-space: nowrap;
+}
+
+.algorithm-list__col--strategy {
+  width: 90px;
+  flex-shrink: 0;
 }
 
 .algorithm-list__col--region {

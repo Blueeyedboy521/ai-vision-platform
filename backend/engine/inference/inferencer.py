@@ -63,31 +63,30 @@ def build_inferencer(
     device: str,
     input_size: tuple,
     for_draw: bool = False,
+    classes: Optional[List[str]] = None,
+    class_algo_map: Optional[Dict[str, Any]] = None,
 ) -> Inferencer:
     """
     按 model_type 创建对应推理实现类实例（未调用 load）。
-    
-    用法约定：
-    - 推理 Worker 场景：for_draw=False，创建完整推理器实例，后续需要调用 load() + infer()
-    - 推流绘框场景：for_draw=True，调用方只会使用 draw_boxes(result)，不会调用 load()/infer()，
-      这样在 Pipeline 进程内就不会触发模型下载与 Session 创建，构造成本轻量。
+    classes / class_algo_map 由 Scheduler 从 Redis 刷新后传入，推理器内部不再读 Redis。
     """
     t = (model_type or "").lower()
     if t == "yolo":
         from .inferencer_yolo import UltralyticsYoloInferencer
-        # for_draw=True 时，调用方不会调用 load()/infer()，只用 draw_boxes()，构造开销极小
         return UltralyticsYoloInferencer(
             model_id=model_id,
             model_path=model_path,
             device=device,
+            classes=classes,
+            class_algo_map=class_algo_map or {},
         )
     if t == "onnx":
         from .inferencer_onnx import OnnxYolo11Inferencer
-        # 同上，for_draw=True 时仅用 draw_boxes，不触发 load()/Session 创建
         return OnnxYolo11Inferencer(
             model_id=model_id,
             model_path=model_path,
             device=device,
             input_size=input_size,
+            class_algo_map=class_algo_map or {},
         )
     raise ValueError(f"不支持的模型类型: {model_type}")

@@ -15,8 +15,6 @@ export interface Camera {
   area_id: string | null
   area_name?: string
   rtsp_url: string
-  rtsp_username: string | null
-  rtsp_password: string | null
   manufacturer: string | null
   device_model: string | null
   ip_address: string | null
@@ -25,6 +23,8 @@ export interface Camera {
   latitude: number | null
   is_enabled: boolean
   status: CameraStatus
+  /** 在线状态（来自 Redis camera:online:{id}） */
+  online?: boolean
   fps: number
   resolution: string | null
   algorithm_count?: number
@@ -41,8 +41,6 @@ export interface CreateCameraRequest {
   description?: string
   area_id?: string
   rtsp_url: string
-  rtsp_username?: string
-  rtsp_password?: string
   manufacturer?: string
   device_model?: string
   ip_address?: string
@@ -61,8 +59,6 @@ export interface UpdateCameraRequest {
   description?: string
   area_id?: string
   rtsp_url?: string
-  rtsp_username?: string
-  rtsp_password?: string
   manufacturer?: string
   device_model?: string
   ip_address?: string
@@ -173,8 +169,6 @@ export function getCameraPlayUrls(id: string) {
 /** 流通性测试请求 */
 export interface ProbeStreamRequest {
   rtsp_url: string
-  rtsp_username?: string
-  rtsp_password?: string
 }
 
 /** 流通性测试响应 */

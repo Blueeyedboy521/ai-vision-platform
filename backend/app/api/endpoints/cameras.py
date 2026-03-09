@@ -49,9 +49,7 @@ from common.storage import get_storage
 
 class ProbeStreamRequest(BaseModel):
     """流通性测试请求"""
-    rtsp_url: str = Field(..., description="RTSP 流地址")
-    rtsp_username: Optional[str] = Field(None, description="RTSP 用户名")
-    rtsp_password: Optional[str] = Field(None, description="RTSP 密码")
+    rtsp_url: str = Field(..., description="RTSP 流地址（可含认证）")
 
 
 router = APIRouter()
@@ -171,8 +169,8 @@ async def probe_stream_info(
     """
     result = probe_stream(
         body.rtsp_url,
-        username=body.rtsp_username,
-        password=body.rtsp_password,
+        username=None,
+        password=None,
         timeout_sec=10
     )
     if not result.get("success"):
@@ -235,8 +233,6 @@ async def get_camera(
         "area_id": camera.area_id,
         "area_name": camera.area.name if camera.area else None,
         "rtsp_url": camera.rtsp_url,
-        "rtsp_username": camera.rtsp_username,
-        "rtsp_password": camera.rtsp_password,
         "manufacturer": camera.manufacturer,
         "device_model": camera.device_model,
         "ip_address": camera.ip_address,
@@ -350,8 +346,6 @@ async def create_camera(
         description=camera_data.description,
         area_id=camera_data.area_id,
         rtsp_url=camera_data.rtsp_url,
-        rtsp_username=camera_data.rtsp_username,
-        rtsp_password=camera_data.rtsp_password,
         manufacturer=camera_data.manufacturer,
         device_model=camera_data.device_model,
         ip_address=camera_data.ip_address,
@@ -636,8 +630,8 @@ async def camera_snapshot(
     ok, storage_key = save_snapshot(
         camera_id,
         camera.rtsp_url,
-        username=camera.rtsp_username,
-        password=camera.rtsp_password,
+        username=None,
+        password=None,
         save_dir=save_dir,
     )
     if not ok or not storage_key:

@@ -7,6 +7,7 @@ RTSP 流探测服务
 from typing import Optional, Dict, Any
 
 from common.logging import logger
+from engine.utils.ffmpeg_path import resolve_ffprobe_path
 
 
 def build_rtsp_url(
@@ -101,8 +102,10 @@ def probe_stream_ffprobe(
     result = {"success": False, "width": None, "height": None, "fps": None, "resolution": None, "error": None}
     
     try:
+        from config.settings import settings
+        ffprobe_exe = resolve_ffprobe_path(settings.FFPROBE_PATH or None)
         cmd = [
-            "ffprobe",
+            ffprobe_exe,
             "-v", "quiet",
             "-print_format", "json",
             "-show_streams",

@@ -13,7 +13,13 @@
         :key="item.id"
         class="alert-item"
       >
-        <div class="alert-thumb">
+        <div
+          class="alert-thumb alert-thumb--clickable"
+          role="button"
+          tabindex="0"
+          @click="openImageViewer(item.thumb)"
+          @keydown.enter="openImageViewer(item.thumb)"
+        >
           <img :src="item.thumb" :alt="item.title" />
           <span class="live-badge">LIVE</span>
         </div>
@@ -48,6 +54,10 @@
         </div>
       </div>
     </div>
+    <ImageViewer
+      v-model:show="showImageViewer"
+      :src="imageViewerSrc"
+    />
   </div>
 </template>
 
@@ -55,6 +65,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { getAlarmList, type Alarm } from '@/api/alarm'
+import ImageViewer from '@/components/ImageViewer.vue'
 
 interface AlertItem {
   id: string
@@ -69,6 +80,13 @@ interface AlertItem {
 
 const router = useRouter()
 const alerts = ref<AlertItem[]>([])
+
+const showImageViewer = ref(false)
+const imageViewerSrc = ref<string | null>(null)
+function openImageViewer(url: string) {
+  imageViewerSrc.value = url
+  showImageViewer.value = true
+}
 
 function goHistory() {
   router.push('/alarm')
@@ -200,6 +218,13 @@ onMounted(() => {
   height: 72px;
   border-radius: 8px;
   overflow: hidden;
+}
+.alert-thumb--clickable {
+  cursor: pointer;
+}
+.alert-thumb--clickable:hover {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
 }
 
 .alert-thumb img {

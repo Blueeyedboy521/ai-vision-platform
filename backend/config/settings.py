@@ -172,6 +172,15 @@ class Settings(BaseSettings):
         default=False,
         description="调试：由 StreamReader 直接用 FFmpeg 推流到 push_url，并关闭推理与 StreamWriter（用于定位播放延迟来源）"
     )
+    # FFmpeg 安装路径：空则自动检测（which + Windows 常见目录），可填目录或完整可执行文件路径
+    FFMPEG_PATH: str = Field(
+        default="",
+        description="FFmpeg 可执行文件路径或所在目录，空则自动检测"
+    )
+    FFPROBE_PATH: str = Field(
+        default="",
+        description="ffprobe 可执行文件路径或所在目录，空则自动检测（通常与 ffmpeg 同目录）"
+    )
 
     # ==================== 存储配置 ====================
     STORAGE_TYPE: str = Field(

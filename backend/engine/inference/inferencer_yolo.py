@@ -17,23 +17,24 @@ from .inferencer import InferenceResult
 from .draw_utils import draw_detections_inplace
 
 
-def _read_classes_from_redis(model_id: str) -> Optional[List[str]]:
-    """从 Redis 模型配置读取 classes，用于覆盖或补充模型自带 names"""
-    from engine.redis import get_model_classes
-    return get_model_classes(model_id)
-
-
 class UltralyticsYoloInferencer:
-    """ultralytics YOLO 推理器：load() 加载模型并可选从 Redis 覆盖 class names，infer() 返回 InferenceResult"""
+    """ultralytics YOLO 推理器：load() 加载模型，classes/class_algo_map 由 Scheduler 传入，不再读 Redis"""
 
-    def __init__(self, model_id: str, model_path: str, device: str):
+    def __init__(
+        self,
+        model_id: str,
+        model_path: str,
+        device: str,
+        classes: Optional[List[str]] = None,
+        class_algo_map: Optional[Dict[str, Dict[str, Any]]] = None,
+    ):
         self.model_id = model_id
         self.model_path = model_path
         self.device = device
+        self._classes = classes  # 由 Scheduler 传入，不再从 Redis 读
+        self._class_algo_map = class_algo_map or {}
         self._model = None
         self._names: Dict[int, str] = {}
-        # target_class -> {id, code, name}
-        self._class_algo_map: Dict[str, Dict[str, Any]] = {}
 
     def load(self) -> None:
         """加载 YOLO 模型（如需则先下载）；可选从 Redis model:config 读取 classes 覆盖模型 names"""
@@ -60,19 +61,11 @@ class UltralyticsYoloInferencer:
         if not isinstance(self._names, dict):
             self._names = {i: str(v) for i, v in enumerate(self._names)} if self._names else {}
 
-        # 可选：用 Redis 配置的 classes 覆盖
-        redis_classes = _read_classes_from_redis(self.model_id)
-        if redis_classes:
-            self._names = {i: name for i, name in enumerate(redis_classes)}
-            logger.info(f"YOLO 使用 Redis 配置的 classes: model_id={self.model_id}, count={len(redis_classes)}")
-
-        # 读取模型下算法与目标类别的映射（供后续在 detections 中标记 algorithm_id）
-        try:
-            from engine.redis import get_model_algorithms_class_map
-
-            self._class_algo_map = get_model_algorithms_class_map(self.model_id) or {}
-        except Exception as e:
-            logger.warning(f\"读取模型算法类别映射失败: model_id={self.model_id}, err={e}\")
+        # 使用 Scheduler 传入的 classes 覆盖（不再读 Redis）
+        if self._classes:
+            self._names = {i: name for i, name in enumerate(self._classes)}
+            logger.info(f"YOLO 使用配置的 classes: model_id={self.model_id}, count={len(self._classes)}")
+        # class_algo_map 已在 __init__ 中由 Scheduler 传入
 
         try:
             self._model.to(self.device)

@@ -7,7 +7,7 @@
 import json
 from typing import Optional, List, Any, Dict, TYPE_CHECKING
 
-from sqlalchemy import String, Boolean, Float, JSON, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Boolean, Float, Integer, JSON, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, AuditMixin, generate_uuid
@@ -86,6 +86,20 @@ class CameraAlgorithm(Base, AuditMixin):
         comment="检测区域 (多边形坐标列表)"
     )
     
+    # ==================== 抽帧与告警间隔 ====================
+    inference_interval_sec: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=5,
+        comment="识别间隔(秒)，控制后台算法抽帧分析间隔"
+    )
+    alarm_interval_sec: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=30,
+        comment="告警间隔(秒)，同一告警在此间隔内不重复推送，须>=识别间隔"
+    )
+
     # ==================== 状态 ====================
     is_enabled: Mapped[bool] = mapped_column(
         Boolean,

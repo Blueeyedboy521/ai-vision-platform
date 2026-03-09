@@ -247,7 +247,25 @@ backend/
     - `id`, `code`, `name`, `model_id`, `target_classes`, `default_confidence`, `alert_config`, `is_enabled` 等。
 - **摄像头-算法绑定配置（FastAPI → Engine）**
   - `camera:algorithm:config:{camera_id}:{algorithm_id}`：某摄像头与某算法的一条配置：
-    - `camera_id`, `algorithm_id`, `model_id`, `confidence`（生效置信度）, `alert_config`（生效告警配置）, `regions`, `is_enabled`。
+    - `camera_id`, `algorithm_id`, `model_id`, `confidence`（生效置信度）, `alert_config`（生效告警配置）, `regions`, `inference_interval_sec`, `alarm_interval_sec`, `is_enabled`。
+
+#### 3.2.1 告警策略：算法默认 + 摄像头可覆盖
+
+告警相关配置采用「算法定义默认、摄像头按需覆盖」的设计：
+
+- **算法侧（模型上架 / 算法配置）**：定义该能力的默认告警策略
+  - `trigger_type`：立即触发 / 持续触发 / 数量触发
+  - `duration_seconds`：持续 N 秒才告警（持续触发时）
+  - `count_threshold`：数量 ≥ N 才告警（数量触发时）
+  - `cooldown_seconds`：同一告警冷却时间（秒）
+  - `alert_level`：告警级别（info / warning / danger）
+
+- **摄像头侧（摄像头-算法配置）**：可覆盖上述任意项
+  - 若客户**不配置**告警策略（`alert_config` 为空）：`camera_algorithms.alert_config = null`，Engine 使用算法的默认配置。
+  - 若客户**点击告警策略**并保存：`camera_algorithms.alert_config` 存储覆盖值，`get_effective_alert_config()` 合并算法默认 + 覆盖后写入 Redis，Engine 读取生效配置。
+
+- **ResultHandler**：从 Redis 的 `camera:algorithm:config:{camera_id}:{algorithm_id}` 读取 `alert_config`（已为合并后的生效配置），按 `trigger_type` / `duration_seconds` / `count_threshold` 等执行告警判定。
+
 - **告警去重**
   - `alarm:dedup:{camera_id}:{algorithm_id}`：按摄像头 + 算法维度的去重 Key。
 - **摄像头直播心跳**
@@ -263,7 +281,7 @@ backend/
   - FastAPI 侧所有与模型 / 算法 / 摄像头相关的 Redis 写操作统一封装在 `app.core.redis` 中（例如 `write_model_to_redis`、`write_algorithm_to_redis`、摄像头配置与直播/推理状态集合维护等），API 层仅调用这些封装方法，不直接操作 `redis.client`，便于后续调整 Key 结构或序列化细节。
 - **Engine 仅依赖 Redis**：
   - 启动时从各类 `config:*` Key 拉取快照。
-  - 运行过程中订阅 `engine:config_update`，根据事件类型到 Redis 读取最新配置并更新内存（当前版本先以日志为主，后续可在此基础上实现真正的热更新）。
+  - 运行过程中订阅 `engine:config_update`，根据事件类型到 Redis 读取最新配置并更新内存（`Scheduler` 热刷新 `self.cameras/self.models`；`PipelineService` 与推理器只消费内存配置，不再直接读 Redis）。
 - **应用启动全量同步**：FastAPI 启动时通过 `app.services.bootstrap_sync.sync_configs_to_redis_and_streams()` 将当前 DB 中的模型、算法、摄像头及摄像头-算法绑定全量写入 Redis，并调用 `stream_manager.register_stream` 为每个摄像头注册流，保证 Engine 冷启动即可从 Redis 读到完整配置；摄像头增/改/删时 API 同步写/删 `camera:config:{camera_id}`。
 
 ### 3.3 摄像头启用状态与直播控制

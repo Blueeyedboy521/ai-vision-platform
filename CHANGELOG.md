@@ -5,6 +5,9 @@
 - **告警清洗与异步转发链路**：`ResultHandler` 对推理结果做阈值/区域/变化检测（3 秒窗口 + IoU 变化）后生成告警，先落本地临时截图，再由 `Scheduler` 内部告警线程上传到 Storage（MinIO）并写入 Redis `alarm_queue`，由 app 侧 `AlarmConsumer` 入库并推送 WS/通知。
 - **摄像头在线状态（基于快照）**：`live_heartbeat_monitor` 定期遍历所有摄像头尝试更新快照，成功则设置 `camera:online:{camera_id}`（TTL=100s），失败则删除；摄像头列表/详情与系统看板从 Redis 实时读取在线状态。
 - **前端实时数据对齐**：告警管理/首页告警列表/设备健康等改为调用后端真实接口（`/system/dashboard`、`/alarms`、`/alarms/stats`），并修复告警管理页“视频直播”取流逻辑，复用摄像头管理页的开播/取 `http-flv`/拼 token/开发代理与心跳保活方案。
+- **Engine 配置热刷新收口**：Engine 侧 Redis 配置读取收口到 `Scheduler`，模型/摄像头/算法/绑定增改事件会刷新 `self.models/self.cameras`；启停推理/直播时会再拉取一次该摄像头最新配置。`PipelineService` 与推理器不再直接读 Redis 配置。
+- **区域过滤按算法维度**：`ResultHandler._clean_detections` 将 `regions` 按 `algorithm_id` 分组过滤，避免不同算法区域互相干扰。
+- **摄像头-算法配置扩展**：Redis `camera:algorithm:config:{camera_id}:{algorithm_id}` 增加 `inference_interval_sec` / `alarm_interval_sec` 字段并在 API 返回中透出。
 
 ### v2.8.0 - 2026-03-02
 
@@ -76,4 +79,5 @@
 ### v2.0.1 - 2026-02-11
 
 - 新的提交：本次版本发布包含最近一次代码更新。
+
 

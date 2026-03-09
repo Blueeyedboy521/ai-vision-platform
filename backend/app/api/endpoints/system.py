@@ -25,6 +25,25 @@ from common.logging import logger
 router = APIRouter()
 
 
+@router.get("/ffmpeg-path", summary="FFmpeg 安装路径（自动检测）")
+async def get_ffmpeg_path(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    返回 ffmpeg / ffprobe 可执行文件路径。
+    优先使用配置 FFMPEG_PATH/FFPROBE_PATH，未配置时自动检测（which + Windows 常见目录）。
+    """
+    from engine.utils.ffmpeg_path import resolve_ffmpeg_path, resolve_ffprobe_path
+    ffmpeg = resolve_ffmpeg_path(settings.FFMPEG_PATH or None)
+    ffprobe = resolve_ffprobe_path(settings.FFPROBE_PATH or None)
+    return success_response({
+        "ffmpeg_path": ffmpeg,
+        "ffprobe_path": ffprobe,
+        "configured_ffmpeg": bool(settings.FFMPEG_PATH and settings.FFMPEG_PATH.strip()),
+        "configured_ffprobe": bool(settings.FFPROBE_PATH and settings.FFPROBE_PATH.strip()),
+    })
+
+
 @router.get("/health", summary="健康检查")
 async def health_check():
     """

@@ -156,7 +156,9 @@ export function updateCameraAlgorithmConfig(
     confidence: number
     is_enabled: boolean
     regions: number[][][]
-    alert_config: Record<string, unknown>
+    alert_config: Record<string, unknown> | null
+    inference_interval_sec: number
+    alarm_interval_sec: number
   }>
 ) {
   return request.put(`/algorithms/camera/${cameraId}/configs/${configId}`, data)

@@ -16,6 +16,7 @@ from loguru import logger
 from config.settings import settings
 
 from engine.redis import mark_camera_live_started
+from engine.utils.ffmpeg_path import resolve_ffmpeg_path
 
 from .overlay_state import OverlayState
 from engine.inference.inferencer import InferenceResult
@@ -142,11 +143,12 @@ class StreamWriter:
     def _connect(self) -> bool:
         """启动 FFmpeg 子进程，从 pipe 读 rawvideo 推送到 RTMP"""
         try:
+            ffmpeg_exe = resolve_ffmpeg_path(settings.FFMPEG_PATH or None)
             self._close_process()
             
             # rawvideo: BGR24, 与 OpenCV 默认一致
             cmd = [
-                "ffmpeg",
+                ffmpeg_exe,
                 "-y",
                 "-fflags", "nobuffer",       # 关闭输入缓冲
                 "-flags", "low_delay",        # 低延迟模式

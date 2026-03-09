@@ -37,17 +37,7 @@ class CameraBase(BaseModel):
     rtsp_url: str = Field(
         ...,
         max_length=500,
-        description="RTSP 流地址"
-    )
-    rtsp_username: Optional[str] = Field(
-        default=None,
-        max_length=50,
-        description="RTSP 用户名"
-    )
-    rtsp_password: Optional[str] = Field(
-        default=None,
-        max_length=100,
-        description="RTSP 密码"
+        description="RTSP 流地址（可含认证，如 rtsp://user:pass@host/path）"
     )
     manufacturer: Optional[str] = Field(
         default=None,
@@ -129,16 +119,6 @@ class CameraUpdate(BaseModel):
         default=None,
         max_length=500,
         description="RTSP 流地址"
-    )
-    rtsp_username: Optional[str] = Field(
-        default=None,
-        max_length=50,
-        description="RTSP 用户名"
-    )
-    rtsp_password: Optional[str] = Field(
-        default=None,
-        max_length=100,
-        description="RTSP 密码"
     )
     manufacturer: Optional[str] = Field(
         default=None,

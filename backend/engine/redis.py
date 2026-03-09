@@ -214,6 +214,8 @@ def scan_camera_algorithm_configs(camera_id: str) -> List[Dict[str, Any]]:
                     "confidence": cfg.get("confidence"),
                     "alert_config": cfg.get("alert_config"),
                     "regions": cfg.get("regions") or [],
+                    "inference_interval_sec": int(cfg.get("inference_interval_sec", 5)),
+                    "alarm_interval_sec": int(cfg.get("alarm_interval_sec", 30)),
                 },
             })
     except Exception as e:

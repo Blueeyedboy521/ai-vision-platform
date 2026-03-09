@@ -108,6 +108,8 @@ async def sync_configs_to_redis_and_streams() -> None:
               "confidence": cfg.get_effective_confidence(),
               "alert_config": cfg.get_effective_alert_config(),
               "regions": cfg.regions or [],
+              "inference_interval_sec": getattr(cfg, "inference_interval_sec", 5),
+              "alarm_interval_sec": getattr(cfg, "alarm_interval_sec", 30),
               "is_enabled": cfg.is_enabled,
             },
             ensure_ascii=False,
