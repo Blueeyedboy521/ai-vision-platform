@@ -48,9 +48,9 @@ CREATE TABLE IF NOT EXISTS areas (
     name VARCHAR(100) NOT NULL COMMENT '区域名称',
     parent_id CHAR(32) DEFAULT NULL COMMENT '父级区域ID',
     level INT DEFAULT 1 COMMENT '层级深度',
+    hierarchy_path VARCHAR(500) DEFAULT NULL COMMENT '层级路径（按名称拼接，如 一级/二级/三级）',
     sort_order INT DEFAULT 0 COMMENT '排序序号',
     description TEXT DEFAULT NULL COMMENT '区域描述',
-    is_enabled TINYINT(1) DEFAULT 1 COMMENT '是否启用: 1-启用, 0-禁用',
     created_by CHAR(32) DEFAULT NULL COMMENT '创建人ID',
     updated_by CHAR(32) DEFAULT NULL COMMENT '更新人ID',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS areas (
     PRIMARY KEY (id),
     KEY idx_parent_id (parent_id),
     KEY idx_level (level),
+    KEY idx_hierarchy_path (hierarchy_path),
     KEY idx_sort_order (sort_order),
     CONSTRAINT fk_areas_parent FOREIGN KEY (parent_id) REFERENCES areas(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='区域表';

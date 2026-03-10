@@ -13,6 +13,11 @@
 - **告警截图上传去重与回收**：`Scheduler._start_alarm_dispatcher` 对相同 `local_snapshot_path` 维护 `{snapshot_path,total,seen}` 缓存，首次出现时绘框并上传，后续复用已上传路径；当 `seen >= total` 时删除本地临时文件并清理缓存，避免多算法告警重复上传同一帧图片。
 - **告警检测数据结构统一**：Engine 在告警链路中直接将整帧 `detections` 列表写入 `alarm_data.detections`，`AlarmConsumer` 持久化为 `Alarm.detection_data(JSON)`；`/alarms` 与 `/alarms/{id}` 接口通过 `detection_data` 字段透出包含 `bbox/class_name/confidence/algorithm_id` 的检测结果，供前端绘框与展示置信度。
 - **前端告警页增强**：首页 `AlertList` 与告警管理页 `AlarmManagement` 通过 `detection_data` 将检测框与类别/置信度叠加在截图上展示；告警管理页改为使用后端分页（`page/page_size/page_info.total`），支持页码与每页条数切换，避免一次性加载全部历史告警。
+- **告警数据冗余与区域层级**：数据库 `alarms` 表增加 `camera_name`、`algorithm_name`、`area_name` 冗余字段，区域表 `areas` 增加 `level` 与 `hierarchy_path`，并在区域增改与启动脚本中自动回填，告警入库时优先使用 `Camera.area_id → Area.hierarchy_path` 计算层级路径。
+- **安全文件预览与前端拼接**：新增 `/api/v1/files/preview` 接口，统一通过 Storage 读取正式文件并返回流响应，不再向前端暴露 MinIO 实际地址；支持 header 或 `?token=` 两种鉴权方式，前端通过 `appendToken()` 工具函数在告警快照等场景拼接 token。
+- **统一 WebSocket 告警通知与详情组件**：新增全局告警 WebSocket 客户端与 `useAlarmNotification` 组合式函数，在首页和应用根组件中统一接收 `/ws/alarms` 实时消息、弹出右下角富样式告警气泡，并通过复用的 `AlarmDetail` 组件展示可缩放+绘框的截图详情。
+- **告警中心拆分与统计大屏**：原 `AlarmManagement` 页面拆分为 `告警列表` 与 `告警统计` 两个菜单，前者统一使用分页列表 + 统一告警详情组件，后者基于 `/alarms/stats` 实现卡片/趋势图/Top5/等级分布统计页面，并提供 `stitch/alarm_stat.html` + `alarm_stat.css` 作为像素级对照模板。
+- **前端卡片描边统一**：前端全局样式增加 `card-border-xl` 工具类，覆盖视频管理、模型管理、推送管理、系统概览、消息中心、首页告警卡片与告警中心等页面的卡片/搜索栏/列表容器边框样式，使整体 UI 轮廓和圆角风格保持一致。
 
 ### v2.8.0 - 2026-03-02
 
