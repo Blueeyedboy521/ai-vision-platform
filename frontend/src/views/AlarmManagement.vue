@@ -22,262 +22,322 @@
       </div>
     </div>
 
-    <!-- Stats Overview -->
-    <div class="stats-grid">
-      <div class="stat-card stat-card--danger">
-        <div class="stat-card__icon">
-          <n-icon :size="24"><AlertCircleOutline /></n-icon>
-        </div>
-        <div class="stat-card__content">
-          <span class="stat-card__value">{{ stats.critical }}</span>
-          <span class="stat-card__label">紧急告警</span>
-        </div>
-        <div class="stat-card__trend up">
-          <n-icon :size="14"><TrendingUpOutline /></n-icon>
-          +12%
-        </div>
-      </div>
-      <div class="stat-card stat-card--warning">
-        <div class="stat-card__icon">
-          <n-icon :size="24"><WarningOutline /></n-icon>
-        </div>
-        <div class="stat-card__content">
-          <span class="stat-card__value">{{ stats.warning }}</span>
-          <span class="stat-card__label">一般告警</span>
-        </div>
-        <div class="stat-card__trend down">
-          <n-icon :size="14"><TrendingDownOutline /></n-icon>
-          -5%
-        </div>
-      </div>
-      <div class="stat-card stat-card--info">
-        <div class="stat-card__icon">
-          <n-icon :size="24"><InformationCircleOutline /></n-icon>
-        </div>
-        <div class="stat-card__content">
-          <span class="stat-card__value">{{ stats.info }}</span>
-          <span class="stat-card__label">提示信息</span>
-        </div>
-        <div class="stat-card__trend">—</div>
-      </div>
-      <div class="stat-card stat-card--success">
-        <div class="stat-card__icon">
-          <n-icon :size="24"><CheckmarkCircleOutline /></n-icon>
-        </div>
-        <div class="stat-card__content">
-          <span class="stat-card__value">{{ stats.resolved }}</span>
-          <span class="stat-card__label">已处理</span>
-        </div>
-        <div class="stat-card__trend up">
-          <n-icon :size="14"><TrendingUpOutline /></n-icon>
-          +8%
-        </div>
-      </div>
-    </div>
-
-    <!-- Filters & Search -->
-    <div class="filter-bar">
-      <div class="filter-bar__left">
-        <n-select
-          v-model:value="filters.level"
-          :options="levelOptions"
-          placeholder="告警级别"
-          clearable
-          style="width: 140px"
-        />
-        <n-select
-          v-model:value="filters.type"
-          :options="typeOptions"
-          placeholder="告警类型"
-          clearable
-          style="width: 160px"
-        />
-        <n-select
-          v-model:value="filters.status"
-          :options="statusOptions"
-          placeholder="处理状态"
-          clearable
-          style="width: 140px"
-        />
-        <n-date-picker
-          v-model:value="filters.dateRange"
-          type="daterange"
-          clearable
-          style="width: 260px"
-        />
-      </div>
-      <div class="filter-bar__right">
-        <n-input
-          v-model:value="searchQuery"
-          placeholder="搜索告警内容、设备名称..."
-          clearable
-          style="width: 280px"
-        >
-          <template #prefix>
-            <n-icon><SearchOutline /></n-icon>
-          </template>
-        </n-input>
-      </div>
-    </div>
-
-    <!-- Alarm List -->
-    <div class="alarm-list">
-      <div class="alarm-list__header">
-        <n-checkbox 
-          :checked="isAllSelected" 
-          :indeterminate="isIndeterminate"
-          @update:checked="handleSelectAll"
-        />
-        <span class="alarm-list__col alarm-list__col--level">级别</span>
-        <span class="alarm-list__col alarm-list__col--thumb">截图</span>
-        <span class="alarm-list__col alarm-list__col--type">类型</span>
-        <span class="alarm-list__col alarm-list__col--content">告警内容</span>
-        <span class="alarm-list__col alarm-list__col--device">关联设备</span>
-        <span class="alarm-list__col alarm-list__col--time">告警时间</span>
-        <span class="alarm-list__col alarm-list__col--status">状态</span>
-        <span class="alarm-list__col alarm-list__col--action">操作</span>
-      </div>
-      <div class="alarm-list__body">
-        <div 
-          v-for="alarm in paginatedAlarms" 
-          :key="alarm.id" 
-          class="alarm-item"
-          :class="`alarm-item--${alarm.level}`"
-        >
-          <n-checkbox v-model:checked="alarm.selected" />
-          <div class="alarm-list__col alarm-list__col--level">
-            <span class="level-badge" :class="`level-badge--${alarm.level}`">
-              {{ getLevelText(alarm.level) }}
-            </span>
+    <!-- Main Tabs -->
+    <n-tabs v-model:value="activeTab" type="line" class="alarm-tabs">
+      <n-tab-pane name="list" tab="告警列表">
+        <!-- Filters & Search -->
+        <div class="filter-bar">
+          <div class="filter-bar__left">
+            <n-select
+              v-model:value="filters.level"
+              :options="levelOptions"
+              placeholder="告警级别"
+              clearable
+              style="width: 140px"
+            />
+            <n-select
+              v-model:value="filters.type"
+              :options="typeOptions"
+              placeholder="告警类型"
+              clearable
+              style="width: 160px"
+            />
+            <n-select
+              v-model:value="filters.status"
+              :options="statusOptions"
+              placeholder="处理状态"
+              clearable
+              style="width: 140px"
+            />
+            <n-date-picker
+              v-model:value="filters.dateRange"
+              type="daterange"
+              clearable
+              style="width: 260px"
+            />
           </div>
-          <div class="alarm-list__col alarm-list__col--thumb">
-            <div
-              class="alarm-thumb alarm-thumb--clickable"
-              role="button"
-              tabindex="0"
-              @click="openImageViewer(alarm)"
-              @keydown.enter="openImageViewer(alarm)"
+          <div class="filter-bar__right">
+            <n-input
+              v-model:value="searchQuery"
+              placeholder="搜索告警内容、设备名称或区域..."
+              clearable
+              style="width: 280px"
             >
-              <img v-if="alarm.snapshotUrl" :src="alarm.snapshotUrl" alt="告警截图" />
-              <div v-else class="alarm-thumb__placeholder">—</div>
+              <template #prefix>
+                <n-icon><SearchOutline /></n-icon>
+              </template>
+            </n-input>
+          </div>
+        </div>
+
+        <!-- Alarm List -->
+        <div class="alarm-list">
+          <div class="alarm-list__header">
+            <n-checkbox 
+              :checked="isAllSelected" 
+              :indeterminate="isIndeterminate"
+              @update:checked="handleSelectAll"
+            />
+            <span class="alarm-list__col alarm-list__col--level">级别</span>
+            <span class="alarm-list__col alarm-list__col--thumb">截图</span>
+            <span class="alarm-list__col alarm-list__col--type">类型</span>
+            <span class="alarm-list__col alarm-list__col--content">告警内容</span>
+            <span class="alarm-list__col alarm-list__col--device">关联设备 / 区域</span>
+            <span class="alarm-list__col alarm-list__col--time">告警时间</span>
+            <span class="alarm-list__col alarm-list__col--status">状态</span>
+            <span class="alarm-list__col alarm-list__col--action">操作</span>
+          </div>
+          <div class="alarm-list__body">
+            <div 
+              v-for="alarm in paginatedAlarms" 
+              :key="alarm.id" 
+              class="alarm-item"
+              :class="`alarm-item--${alarm.level}`"
+            >
+              <n-checkbox v-model:checked="alarm.selected" />
+              <div class="alarm-list__col alarm-list__col--level">
+                <span class="level-badge" :class="`level-badge--${alarm.level}`">
+                  {{ getLevelText(alarm.level) }}
+                </span>
+              </div>
+              <div class="alarm-list__col alarm-list__col--thumb">
+                <div
+                  class="alarm-thumb alarm-thumb--clickable"
+                  role="button"
+                  tabindex="0"
+                  @click="viewAlarm(alarm)"
+                  @keydown.enter="viewAlarm(alarm)"
+                >
+                  <img v-if="alarm.snapshotUrl" :src="alarm.snapshotUrl" alt="告警截图" />
+                  <div v-else class="alarm-thumb__placeholder">—</div>
+                </div>
+              </div>
+              <div class="alarm-list__col alarm-list__col--type">
+                <n-icon :size="16" class="type-icon"><component :is="getTypeIcon(alarm.type)" /></n-icon>
+                {{ alarm.type }}
+              </div>
+              <div class="alarm-list__col alarm-list__col--content">
+                <span class="alarm-content">{{ alarm.content }}</span>
+              </div>
+              <div class="alarm-list__col alarm-list__col--device">
+                <div class="device-info">
+                  <div class="device-name">{{ alarm.device }}</div>
+                  <div class="device-area" v-if="alarm.areaName">
+                    {{ alarm.areaName }}
+                  </div>
+                  <div class="device-area device-area--empty" v-else>
+                    未关联区域
+                  </div>
+                </div>
+              </div>
+              <div class="alarm-list__col alarm-list__col--time">
+                {{ alarm.time }}
+              </div>
+              <div class="alarm-list__col alarm-list__col--status">
+                <span class="status-tag" :class="`status-tag--${alarm.status}`">
+                  {{ getStatusText(alarm.status) }}
+                </span>
+              </div>
+              <div class="alarm-list__col alarm-list__col--action">
+                <n-button text type="primary" size="small" @click="viewAlarm(alarm)">
+                  <template #icon><n-icon><EyeOutline /></n-icon></template>
+                </n-button>
+                <n-button
+                  text
+                  type="primary"
+                  size="small"
+                  @click="handleLivePlay(alarm)"
+                >
+                  视频直播
+                </n-button>
+                <n-button 
+                  v-if="alarm.status === 'pending'" 
+                  text type="success" size="small" 
+                  @click="handleAlarm(alarm)"
+                >
+                  <template #icon><n-icon><CheckmarkOutline /></n-icon></template>
+                </n-button>
+                <n-button text type="error" size="small" @click="deleteAlarm(alarm)">
+                  <template #icon><n-icon><TrashOutline /></n-icon></template>
+                </n-button>
+              </div>
             </div>
           </div>
-          <div class="alarm-list__col alarm-list__col--type">
-            <n-icon :size="16" class="type-icon"><component :is="getTypeIcon(alarm.type)" /></n-icon>
-            {{ alarm.type }}
-          </div>
-          <div class="alarm-list__col alarm-list__col--content">
-            <span class="alarm-content">{{ alarm.content }}</span>
-          </div>
-          <div class="alarm-list__col alarm-list__col--device">
-            <span class="device-name">{{ alarm.device }}</span>
-          </div>
-          <div class="alarm-list__col alarm-list__col--time">
-            {{ alarm.time }}
-          </div>
-          <div class="alarm-list__col alarm-list__col--status">
-            <span class="status-tag" :class="`status-tag--${alarm.status}`">
-              {{ getStatusText(alarm.status) }}
-            </span>
-          </div>
-          <div class="alarm-list__col alarm-list__col--action">
-            <n-button text type="primary" size="small" @click="viewAlarm(alarm)">
-              <template #icon><n-icon><EyeOutline /></n-icon></template>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination">
+          <div class="pagination__info">
+            已选择 {{ selectedCount }} 项
+            <n-button v-if="selectedCount > 0" text type="primary" size="small" @click="batchHandle">
+              批量处理
             </n-button>
-            <n-button
-              text
-              type="primary"
-              size="small"
-              @click="handleLivePlay(alarm)"
-            >
-              视频直播
-            </n-button>
-            <n-button 
-              v-if="alarm.status === 'pending'" 
-              text type="success" size="small" 
-              @click="handleAlarm(alarm)"
-            >
-              <template #icon><n-icon><CheckmarkOutline /></n-icon></template>
-            </n-button>
-            <n-button text type="error" size="small" @click="deleteAlarm(alarm)">
-              <template #icon><n-icon><TrashOutline /></n-icon></template>
-            </n-button>
+          </div>
+          <n-pagination
+            v-model:page="currentPage"
+            :page-size="pageSize"
+            :item-count="pageInfo.total"
+            show-size-picker
+            show-quick-jumper
+            :page-sizes="[10, 20, 50]"
+            @update:page-size="handlePageSizeChange"
+            @update:page="handlePageChange"
+          />
+        </div>
+      </n-tab-pane>
+
+      <n-tab-pane name="stats" tab="告警统计">
+        <div class="stats-page">
+          <!-- Overview Cards -->
+          <div class="stats-grid">
+            <div class="stat-card stat-card--danger">
+              <div class="stat-card__icon">
+                <n-icon :size="24"><AlertCircleOutline /></n-icon>
+              </div>
+              <div class="stat-card__content">
+                <span class="stat-card__value">{{ stats.critical }}</span>
+                <span class="stat-card__label">紧急告警</span>
+              </div>
+            </div>
+            <div class="stat-card stat-card--warning">
+              <div class="stat-card__icon">
+                <n-icon :size="24"><WarningOutline /></n-icon>
+              </div>
+              <div class="stat-card__content">
+                <span class="stat-card__value">{{ stats.warning }}</span>
+                <span class="stat-card__label">一般告警</span>
+              </div>
+            </div>
+            <div class="stat-card stat-card--info">
+              <div class="stat-card__icon">
+                <n-icon :size="24"><InformationCircleOutline /></n-icon>
+              </div>
+              <div class="stat-card__content">
+                <span class="stat-card__value">{{ stats.info }}</span>
+                <span class="stat-card__label">提示信息</span>
+              </div>
+            </div>
+            <div class="stat-card stat-card--success">
+              <div class="stat-card__icon">
+                <n-icon :size="24"><CheckmarkCircleOutline /></n-icon>
+              </div>
+              <div class="stat-card__content">
+                <span class="stat-card__value">{{ stats.resolved }}</span>
+                <span class="stat-card__label">已处理</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Detail Sections -->
+          <div class="stats-layout">
+            <div class="stats-left">
+              <div class="stats-section-card">
+                <div class="stats-section-header">
+                  <span class="stats-section-title">近 {{ statsDays }} 天趋势</span>
+                  <span class="stats-section-subtitle">日告警数量变化</span>
+                </div>
+                <div class="trend-list" v-if="alarmStats && alarmStats.trend.length">
+                  <div
+                    v-for="item in alarmStats.trend"
+                    :key="item.date"
+                    class="trend-item"
+                  >
+                    <span class="trend-date">{{ item.date }}</span>
+                    <div class="trend-bar-wrap">
+                      <div
+                        class="trend-bar"
+                        :style="{ width: trendMaxCount ? `${Math.max(6, (item.count / trendMaxCount) * 100)}%` : '0%' }"
+                      ></div>
+                    </div>
+                    <span class="trend-count">{{ item.count }}</span>
+                  </div>
+                </div>
+                <div v-else class="stats-empty">暂无统计数据</div>
+              </div>
+            </div>
+
+            <div class="stats-right">
+              <div class="stats-section-card">
+                <div class="stats-section-header">
+                  <span class="stats-section-title">高频告警摄像头 TOP10</span>
+                  <span class="stats-section-subtitle">按告警次数排序</span>
+                </div>
+                <div class="stats-list" v-if="alarmStats && alarmStats.by_camera.length">
+                  <div
+                    v-for="(item, index) in alarmStats.by_camera"
+                    :key="item.label"
+                    class="stats-list-item"
+                  >
+                    <span class="stats-rank">#{{ index + 1 }}</span>
+                    <div class="stats-list-main">
+                      <div class="stats-list-label">{{ item.label }}</div>
+                      <div class="stats-list-bar-wrap">
+                        <div
+                          class="stats-list-bar"
+                          :style="{ width: cameraMaxCount ? `${Math.max(8, (item.value / cameraMaxCount) * 100)}%` : '0%' }"
+                        ></div>
+                      </div>
+                    </div>
+                    <span class="stats-list-value">{{ item.value }}</span>
+                  </div>
+                </div>
+                <div v-else class="stats-empty">暂无摄像头统计</div>
+              </div>
+
+              <div class="stats-section-card">
+                <div class="stats-section-header">
+                  <span class="stats-section-title">高频告警算法 TOP10</span>
+                  <span class="stats-section-subtitle">按告警次数排序</span>
+                </div>
+                <div class="stats-list" v-if="alarmStats && alarmStats.by_algorithm.length">
+                  <div
+                    v-for="(item, index) in alarmStats.by_algorithm"
+                    :key="item.label"
+                    class="stats-list-item"
+                  >
+                    <span class="stats-rank">#{{ index + 1 }}</span>
+                    <div class="stats-list-main">
+                      <div class="stats-list-label">{{ item.label }}</div>
+                      <div class="stats-list-bar-wrap">
+                        <div
+                          class="stats-list-bar stats-list-bar--secondary"
+                          :style="{ width: algorithmMaxCount ? `${Math.max(8, (item.value / algorithmMaxCount) * 100)}%` : '0%' }"
+                        ></div>
+                      </div>
+                    </div>
+                    <span class="stats-list-value">{{ item.value }}</span>
+                  </div>
+                </div>
+                <div v-else class="stats-empty">暂无算法统计</div>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-    </div>
-
-    <!-- Pagination -->
-    <div class="pagination">
-      <div class="pagination__info">
-        已选择 {{ selectedCount }} 项
-        <n-button v-if="selectedCount > 0" text type="primary" size="small" @click="batchHandle">
-          批量处理
-        </n-button>
-      </div>
-      <n-pagination
-        v-model:page="currentPage"
-        :page-size="pageSize"
-        :item-count="pageInfo.total"
-        show-size-picker
-        show-quick-jumper
-        :page-sizes="[10, 20, 50]"
-        @update:page-size="handlePageSizeChange"
-        @update:page="handlePageChange"
-      />
-    </div>
+      </n-tab-pane>
+    </n-tabs>
 
     <!-- Alarm Detail Modal -->
     <n-modal 
       v-model:show="showDetailModal" 
       preset="card" 
       title="告警详情"
-      :style="{ width: '760px' }"
+      :style="{ width: '900px' }"
       :bordered="false"
     >
-      <div v-if="currentAlarm" class="alarm-detail">
-        <div class="detail-header">
-          <span class="level-badge large" :class="`level-badge--${currentAlarm.level}`">
-            {{ getLevelText(currentAlarm.level) }}
-          </span>
-          <span class="detail-type">{{ currentAlarm.type }}</span>
-          <span class="detail-time">{{ currentAlarm.time }}</span>
-        </div>
-        <div class="detail-content">
-          <h4>告警内容</h4>
-          <p>{{ currentAlarm.content }}</p>
-        </div>
-        <div class="detail-info">
-          <div class="info-item">
-            <span class="info-label">关联设备</span>
-            <span class="info-value">{{ currentAlarm.device }}</span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">告警位置</span>
-            <span class="info-value">{{ currentAlarm.location || 'A栋仓库入口' }}</span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">处理状态</span>
-            <span class="status-tag" :class="`status-tag--${currentAlarm.status}`">
-              {{ getStatusText(currentAlarm.status) }}
-            </span>
-          </div>
-        </div>
-        <div class="detail-snapshot">
-          <h4>告警截图</h4>
-          <div class="snapshot-grid">
-            <img
-              :src="currentAlarm.snapshotUrl || '/camera-warehouse-01.jpg'"
-              alt="告警截图"
-              class="alarm-detail__img alarm-detail__img--clickable"
-              role="button"
-              tabindex="0"
-              @click="openImageViewer(currentAlarm)"
-              @keydown.enter="openImageViewer(currentAlarm)"
-            />
-          </div>
-        </div>
-      </div>
+      <AlarmDetail
+        v-if="currentAlarm"
+        :alarm="{
+          level: currentAlarm.level,
+          alarm_time: currentAlarm.time,
+          camera_name: currentAlarm.device,
+          area_name: currentAlarm.areaName,
+          algorithm_name: currentAlarm.type,
+          title: currentAlarm.content,
+          description: currentAlarm.content,
+          snapshot_url: currentAlarm.snapshotUrl,
+          detection_data: currentAlarm.detectionData,
+        }"
+      />
       <template #footer>
         <div class="modal-footer">
           <n-button @click="showDetailModal = false">关闭</n-button>
@@ -302,12 +362,7 @@
       </div>
     </n-modal>
 
-    <!-- 图片查看（缩放/平移） -->
-    <ImageViewer
-      v-model:show="showImageViewer"
-      :src="imageViewerSrc"
-      :detections="imageViewerDetections"
-    />
+    <!-- 图片查看（缩放/平移）由 AlarmDetail 内部实现 -->
 
     <!-- Settings Modal -->
     <n-modal 
@@ -351,6 +406,7 @@ import type { Component } from 'vue'
 import { 
   NButton, NIcon, NSelect, NDatePicker, NInput, NCheckbox,
   NPagination, NModal, NForm, NFormItem, NSwitch, NInputNumber,
+  NTabs, NTabPane,
   useMessage 
 } from 'naive-ui'
 import { 
@@ -362,9 +418,10 @@ import {
 } from '@vicons/ionicons5'
 import { getAlarmList, getAlarmStatistics, type Alarm as ApiAlarm, type AlarmStatistics } from '@/api/alarm'
 import FlvPlayer from '@/components/FlvPlayer.vue'
-import ImageViewer from '@/components/ImageViewer.vue'
 import { getCameraPlayUrls, startCamera, stopCamera, cameraLiveHeartbeat } from '@/api/camera'
 import { useUserStore } from '@/stores/user'
+import AlarmDetail from '@/components/AlarmDetail.vue'
+import { appendToken } from '@/utils/auth_url'
 
 interface Alarm {
   id: string
@@ -379,10 +436,14 @@ interface Alarm {
   snapshotUrl?: string | null
   cameraId?: string
   detectionData?: any | null
+  areaName?: string | null
 }
 
 const message = useMessage()
 const userStore = useUserStore()
+
+// Tabs
+const activeTab = ref<'list' | 'stats'>('list')
 
 // Stats（从后端统计接口加载）
 const stats = ref({
@@ -391,6 +452,9 @@ const stats = ref({
   info: 0,
   resolved: 0
 })
+
+const statsDays = 7
+const alarmStats = ref<AlarmStatistics | null>(null)
 
 // Filters
 const filters = ref({
@@ -440,17 +504,7 @@ const currentAlarm = ref<Alarm | null>(null)
 const showPlayer = ref(false)
 const currentPlayUrl = ref<string | null>(null)
 
-// 图片查看弹框（点击告警截图放大，支持滚轮缩放、拖拽平移）
-const showImageViewer = ref(false)
-const imageViewerSrc = ref<string | null>(null)
-const imageViewerDetections = ref<any[] | null>(null)
-function openImageViewer(alarm: Alarm | null | undefined) {
-  if (!alarm || !alarm.snapshotUrl) return
-  imageViewerSrc.value = alarm.snapshotUrl
-  // detection_data 中通常为包含 bbox 等信息的数组，供前端绘框使用
-  imageViewerDetections.value = (alarm.detectionData as any[]) || null
-  showImageViewer.value = true
-}
+// 图片预览统一由 AlarmDetail 内部的 ImageViewer 提供，此页不再单独维护 ImageViewer 状态
 const livePlayingId = ref<string | null>(null)
 let liveHeartbeatTimer: number | null = null
 
@@ -472,10 +526,26 @@ const refreshOptions = [
 // Alarm data（从后端接口加载，已分页）
 const alarms = ref<Alarm[]>([])
 
+const trendMaxCount = computed(() => {
+  if (!alarmStats.value || !alarmStats.value.trend.length) return 0
+  return Math.max(...alarmStats.value.trend.map(t => t.count))
+})
+
+const cameraMaxCount = computed(() => {
+  if (!alarmStats.value || !alarmStats.value.by_camera.length) return 0
+  return Math.max(...alarmStats.value.by_camera.map(c => c.value))
+})
+
+const algorithmMaxCount = computed(() => {
+  if (!alarmStats.value || !alarmStats.value.by_algorithm.length) return 0
+  return Math.max(...alarmStats.value.by_algorithm.map(a => a.value))
+})
+
 // 将接口 Alarm 转换为本页使用的 Alarm 结构
 function convertApiAlarm(a: ApiAlarm): Alarm {
   // level 映射：后端 level 字段为 'info' | 'warning' | 'danger' | 'critical'
   const level = (a.level as any) === 'danger' ? 'warning' : (a.level as any)
+  const token = userStore.token
   return {
     id: a.id,
     level: level || 'info',
@@ -489,9 +559,10 @@ function convertApiAlarm(a: ApiAlarm): Alarm {
       : ((a.status as any) === 'unconfirmed' ? 'pending' : 'processing'),
     selected: false,
     location: undefined,
-    snapshotUrl: (a as any).snapshot_url ?? (a as any).snapshotUrl ?? null,
+    snapshotUrl: appendToken((a as any).snapshot_url ?? (a as any).snapshotUrl ?? null, token),
     cameraId: a.camera_id,
     detectionData: (a as any).detection_data ?? null,
+    areaName: (a as any).area_name ?? null,
   }
 }
 
@@ -522,6 +593,7 @@ async function loadAlarmStats() {
   try {
     const res = await getAlarmStatistics({ days: 7 })
     const s: AlarmStatistics = (res.data as any).data || (res.data as any)
+    alarmStats.value = s
     const byLevel = s.by_level || []
     const getCount = (lvl: string) => byLevel.find(i => i.label === lvl)?.value ?? 0
     stats.value = {
@@ -543,7 +615,12 @@ const filteredAlarms = computed(() => {
     if (filters.value.status && alarm.status !== filters.value.status) return false
     if (searchQuery.value) {
       const q = searchQuery.value.toLowerCase()
-      return alarm.content.toLowerCase().includes(q) || alarm.device.toLowerCase().includes(q)
+      const area = (alarm.areaName || '').toLowerCase()
+      return (
+        alarm.content.toLowerCase().includes(q) ||
+        alarm.device.toLowerCase().includes(q) ||
+        area.includes(q)
+      )
     }
     return true
   })
@@ -866,7 +943,7 @@ onMounted(() => {
 .alarm-list__col--level { width: 80px; }
 .alarm-list__col--type { width: 120px; gap: var(--spacing-xs); }
 .alarm-list__col--content { flex: 1; min-width: 0; }
-.alarm-list__col--device { width: 140px; }
+.alarm-list__col--device { width: 220px; }
 .alarm-list__col--time { width: 160px; color: var(--text-muted); font-size: var(--font-size-sm); }
 .alarm-list__col--status { width: 90px; }
 .alarm-list__col--action { width: 100px; justify-content: flex-end; gap: var(--spacing-xs); }
@@ -906,10 +983,22 @@ onMounted(() => {
   white-space: nowrap;
   font-size: var(--font-size-sm);
 }
-.device-name { 
-  font-size: var(--font-size-sm); 
+.device-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.device-name {
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
-  font-family: monospace;
+  font-weight: var(--font-weight-semibold);
+}
+.device-area {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.device-area--empty {
+  font-style: italic;
 }
 
 .status-tag {
@@ -936,6 +1025,160 @@ onMounted(() => {
   gap: var(--spacing-sm);
   font-size: var(--font-size-sm);
   color: var(--text-muted);
+}
+
+/* Tabs */
+.alarm-tabs {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.alarm-tabs :deep(.n-tabs-nav-scroll-content) {
+  font-weight: var(--font-weight-medium);
+}
+
+/* Stats Page layout */
+.stats-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.stats-layout {
+  display: grid;
+  grid-template-columns: 2fr 3fr;
+  gap: var(--spacing-lg);
+}
+
+.stats-section-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-color);
+  padding: var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.stats-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stats-section-title {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.stats-section-subtitle {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.stats-empty {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+/* Trend list */
+.trend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.trend-item {
+  display: grid;
+  grid-template-columns: 96px 1fr 48px;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+}
+
+.trend-date {
+  color: var(--text-secondary);
+}
+
+.trend-bar-wrap {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-page);
+  overflow: hidden;
+}
+
+.trend-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #3b82f6, #22c55e);
+}
+
+.trend-count {
+  text-align: right;
+  color: var(--text-primary);
+}
+
+/* Stats list */
+.stats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.stats-list-item {
+  display: grid;
+  grid-template-columns: 36px 1fr 40px;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+}
+
+.stats-rank {
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+}
+
+.stats-list-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stats-list-label {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.stats-list-bar-wrap {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-page);
+  overflow: hidden;
+}
+
+.stats-list-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f97316, #ef4444);
+}
+
+.stats-list-bar--secondary {
+  background: linear-gradient(90deg, #6366f1, #0ea5e9);
+}
+
+.stats-list-value {
+  text-align: right;
+  color: var(--text-primary);
 }
 
 /* Modal Detail */

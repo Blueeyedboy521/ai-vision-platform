@@ -241,6 +241,18 @@ async def update_algorithm(
         )
     
     update_data = algo_data.model_dump(exclude_unset=True)
+
+    # 若修改了 code，需保证全局唯一（Algorithm.code 有 unique 约束）
+    new_code = update_data.get("code")
+    if new_code and new_code != algo.code:
+        existing = await db.execute(
+            select(Algorithm).where(Algorithm.code == new_code, Algorithm.id != algorithm_id)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="算法编码已存在"
+            )
     
     for field, value in update_data.items():
         if field == "target_classes":

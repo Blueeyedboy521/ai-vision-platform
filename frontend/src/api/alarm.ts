@@ -14,6 +14,7 @@ export interface Alarm {
   id: string
   camera_id: string
   camera_name?: string
+  area_name?: string | null
   algorithm_id: string
   algorithm_name?: string
   alarm_type: string

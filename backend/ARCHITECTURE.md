@@ -284,19 +284,93 @@ backend/
   - 运行过程中订阅 `engine:config_update`，根据事件类型到 Redis 读取最新配置并更新内存（`Scheduler` 热刷新 `self.cameras/self.models`；`PipelineService` 与推理器只消费内存配置，不再直接读 Redis）。
 - **应用启动全量同步**：FastAPI 启动时通过 `app.services.bootstrap_sync.sync_configs_to_redis_and_streams()` 将当前 DB 中的模型、算法、摄像头及摄像头-算法绑定全量写入 Redis，并调用 `stream_manager.register_stream` 为每个摄像头注册流，保证 Engine 冷启动即可从 Redis 读到完整配置；摄像头增/改/删时 API 同步写/删 `camera:config:{camera_id}`。
 
-### 3.3 摄像头启用状态与直播控制
+### 3.3 告警数据建模与区域层级
 
-这一小节总结「摄像头 / 算法启用状态」以及「直播心跳」是如何在 **前端 → FastAPI → Redis → Engine** 之间协同工作的，方便后续扩展代码时快速对齐设计。
+这一小节总结告警数据在 **Engine → Redis → AlarmConsumer → DB → 前端** 的流转方式，以及区域层级与冗余字段的设计。
 
-#### 3.3.1 启用状态的传递路径
+#### 3.3.1 告警表冗余字段
 
-- **数据库字段**
-  - 摄像头表 `cameras`：字段 `is_enabled` 表示该摄像头当前是否启用。
-  - 摄像头-算法绑定表 `camera_algorithms`：字段 `is_enabled` 表示该条绑定（某摄像头使用某算法）是否生效。
-- **FastAPI 写 Redis（应用启动 + 增删改时）**
-  - `bootstrap_sync` 在启动阶段会把 DB 中所有启用/未启用的摄像头、算法及绑定写入 Redis：
-    - `camera:config:{camera_id}` 中包含：`id`, `name`, `rtsp_url`, `fps`, `is_enabled`。
-    - `camera:algorithm:config:{camera_id}:{algorithm_id}` 中包含：`camera_id`, `algorithm_id`, `model_id`, `confidence`, `alert_config`, `regions`, `is_enabled`。
+为降低告警列表/详情接口的 JOIN 开销，`Alarm` 表做了适度冗余：
+
+- `camera_name`：冗余摄像头名称，来自 `Camera.name`。
+- `algorithm_name`：冗余算法名称，来自 `Algorithm.name`。
+- `area_name`：冗余区域层级路径，优先来自摄像头绑定的区域层级计算结果。
+
+写入路径：
+
+1. **Engine → Redis**：`ResultHandler._emit_alarm()` 将结构化的 `alarm_data`（含 `camera_id`、`camera_name`、`algorithm_id`、`algorithm_name`、`detections`、`local_snapshot_path` 等）写入 Redis `alarm_queue`。
+2. **AlarmConsumer → DB**：`app.consumer.alarm_consumer.save_alarm_to_db()` 从队列读取告警，创建 `Alarm` ORM 实例：
+   - 直接使用 `alarm_data` 中透传的 `camera_name` / `algorithm_name`。
+   - 通过摄像头与区域层级（见下文）计算 `area_name`，作为最终冗余字段写入 DB。
+3. **API → 前端**：`/api/v1/alarms` 与 `/api/v1/alarms/{id}` 直接返回上述冗余字段，前端无需再发起额外接口或 JOIN 查询即可展示“设备名称 / 算法名称 / 区域路径”。
+
+#### 3.3.2 区域层级（树形 Area → 展示路径）
+
+区域是一个树形结构，用于表达“园区 / 楼栋 / 楼层 / 机柜”等层次。为了在告警和摄像头列表中快速展示「完整路径」，`Area` 模型新增：
+
+- `level: int`：层级深度，根节点为 1。
+- `hierarchy_path: str | None`：名称路径，例如 `园区A/办公楼B/3F/机房1`。
+
+计算方式：
+
+- `Area.compute_hierarchy(parent: Optional[Area])`：
+  - 若无父节点：`level = 1`，`hierarchy_path = self.name`。
+  - 若有父节点：`level = parent.level + 1`，`hierarchy_path = f"{parent.hierarchy_path}/{self.name}"`。
+- `areas.create_area` / `areas.update_area`：
+  - 在新增/修改区域时调用 `compute_hierarchy()`。
+  - 修改 `parent_id` 或名称后，调用 `_refresh_subtree_hierarchy()` 深度优先遍历子树，批量刷新所有子节点的 `level` / `hierarchy_path`。
+
+历史数据修复：
+
+- `app.services.data_fix.run_startup_data_fix()` 在应用启动时自动执行：
+  - 为所有 `areas` 行补齐 `level` 与 `hierarchy_path`。
+  - 为 `alarms` 中未包含 `/` 的 `area_name`（旧版本仅保存叶子名称）回填完整层级路径。
+
+#### 3.3.3 文件预览与快照访问
+
+告警快照、模型文件等通过统一的 Storage 抽象存储在本地或 MinIO 中。为了避免在前端暴露存储真实地址，新增：
+
+- **预览接口**：`GET /api/v1/files/preview`
+  - 入参：
+    - `filepath: str`：存储 key，例如 `alarms/2026-03-03/xxx.jpg` 或 `models/{model_id}/...`。
+    - `token: Optional[str]`：可选，通过 query 传递 access token，用于 `<img>` / `<video>` 标签场景。
+  - 鉴权逻辑：
+    - 优先通过 `Authorization` Header + `get_current_user_optional` 获取当前用户。
+    - 若 header 中无 token，则验证 `token` query，校验黑名单并解析 access token。
+  - 返回值：
+    - 从 `common.storage` 读取文件内容与 MIME 类型，使用 `StreamingResponse` 直接返回字节流。
+
+前端约定：
+
+- 所有快照URL均通过 `/api/v1/files/preview?filepath=...` 访问，不再拼接 MinIO 的直连地址。
+- 通过 `frontend/src/utils/auth_url.ts` 中的 `appendToken(url, token)` 工具函数，在路由守卫或调用点为 URL 自动附加 `?token=...`。
+- 告警列表、首页告警列表、告警详情弹窗与 WebSocket 告警气泡均复用同一套 URL 透传与拼接逻辑。
+
+#### 3.3.4 前端告警中心与统计大屏
+
+前端告警相关的主要页面与组件如下：
+
+- **告警列表页**：`frontend/src/views/alarm/AlarmList.vue`
+  - 使用 `/api/v1/alarms` 提供的服务端分页接口。
+  - 列表中直接展示 `camera_name`、`algorithm_name` 与 `area_name`（区域层级路径），并在「关联设备」列中合并显示。
+  - 点击某一条告警会弹出 `AlarmDetail` 组件，支持缩放与绘制 `detection_data` 中的检测框。
+
+- **告警统计页**：`frontend/src/views/alarm/AlarmStats.vue`
+  - 以 `stitch/alarm_stat.html` + `stitch/css/alarm_stat.css` 为像素级对照，实现 4 张统计卡片 + 趋势图 + Top5 设备/区域 + 等级分布环形图的大屏布局。
+  - 当前版本使用静态示例数据（7/14/30 天趋势、Top5 设备/区域、等级占比），后续可直接接入 `/api/v1/alarms/stats?days=7` 等接口替换。
+  - 所有卡片/图表容器统一应用 `card-border-xl` 公共样式，保持与首页统计卡片一致的描边与圆角。
+
+- **统一告警详情组件**：`frontend/src/components/AlarmDetail.vue`
+  - 封装告警详情展示，包括等级、类型、时间、摄像头、算法、区域、描述等字段。
+  - 内部集成 `ImageViewer` 实现可缩放的截图预览与基于 `detection_data` 的多框绘制。
+  - 被首页告警列表、告警列表页以及 WebSocket 告警气泡点击后的弹窗复用。
+
+- **全局 WebSocket 告警通知**：
+  - `frontend/src/composables/useAppWebSocket.ts`：全局唯一的 `/ws/alarms` 连接，在 `App.vue` 中初始化。
+  - `frontend/src/composables/useAlarmNotification.ts`：维护告警气泡队列与当前查看的告警详情，对外暴露 `pushAlarmToast()`。
+  - `frontend/src/components/AlarmNotificationContainer.vue`：渲染右下角富样式告警气泡（含缩略图、区域/设备、完整时间、等级徽标），点击气泡弹出 `AlarmDetail`。
+
+通过上述设计，告警从 Engine 到前端的链路在数据结构、层级展示与 UI 交互上都形成了一条闭环。
   - 后续通过 `cameras.py` / `algorithms.py` 里的增删改接口更新配置时，也会同步写/删上述 Key，保证 Redis 中的状态与 DB 一致。
 - **Engine 加载配置时的过滤逻辑**
   - `Scheduler._load_config()` 在从 Redis 扫描配置时，统一按 `is_enabled` 做过滤：

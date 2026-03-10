@@ -13,7 +13,7 @@
       </div>
     </div>
 
-    <div class="messages-content">
+    <div class="messages-content card-border-xl">
       <!-- Tabs -->
       <n-tabs v-model:value="activeTab" type="line">
         <n-tab-pane name="all" :tab="`全部 (${messages.length})`">
@@ -160,8 +160,6 @@ const MessageList = (props: { messages: Message[] }, { emit }: any) => {
   flex: 1;
   overflow: hidden;
   background: var(--bg-card);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-color);
   padding: var(--spacing-lg);
 }
 

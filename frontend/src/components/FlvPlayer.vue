@@ -64,9 +64,12 @@ function initPlayer() {
   })
   flvPlayer.attachMediaElement(videoRef.value)
   flvPlayer.load()
-  flvPlayer.play().catch(() => {
-    // autoplay 失败时静默处理，交给用户手动点击播放
-  })
+  const playRet = flvPlayer.play()
+  if (playRet && typeof (playRet as any).catch === 'function') {
+    ;(playRet as Promise<void>).catch(() => {
+      // autoplay 失败时静默处理，交给用户手动点击播放
+    })
+  }
   try {
     flvPlayer.on(flvjs.Events.ERROR, onPlayerError as any)
   } catch {

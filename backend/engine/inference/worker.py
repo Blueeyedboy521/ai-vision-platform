@@ -100,7 +100,7 @@ class InferenceWorker:
         """处理循环"""
         logger.debug(f"Worker {self.worker_id} 进入处理循环")
         last_alive_log_time = time.time()
-        alive_log_interval = 10.0  # 秒
+        alive_log_interval = 20.0  # 秒
         last_camera_id: Optional[str] = None
         last_frame_id: Optional[int] = None
 
@@ -120,11 +120,13 @@ class InferenceWorker:
                     request_id = request.get("request_id")
                     camera_id = request.get("camera_id")
                     frame_id = request.get("frame_id")
+                    timestamp = request.get("timestamp")
                 else:
                     frame = request.frame
                     request_id = request.request_id
                     camera_id = request.camera_id
                     frame_id = request.frame_id
+                    timestamp = timestamp.frame_id
                 
                 if frame is None:
                     continue
@@ -134,7 +136,7 @@ class InferenceWorker:
                     "request_id": request_id,
                     "camera_id": camera_id,
                     "frame_id": frame_id,
-                    "timestamp": time.time(),
+                    "timestamp": timestamp, # StreamReader读取的啥时间戳
                 }
                 result = self._inference(params)
 

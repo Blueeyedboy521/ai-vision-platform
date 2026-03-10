@@ -156,7 +156,7 @@ import {
   SettingsOutline, AddOutline, SearchOutline, ExpandOutline, 
   CloseOutline, SquareOutline, GridOutline, AppsOutline, VideocamOffOutline
 } from '@vicons/ionicons5'
-import { createDetectionWebSocket, createAlarmWebSocket, type WebSocketClient } from '@/utils/websocket'
+import { createDetectionWebSocket, type WebSocketClient } from '@/utils/websocket'
 
 interface Camera {
   id: string
@@ -187,7 +187,6 @@ const currentTime = ref('')
 
 // WebSocket 连接管理
 const wsClients = ref<Map<string, WebSocketClient>>(new Map())
-const alarmWsClient = ref<WebSocketClient | null>(null)
 
 // 处理检测结果
 function handleDetectionMessage(cameraId: string, data: any) {
@@ -197,13 +196,6 @@ function handleDetectionMessage(cameraId: string, data: any) {
     if (slot) {
       slot.detections = data.detections
     }
-  }
-}
-
-// 处理告警消息
-function handleAlarmMessage(data: any) {
-  if (data.type === 'alarm') {
-    message.warning(`新告警: ${data.title || '检测到异常'}`)
   }
 }
 
@@ -471,11 +463,6 @@ onMounted(() => {
       resizeObserver.observe(gridContainerRef.value)
     }
   })
-  
-  // 连接告警 WebSocket
-  alarmWsClient.value = createAlarmWebSocket(handleAlarmMessage)
-  alarmWsClient.value.connect()
-  
   // 为现有摄像头连接 WebSocket
   gridSlots.value.forEach((slot: GridSlot) => {
     if (slot.camera) {
@@ -494,11 +481,6 @@ onUnmounted(() => {
   // 断开所有 WebSocket 连接
   wsClients.value.forEach(client => client.disconnect())
   wsClients.value.clear()
-  
-  if (alarmWsClient.value) {
-    alarmWsClient.value.disconnect()
-    alarmWsClient.value = null
-  }
 })
 </script>
 

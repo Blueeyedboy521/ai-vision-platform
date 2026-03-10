@@ -1,5 +1,5 @@
 <template>
-  <div class="health-card">
+  <div class="health-card card-border-xl">
     <div class="chart-title">
       <div class="title-bar"></div>
       <span>设备健康状态</span>

@@ -1,5 +1,5 @@
 <template>
-  <div class="alert-list-card">
+  <div class="alert-list-card card-border-xl">
     <div class="alert-list-header">
       <div class="alert-list-title">
         <div class="title-bar"></div>
@@ -17,8 +17,8 @@
           class="alert-thumb alert-thumb--clickable"
           role="button"
           tabindex="0"
-          @click="openImageViewer(item)"
-          @keydown.enter="openImageViewer(item)"
+          @click="openDetail(item)"
+          @keydown.enter="openDetail(item)"
         >
           <img :src="item.thumb" :alt="item.title" />
           <span class="live-badge">LIVE</span>
@@ -54,11 +54,15 @@
         </div>
       </div>
     </div>
-    <ImageViewer
-      v-model:show="showImageViewer"
-      :src="imageViewerSrc"
-      :detections="imageViewerDetections"
-    />
+    <n-modal
+      v-model:show="showDetail"
+      preset="card"
+      title="告警详情"
+      :style="{ width: '900px' }"
+      :bordered="false"
+    >
+      <AlarmDetail :alarm="currentAlarm" />
+    </n-modal>
   </div>
 </template>
 
@@ -66,7 +70,10 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { getAlarmList, type Alarm } from '@/api/alarm'
-import ImageViewer from '@/components/ImageViewer.vue'
+import { NModal } from 'naive-ui'
+import AlarmDetail from '@/components/AlarmDetail.vue'
+import { useUserStore } from '@/stores/user'
+import { appendToken } from '@/utils/auth_url'
 
 interface AlertItem {
   id: string
@@ -78,19 +85,18 @@ interface AlertItem {
   timeAgo: string
   datetime: string
   detectionData?: any | null
+  raw?: any | null
 }
 
 const router = useRouter()
 const alerts = ref<AlertItem[]>([])
+const userStore = useUserStore()
 
-const showImageViewer = ref(false)
-const imageViewerSrc = ref<string | null>(null)
-const imageViewerDetections = ref<any[] | null>(null)
-function openImageViewer(item: AlertItem) {
-  if (!item.thumb) return
-  imageViewerSrc.value = item.thumb
-  imageViewerDetections.value = (item.detectionData as any[]) || null
-  showImageViewer.value = true
+const showDetail = ref(false)
+const currentAlarm = ref<any | null>(null)
+function openDetail(item: AlertItem) {
+  currentAlarm.value = item.raw || null
+  showDetail.value = true
 }
 
 function goHistory() {
@@ -125,17 +131,23 @@ async function loadAlerts() {
   try {
     const res = await getAlarmList({ page: 1, page_size: 4 })
     const items = (res.data.data || []) as Alarm[]
-    alerts.value = items.map((a) => ({
-      id: a.id,
-      thumb: a.snapshot_url || '/camera-warehouse-01.jpg',
-      title: a.title || a.algorithm_name || '告警',
-      level: a.level || 'info',
-      levelText: levelText(a.level),
-      location: a.camera_name || a.camera_id,
-      timeAgo: timeAgoFromIso(a.alarm_time),
-      datetime: a.alarm_time?.replace('T', ' ') || a.created_at,
-      detectionData: (a as any).detection_data ?? null,
-    }))
+    alerts.value = items.map((a) => {
+      const camera = a.camera_name || a.camera_id
+      const area = (a as any).area_name as string | null | undefined
+      const location = area ? `${area} · ${camera}` : camera
+      return {
+        id: a.id,
+        thumb: appendToken(a.snapshot_url || '/camera-warehouse-01.jpg', userStore.token) || '/camera-warehouse-01.jpg',
+        title: a.title || a.algorithm_name || '告警',
+        level: a.level || 'info',
+        levelText: levelText(a.level),
+        location,
+        timeAgo: timeAgoFromIso(a.alarm_time),
+        datetime: a.alarm_time?.replace('T', ' ') || a.created_at,
+        detectionData: (a as any).detection_data ?? null,
+        raw: a as any,
+      }
+    })
   } catch (e) {
     console.error('加载首页告警列表失败:', e)
   }

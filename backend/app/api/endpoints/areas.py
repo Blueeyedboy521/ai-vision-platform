@@ -4,7 +4,7 @@
 
 提供区域 CRUD 和树形结构接口
 """
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select, func
@@ -28,6 +28,30 @@ from common.logging import logger
 
 
 router = APIRouter()
+
+async def _refresh_subtree_hierarchy(db: AsyncSession, root_id: str) -> None:
+    """
+    当某个区域的 name/parent_id 变化时，需要级联更新其子树的 level/hierarchy_path。
+    这里通过一次性加载全量 areas，构建 children 映射后，从 root_id 向下 DFS 更新。
+    """
+    result = await db.execute(select(Area))
+    areas = result.scalars().all()
+    area_by_id: Dict[str, Area] = {a.id: a for a in areas}
+    children: Dict[Optional[str], List[Area]] = {}
+    for a in areas:
+        children.setdefault(a.parent_id, []).append(a)
+
+    root = area_by_id.get(root_id)
+    if root is None:
+        return
+
+    def dfs(node: Area) -> None:
+        for ch in children.get(node.id, []):
+            ch.compute_hierarchy(node)
+            dfs(ch)
+
+    # root 自己已经 compute_hierarchy 过，这里只更新子树
+    dfs(root)
 
 
 @router.get("", summary="获取区域列表")
@@ -191,6 +215,12 @@ async def create_area(
         created_by=current_user.id,
         updated_by=current_user.id
     )
+    # 计算层级冗余字段
+    parent = None
+    if area_data.parent_id:
+        parent_result = await db.execute(select(Area).where(Area.id == area_data.parent_id))
+        parent = parent_result.scalar_one_or_none()
+    area.compute_hierarchy(parent)
     
     db.add(area)
     await db.commit()
@@ -236,7 +266,15 @@ async def update_area(
         setattr(area, field, value)
     
     area.updated_by = current_user.id
-    
+
+    # 若 name/parent_id 发生变化，重新计算自身层级字段，并级联更新子树
+    if "name" in update_data or "parent_id" in update_data:
+        parent = None
+        if area.parent_id:
+            parent_result = await db.execute(select(Area).where(Area.id == area.parent_id))
+            parent = parent_result.scalar_one_or_none()
+        area.compute_hierarchy(parent)
+        await _refresh_subtree_hierarchy(db, area.id)
     await db.commit()
     
     logger.info(f"区域已更新: {area_id}")

@@ -1,5 +1,5 @@
 <template>
-  <div class="stat-card">
+  <div class="stat-card card-border-xl">
     <div class="stat-header">
       <div class="stat-icon" :style="{ background: iconBg }">
         <n-icon :size="24" :color="iconColor">

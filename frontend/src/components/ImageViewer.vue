@@ -50,6 +50,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import type { CSSProperties } from 'vue'
 import { NModal } from 'naive-ui'
 
 const props = withDefaults(
@@ -86,12 +87,12 @@ const wrapStyle = computed(() => ({
   transformOrigin: 'center center'
 }))
 
-const imgStyle = computed(() => ({
+const imgStyle = computed<CSSProperties>(() => ({
   maxWidth: '100%',
   maxHeight: '100%',
-  objectFit: 'contain',
+  objectFit: 'contain' as const,
   userSelect: 'none',
-  pointerEvents: 'none'
+  pointerEvents: 'none',
 }))
 
 function onImageLoad() {
@@ -147,6 +148,14 @@ watch(
   }
 )
 
+type DrawBox = {
+  left: string
+  top: string
+  width: string
+  height: string
+  label?: string
+}
+
 // 计算用于绘制的检测框（以百分比坐标表示，适配缩放）
 const boxes = computed(() => {
   const dets = props.detections || []
@@ -170,15 +179,16 @@ const boxes = computed(() => {
       const label = rawConf != null
         ? `${baseLabel} ${(rawConf as number).toFixed(2)}`
         : baseLabel
-      return {
+      const box: DrawBox = {
         left: `${leftPct}%`,
         top: `${topPct}%`,
         width: `${widthPct}%`,
         height: `${heightPct}%`,
         label,
       }
+      return box
     })
-    .filter(Boolean)
+    .filter((b): b is DrawBox => Boolean(b))
 })
 </script>
 

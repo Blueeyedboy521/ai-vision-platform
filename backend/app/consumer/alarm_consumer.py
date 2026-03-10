@@ -83,6 +83,23 @@ def save_alarm_to_db(alarm_data: dict) -> None:
         else:
             alarm_id = generate_uuid()
         
+        # 计算区域层级名称：优先使用 Camera.area_id -> Area.hierarchy_path，
+        # 回退到 alarm_data 透传字段，最后回退空。
+        area_name = None
+        try:
+            from app.models import Camera, Area
+            cam_id = alarm_data.get("camera_id")
+            if cam_id:
+                cam = session.query(Camera).filter(Camera.id == cam_id).first()
+                if cam and getattr(cam, "area_id", None):
+                    area = session.query(Area).filter(Area.id == cam.area_id).first()
+                    if area:
+                        area_name = getattr(area, "hierarchy_path", None) or getattr(area, "name", None)
+        except Exception as e:
+            logger.debug(f"补齐 area_name 失败(可忽略): {e}")
+        if not area_name:
+            area_name = alarm_data.get("area_name") or alarm_data.get("region_name")
+
         # 创建告警记录
         alarm = Alarm(
             id=alarm_id,
@@ -96,7 +113,11 @@ def save_alarm_to_db(alarm_data: dict) -> None:
                 alarm_data.get("timestamp", datetime.now().isoformat())
             ),
             snapshot_url=alarm_data.get("snapshot_path"),
-            detection_data=alarm_data.get("detections", [])
+            detection_data=alarm_data.get("detections", []),
+            # 冗余字段：减少告警列表页 join/循环查询
+            camera_name=alarm_data.get("camera_name"),
+            algorithm_name=alarm_data.get("algorithm_name"),
+            area_name=area_name,
         )
         
         session.add(alarm)
@@ -221,17 +242,25 @@ def publish_realtime_alarm(alarm_data: dict) -> None:
     
     try:
         # 构建发布消息
+        snapshot_key = alarm_data.get("snapshot_path")
+        snapshot_url = None
+        if snapshot_key:
+            from urllib.parse import quote
+            snapshot_url = f"/api/v1/files/preview?filepath={quote(str(snapshot_key))}"
         message = {
             "type": "new_alarm",
             "alarm_id": alarm_data.get("alarm_id"),
             "camera_id": alarm_data.get("camera_id"),
             "camera_name": alarm_data.get("camera_name"),
+            "area_name": alarm_data.get("area_name") or alarm_data.get("region_name"),
             "algorithm_id": alarm_data.get("algorithm_id"),
             "algorithm_name": alarm_data.get("algorithm_name"),
             "level": alarm_data.get("alert_level", "info"),
             "title": alarm_data.get("title"),
             "timestamp": alarm_data.get("timestamp"),
-            "snapshot_path": alarm_data.get("snapshot_path")
+            "snapshot_path": snapshot_key,
+            "snapshot_url": snapshot_url,
+            "detection_data": alarm_data.get("detections", []),
         }
         
         redis_client.publish(

@@ -238,10 +238,34 @@ async def create_model(
     await _migrate_model_file_if_needed(model, db)
 
     # 根据检测类别自动生成算法列表（每个类别一条算法能力，去重）
+    def _normalize_code_part(s: str) -> str:
+        """
+        将任意 class 名称规范化为可用的 code 片段：
+        - 小写
+        - 非字母数字替换为下划线
+        - 去掉多余下划线
+        """
+        import re
+        t = (s or "").strip().lower()
+        t = re.sub(r"[^a-z0-9]+", "_", t)
+        t = re.sub(r"_+", "_", t).strip("_")
+        return t
     raw_classes = model_data.classes or []
     classes = sorted({c for c in raw_classes if c and isinstance(c, str)})
-    for cls in classes:
-        code = f"{model.code}_{cls}".strip()
+    used_codes: set[str] = set()
+    for idx, cls in enumerate(classes):
+        code_part = _normalize_code_part(cls) or f"class_{idx+1}"
+        base_code = f"{(model.code or '').strip()}_{code_part}".strip("_")
+        # 控制长度（Algorithm.code 最大 50）
+        base_code = base_code[:50]
+        code = base_code
+        # 避免本次批量内冲突；同时尽量避免触发 DB unique 冲突
+        suffix = 2
+        while code in used_codes:
+            suffix_str = f"_{suffix}"
+            code = (base_code[: max(0, 50 - len(suffix_str))] + suffix_str)[:50]
+            suffix += 1
+        used_codes.add(code)
         name = f"检测-{cls}"
         algo = Algorithm(
             id=generate_uuid(),

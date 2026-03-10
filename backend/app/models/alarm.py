@@ -52,6 +52,23 @@ class Alarm(Base, AuditMixin):
         index=True,
         comment="算法ID"
     )
+
+    # ==================== 冗余信息（用于减少列表页关联查询） ====================
+    camera_name: Mapped[Optional[str]] = mapped_column(
+        String(200),
+        nullable=True,
+        comment="摄像头名称(冗余)"
+    )
+    algorithm_name: Mapped[Optional[str]] = mapped_column(
+        String(200),
+        nullable=True,
+        comment="算法名称(冗余)"
+    )
+    area_name: Mapped[Optional[str]] = mapped_column(
+        String(200),
+        nullable=True,
+        comment="区域名称(冗余)"
+    )
     
     # ==================== 告警信息 ====================
     alarm_type: Mapped[str] = mapped_column(

@@ -47,6 +47,7 @@ export interface CreateAlgorithmRequest {
 // 更新算法请求
 export interface UpdateAlgorithmRequest {
   name?: string
+  code?: string
   description?: string
   model_id?: string
   target_classes?: string[]

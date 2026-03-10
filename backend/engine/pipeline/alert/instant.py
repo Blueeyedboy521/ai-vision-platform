@@ -28,7 +28,7 @@ class InstantTrigger:
             return False
 
         # 告警节流：同一算法内部维护自己的间隔
-        logger.info(f"InstantTrigger 告警节流: now_ts: {now_ts}，last_alarm_ts: {self._last_alarm_ts}，sec: {now_ts - self._last_alarm_ts}")
+        # logger.info(f"InstantTrigger 告警节流: now_ts: {now_ts}，last_alarm_ts: {self._last_alarm_ts}，sec: {now_ts - self._last_alarm_ts}")
         if now_ts - self._last_alarm_ts < self.alarm_interval_sec:
             return False
 

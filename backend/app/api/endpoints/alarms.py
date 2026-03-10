@@ -24,7 +24,7 @@ from app.schemas.alarm import (
 )
 from app.schemas.common import success_response, page_response
 from common.logging import logger
-from common.storage import get_storage
+from urllib.parse import quote
 
 
 router = APIRouter()
@@ -85,38 +85,27 @@ async def get_alarms(
     result = await db.execute(query)
     alarms = result.scalars().all()
     
-    # 获取关联信息
     data = []
-    storage = get_storage()
     for alarm in alarms:
-        # 获取摄像头和算法名称
-        cam_result = await db.execute(
-            select(Camera.name).where(Camera.id == alarm.camera_id)
+        # 资源 URL：统一走 files/preview，不直接暴露存储地址
+        snapshot_url = (
+            f"/api/v1/files/preview?filepath={quote(alarm.snapshot_url)}"
+            if alarm.snapshot_url
+            else None
         )
-        cam_name = cam_result.scalar_one_or_none()
-        
-        algo_result = await db.execute(
-            select(Algorithm.name).where(Algorithm.id == alarm.algorithm_id)
+        video_url = (
+            f"/api/v1/files/preview?filepath={quote(alarm.video_url)}"
+            if alarm.video_url
+            else None
         )
-        algo_name = algo_result.scalar_one_or_none()
-        
-        snapshot_url = alarm.snapshot_url
-        video_url = alarm.video_url
-        # 将存储 key 转换为可访问 URL（兼容 local/minio）
-        try:
-            if snapshot_url:
-                snapshot_url = storage.get_url(snapshot_url)
-            if video_url:
-                video_url = storage.get_url(video_url)
-        except Exception as e:
-            logger.error(f"构建告警资源 URL 失败: {e}")
 
         data.append({
             "id": alarm.id,
             "camera_id": alarm.camera_id,
-            "camera_name": cam_name,
+            "camera_name": getattr(alarm, "camera_name", None),
+            "area_name": getattr(alarm, "area_name", None),
             "algorithm_id": alarm.algorithm_id,
-            "algorithm_name": algo_name,
+            "algorithm_name": getattr(alarm, "algorithm_name", None),
             "alarm_type": alarm.alarm_type,
             "level": alarm.level,
             "title": alarm.title,
@@ -270,30 +259,31 @@ async def get_alarm(
             detail="告警不存在"
         )
     
-    # 获取关联信息
-    cam_result = await db.execute(
-        select(Camera.name).where(Camera.id == alarm.camera_id)
+    snapshot_url = (
+        f"/api/v1/files/preview?filepath={quote(alarm.snapshot_url)}"
+        if alarm.snapshot_url
+        else None
     )
-    cam_name = cam_result.scalar_one_or_none()
-    
-    algo_result = await db.execute(
-        select(Algorithm.name).where(Algorithm.id == alarm.algorithm_id)
+    video_url = (
+        f"/api/v1/files/preview?filepath={quote(alarm.video_url)}"
+        if alarm.video_url
+        else None
     )
-    algo_name = algo_result.scalar_one_or_none()
     
     return success_response({
         "id": alarm.id,
         "camera_id": alarm.camera_id,
-        "camera_name": cam_name,
+        "camera_name": getattr(alarm, "camera_name", None),
+        "area_name": getattr(alarm, "area_name", None),
         "algorithm_id": alarm.algorithm_id,
-        "algorithm_name": algo_name,
+        "algorithm_name": getattr(alarm, "algorithm_name", None),
         "alarm_type": alarm.alarm_type,
         "level": alarm.level,
         "title": alarm.title,
         "description": alarm.description,
         "alarm_time": alarm.alarm_time.isoformat(),
-        "snapshot_url": alarm.snapshot_url,
-        "video_url": alarm.video_url,
+        "snapshot_url": snapshot_url,
+        "video_url": video_url,
         "detection_data": alarm.detection_data,
         "status": alarm.status,
         "confirmed_by": alarm.confirmed_by,

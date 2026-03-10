@@ -1,5 +1,5 @@
 <template>
-  <div class="camera-card" @click="$emit('detail', camera)">
+  <div class="camera-card card-border-xl" @click="$emit('detail', camera)">
     <!-- Gradient Border Overlay -->
     <div class="camera-card__border-glow"></div>
     
@@ -114,11 +114,9 @@ const emit = defineEmits<{
 .camera-card {
   position: relative;
   background: var(--bg-card);
-  border-radius: var(--radius-xl);
   overflow: hidden;
   cursor: pointer;
   transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  border: 1px solid var(--border-color);
 }
 
 /* Gradient Border Glow Effect */

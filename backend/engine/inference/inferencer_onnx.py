@@ -200,7 +200,9 @@ class OnnxYolo11Inferencer:
         if self.input_size and len(self.input_size) >= 2:
             input_hw = (int(self.input_size[0]), int(self.input_size[1]))
         self._sess, self._info = _onnx_create_session(self._local_path, self.device, input_hw)
-        logger.info(f"ONNX session 就绪: providers={self._info.providers}, input_hw={self._info.input_hw}")
+        # 从session获取label_names
+        label_names = self._sess.get_outputs()[0].name
+        logger.info(f"ONNX session 就绪: model_id={self.model_id}, providers={self._info.providers}, input_hw={self._info.input_hw},label_names={label_names},class_name_map={self._class_name_map}")
 
     def infer(self, params: Dict[str, Any]) -> InferenceResult:
         import time
@@ -225,7 +227,7 @@ class OnnxYolo11Inferencer:
         start = time.perf_counter()
         x, r, (pad_w, pad_h) = _preprocess_bgr_to_nchw_float(frame, self._info.input_hw)
         outputs = self._sess.run(self._info.output_names, {self._info.input_name: x})
-
+        # logger.info(f"ONNX outputs: {outputs}")
         boxes, scores, class_ids = _decode_yolo11_outputs(
             outputs, input_hw=self._info.input_hw, conf_thres=self.conf_thres, iou_thres=self.iou_thres
         )
@@ -241,6 +243,7 @@ class OnnxYolo11Inferencer:
 
         detections: List[Dict[str, Any]] = []
         for (x1, y1, x2, y2), score, cid in zip(boxes, scores, class_ids):
+            # logger.info(f"ONNX class_id: {cid}, score: {score}, x1: {x1}, y1: {y1}, x2: {x2}, y2: {y2}")
             class_id = int(cid)
             # 近似将 class_id 映射到某个 target_class：按 key 排序后取第 class_id 个
             algo_code = str(class_id)

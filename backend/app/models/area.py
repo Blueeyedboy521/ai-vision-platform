@@ -63,6 +63,21 @@ class Area(Base, AuditMixin):
         index=True,
         comment="父区域ID"
     )
+
+    # ==================== 层级冗余（用于快速展示/查询） ====================
+    # level: 深度（根=1）
+    level: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        comment="层级深度（根=1）"
+    )
+    # hierarchy_path: 按名称拼接的层级路径，如 “一级/二级/三级”
+    hierarchy_path: Mapped[Optional[str]] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="层级路径（按名称拼接，用于展示）"
+    )
     
     # ==================== 排序 ====================
     sort_order: Mapped[int] = mapped_column(
@@ -103,3 +118,16 @@ class Area(Base, AuditMixin):
         if self.parent is None:
             return self.name
         return f"{self.parent.full_path}/{self.name}"
+
+    def compute_hierarchy(self, parent: Optional["Area"]) -> None:
+        """
+        计算并写入 level/hierarchy_path。
+        约定：hierarchy_path 使用 “/” 分隔，便于前端展示与冗余到告警表。
+        """
+        if parent is None:
+            self.level = 1
+            self.hierarchy_path = self.name
+        else:
+            self.level = int(getattr(parent, "level", 1)) + 1
+            base = getattr(parent, "hierarchy_path", None) or parent.name
+            self.hierarchy_path = f"{base}/{self.name}"

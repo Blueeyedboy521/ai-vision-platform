@@ -60,8 +60,29 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/alarm',
     name: 'AlarmManagement',
-    component: () => import('@/views/AlarmManagement.vue'),
-    meta: { title: '告警管理' }
+    component: () => import('@/views/RouterViewWrapper.vue'),
+    redirect: '/alarm/stats',
+    meta: { title: '告警管理' },
+    children: [
+      {
+        path: 'list',
+        name: 'AlarmList',
+        component: () => import('@/views/alarm/AlarmList.vue'),
+        meta: { title: '告警列表' }
+      },
+      {
+        path: 'stats',
+        name: 'AlarmStats',
+        component: () => import('@/views/alarm/AlarmStats.vue'),
+        meta: { title: '告警统计' }
+      },
+      {
+        path: 'stats2',
+        name: 'AlarmStats2',
+        component: () => import('@/views/alarm/alarmstats2.vue'),
+        meta: { title: '告警统计2' }
+      }
+    ]
   },
   {
     path: '/system',

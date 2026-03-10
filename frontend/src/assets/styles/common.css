@@ -307,6 +307,12 @@ body {
   transition: background var(--transition-slow), border-color var(--transition-slow);
 }
 
+/* 通用边框圆角：统一卡片/搜索/列表外框的轮廓样式 */
+.card-border-xl {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+}
+
 .card--hoverable:hover {
   box-shadow: var(--shadow-md);
 }

@@ -22,14 +22,17 @@
       <div 
         v-for="model in models" 
         :key="model.id" 
-        class="model-card"
+        class="model-card card-border-xl"
         :class="{ 'model-card--disabled': !model.is_enabled }"
       >
         <!-- Card Header -->
         <div class="model-card__header">
-          <div class="model-card__icon" :style="{ background: getModelIconBg(model.model_type) }">
+          <div
+            class="model-card__icon"
+            :style="{ background: getModelIconBg((model.model_type || '').toLowerCase()) }"
+          >
             <n-icon :size="24" color="#fff">
-              <component :is="getModelIcon(model.model_type)" />
+              <component :is="getModelIcon((model.model_type || '').toLowerCase())" />
             </n-icon>
           </div>
           <div class="model-card__status">
@@ -46,6 +49,7 @@
           <h3 class="model-card__name">{{ model.name }}</h3>
           <p class="model-card__code">编码: {{ model.code }}</p>
           <p class="model-card__version">版本: {{ model.version || 'V1.0.0' }}</p>
+          <p class="model-card__type">类型: {{ formatModelType(model.model_type) }}</p>
         </div>
 
         <!-- Classes Tags -->
@@ -102,7 +106,7 @@
       </div>
 
       <!-- Add New Model Card -->
-      <div class="model-card model-card--add" @click="openModelModal()">
+      <div class="model-card model-card--add card-border-xl" @click="openModelModal()">
         <div class="add-card__content">
           <div class="add-card__icon">
             <n-icon :size="32" color="var(--text-muted)"><AddOutline /></n-icon>
@@ -327,7 +331,6 @@
           <n-input 
             v-model:value="algorithmForm.code" 
             placeholder="唯一标识，如: person_intrusion"
-            :disabled="!!editingAlgorithm"
           />
         </n-form-item>
         <n-form-item label="检测类别" path="target_classes">
@@ -688,6 +691,20 @@ function getModelIconBg(type: string): string {
   return bgs[type] || bgs.custom
 }
 
+function formatModelType(type?: string | null): string {
+  const t = (type || '').trim().toLowerCase()
+  const map: Record<string, string> = {
+    yolo: 'YOLO',
+    onnx: 'ONNX',
+    tensorrt: 'TensorRT',
+    trt: 'TensorRT',
+    pytorch: 'PyTorch',
+    torch: 'PyTorch',
+  }
+  if (!t) return '-'
+  return map[t] || t.toUpperCase()
+}
+
 function getAlertLevelText(level?: string): string {
   const map: Record<string, string> = {
     info: '提示',
@@ -911,6 +928,7 @@ async function handleAlgorithmSubmit() {
     if (editingAlgorithm.value) {
       await updateAlgorithm(editingAlgorithm.value.id, {
         name: algorithmForm.value.name,
+        code: algorithmForm.value.code,
         target_classes: algorithmForm.value.target_classes,
         default_confidence: algorithmForm.value.default_confidence,
         alert_config: algorithmForm.value.alert_config,
@@ -1015,8 +1033,6 @@ onMounted(() => {
 /* Model Card */
 .model-card {
   background: var(--bg-card);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-color);
   padding: var(--spacing-lg);
   display: flex;
   flex-direction: column;
@@ -1094,7 +1110,8 @@ onMounted(() => {
 }
 
 .model-card__code,
-.model-card__version {
+.model-card__version,
+.model-card__type {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
   margin: 0;

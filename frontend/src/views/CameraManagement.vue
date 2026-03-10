@@ -30,7 +30,7 @@
               <p class="point-header__subtitle">实时管理并监控该分区的视觉采集端点</p>
             </div>
             <div class="point-header__actions">
-              <div class="view-toggle">
+              <div class="view-toggle card-border-xl">
                 <button
                   class="view-toggle__btn"
                   :class="{ 'view-toggle__btn--active': viewMode === 'list' }"
@@ -94,7 +94,7 @@
           </div>
 
           <!-- Search & Actions Bar -->
-          <div class="search-bar">
+          <div class="search-bar card-border-xl">
             <n-input
               v-model:value="searchQuery"
               placeholder="搜索摄像头名称、IP..."
@@ -154,7 +154,7 @@
           </div>
 
           <!-- Camera List View -->
-          <div v-else class="camera-table">
+          <div v-else class="camera-table card-border-xl">
             <div class="camera-table__header">
               <span class="camera-table__col camera-table__col--name">摄像头名称</span>
               <span class="camera-table__col camera-table__col--status">状态</span>
@@ -707,8 +707,6 @@ async function handleSaveCamera(data: any) {
 .view-toggle {
   display: flex;
   background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
@@ -748,9 +746,7 @@ async function handleSaveCamera(data: any) {
   justify-content: space-between;
   gap: var(--spacing-md);
   background: var(--bg-card);
-  border-radius: var(--radius-xl);
   padding: var(--spacing-md) var(--spacing-lg);
-  border: 1px solid var(--border-color);
 }
 
 .search-bar__input {
@@ -788,8 +784,6 @@ async function handleSaveCamera(data: any) {
 /* ===== Camera Table ===== */
 .camera-table {
   background: var(--bg-card);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-color);
   overflow: hidden;
 }
 

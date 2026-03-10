@@ -1,0 +1,151 @@
+<html lang="zh-CN"><head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <!-- <script src="js/container-queries@0.1.1.js"></script> -->
+    <!-- <script src="https://cdn.tailwindcss.com/3.4.17?plugins=forms@0.5.10,container-queries@0.1.1"></script> -->
+    <!-- <link href="css/Inter_wght@400_500.css" rel="stylesheet"/> -->
+    <!-- <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/> -->
+     <link href="css/alarm_stat.css" rel="stylesheet"/>
+    <script id="tailwind-config">
+            tailwind.config = {
+                darkMode: "class",
+                theme: {
+                    extend: {
+                        colors: {
+                            "primary": "#137fec",
+                            "accent-deep": "#4c1d95",
+                            "background-light": "#f6f7f8",
+                            "background-dark": "#101922",
+                        },
+                        fontFamily: {
+                            "display": ["Inter"]
+                        },
+                        borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                    },
+                },
+            }
+        </script>
+    <style>
+            body { font-family: 'Inter', sans-serif; }
+            .chart-gradient { fill: url(#chart-poly); }
+        </style>
+       
+    </head>
+    <body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100">
+    <div class="flex h-screen overflow-hidden">
+    <!-- Collapsible Sidebar -->
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col overflow-y-auto py-8">
+    <!-- Header -->
+    <div class="p-8 space-y-8 max-w-[1600px] mx-auto w-full">
+    <!-- Top Metrics -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+    <div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+    <div class="flex justify-between items-start mb-4">
+    <p class="text-slate-500 text-sm font-medium">报警总数</p>
+    <span class="material-symbols-outlined text-primary">warning</span>
+    </div>
+    <div class="flex items-baseline gap-2">
+    <h3 class="text-3xl font-bold">1,284</h3>
+    <span class="text-emerald-500 text-xs font-bold">+12%</span>
+    </div>
+    <p class="text-xs text-slate-400 mt-2">较昨日新增 142 条</p>
+    </div>
+    <div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+    <div class="flex justify-between items-start mb-4">
+    <p class="text-slate-500 text-sm font-medium">待处理告警</p>
+    <span class="material-symbols-outlined text-amber-500">pending_actions</span>
+    </div>
+    <div class="flex items-baseline gap-2">
+    <h3 class="text-3xl font-bold">42</h3>
+    <span class="text-rose-500 text-xs font-bold">-5%</span>
+    </div>
+    <p class="text-xs text-slate-400 mt-2">紧急处理中 8 条</p>
+    </div>
+    <div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+    <div class="flex justify-between items-start mb-4">
+    <p class="text-slate-500 text-sm font-medium">已解决告警</p>
+    <span class="material-symbols-outlined text-emerald-500">task_alt</span>
+    </div>
+    <div class="flex items-baseline gap-2">
+    <h3 class="text-3xl font-bold">1,242</h3>
+    <span class="text-emerald-500 text-xs font-bold">+15%</span>
+    </div>
+    <p class="text-xs text-slate-400 mt-2">平均处理时间 12.4m</p>
+    </div>
+    <div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+    <div class="flex justify-between items-start mb-4">
+    <p class="text-slate-500 text-sm font-medium">处理完成率</p>
+    <span class="material-symbols-outlined text-accent-deep">speed</span>
+    </div>
+    <div class="flex items-baseline gap-2">
+    <h3 class="text-3xl font-bold">96.7%</h3>
+    <span class="text-emerald-500 text-xs font-bold">+2.1%</span>
+    </div>
+    <p class="text-xs text-slate-400 mt-2">优于 92% 的站点</p>
+    </div>
+    </div>
+    <!-- Middle: Trend Chart -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6"><div class="lg:col-span-2 bg-white dark:bg-slate-900 p-8 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm"><div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4"><div><h3 class="text-lg font-bold">报警趋势分析</h3><p class="text-sm text-slate-500">数据统计范围: 2023-10-01 至 2023-10-30</p></div><div class="flex flex-wrap items-center gap-3"><div class="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg"><button class="px-3 py-1 text-xs font-medium rounded hover:bg-white dark:hover:bg-slate-700">今日</button><button class="px-3 py-1 text-xs font-medium rounded hover:bg-white dark:hover:bg-slate-700">7日</button><button class="px-3 py-1 text-xs font-medium rounded hover:bg-white dark:hover:bg-slate-700">14日</button><button class="px-3 py-1 text-xs font-medium rounded bg-white dark:bg-slate-700 shadow-sm">30日</button></div><div class="h-4 w-px bg-slate-300 dark:bg-slate-700"></div><button class="px-3 py-1.5 text-xs font-bold rounded bg-primary text-white">导出报表</button></div></div><div class="h-64 w-full"><svg class="w-full h-full" preserveaspectratio="none" viewbox="0 0 1000 200"><defs><lineargradient id="chart-poly" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#137fec" stop-opacity="0.2"></stop><stop offset="100%" stop-color="#137fec" stop-opacity="0"></stop></lineargradient></defs><path class="chart-gradient" d="M0,150 Q100,80 200,120 T400,60 T600,100 T800,40 T1000,80 L1000,200 L0,200 Z"></path><path d="M0,150 Q100,80 200,120 T400,60 T600,100 T800,40 T1000,80" fill="none" stroke="#137fec" stroke-linecap="round" stroke-width="3"></path><line class="dark:stroke-slate-800" stroke="#e2e8f0" stroke-dasharray="4,4" x1="0" x2="1000" y1="180" y2="180"></line><line class="dark:stroke-slate-800" stroke="#e2e8f0" stroke-dasharray="4,4" x1="0" x2="1000" y1="120" y2="120"></line><line class="dark:stroke-slate-800" stroke="#e2e8f0" stroke-dasharray="4,4" x1="0" x2="1000" y1="60" y2="60"></line></svg><div class="flex justify-between mt-4 text-xs text-slate-400 font-medium"><span>10-01</span><span>10-07</span><span>10-14</span><span>10-21</span><span>10-30</span></div></div></div><div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm"><h3 class="text-base font-bold mb-6">高频告警设备 Top 5</h3><div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead class="text-xs text-slate-400 font-medium border-b border-slate-100 dark:border-slate-800"><tr class="h-10"><th class="pb-2">设备名称</th><th class="pb-2">所属区域</th><th class="pb-2 text-right">告警数</th></tr></thead><tbody class="divide-y divide-slate-50 dark:divide-slate-800"><tr class="h-12"><td class="font-medium">Core-Switch-01</td><td class="text-slate-500">华东中心</td><td class="text-right font-bold">128</td></tr><tr class="h-12"><td class="font-medium">Edge-Router-B</td><td class="text-slate-500">华北研发</td><td class="text-right font-bold">86</td></tr><tr class="h-12"><td class="font-medium">Auth-Server-02</td><td class="text-slate-500">华南分部</td><td class="text-right font-bold">64</td></tr><tr class="h-12"><td class="font-medium">Storage-Array-A</td><td class="text-slate-500">西部办</td><td class="text-right font-bold">42</td></tr><tr class="h-12"><td class="font-medium">Gateway-FW-03</td><td class="text-slate-500">海外节点</td><td class="text-right font-bold">31</td></tr></tbody></table></div></div></div>
+    <!-- Bottom Sections -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Type Distribution (Donut Chart representation) -->
+    <div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm"><h3 class="text-base font-bold mb-6">告警类型统计</h3><div class="space-y-4"><div class="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50"><div class="flex items-center gap-3"><span class="material-symbols-outlined text-primary">router</span><span class="text-sm font-medium">网络入侵</span></div><div class="text-right"><p class="text-sm font-bold">834</p><p class="text-[10px] text-slate-400">占比 65%</p></div></div><div class="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50"><div class="flex items-center gap-3"><span class="material-symbols-outlined text-accent-deep">lock_open</span><span class="text-sm font-medium">非法访问</span></div><div class="text-right"><p class="text-sm font-bold">257</p><p class="text-[10px] text-slate-400">占比 20%</p></div></div><div class="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50"><div class="flex items-center gap-3"><span class="material-symbols-outlined text-amber-500">settings_suggest</span><span class="text-sm font-medium">硬件故障</span></div><div class="text-right"><p class="text-sm font-bold">193</p><p class="text-[10px] text-slate-400">占比 15%</p></div></div><div class="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50"><div class="flex items-center gap-3"><span class="material-symbols-outlined text-slate-400">more_horiz</span><span class="text-sm font-medium">其他告警</span></div><div class="text-right"><p class="text-sm font-bold">0</p><p class="text-[10px] text-slate-400">占比 0%</p></div></div></div></div>
+    <!-- High-freq Regions (Bar Chart representation) -->
+    <div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+    <h3 class="text-base font-bold mb-6">高频告警区域 Top 5</h3>
+    <div class="space-y-5">
+    <div class="space-y-2">
+    <div class="flex justify-between text-sm">
+    <span class="text-slate-600 dark:text-slate-400">华东数据中心</span>
+    <span class="font-bold">342</span>
+    </div>
+    <div class="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+    <div class="h-full bg-primary" style="width: 85%"></div>
+    </div>
+    </div>
+    <div class="space-y-2">
+    <div class="flex justify-between text-sm">
+    <span class="text-slate-600 dark:text-slate-400">华北研发部</span>
+    <span class="font-bold">215</span>
+    </div>
+    <div class="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+    <div class="h-full bg-primary/80" style="width: 65%"></div>
+    </div>
+    </div>
+    <div class="space-y-2">
+    <div class="flex justify-between text-sm">
+    <span class="text-slate-600 dark:text-slate-400">华南分公司</span>
+    <span class="font-bold">189</span>
+    </div>
+    <div class="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+    <div class="h-full bg-primary/60" style="width: 55%"></div>
+    </div>
+    </div>
+    <div class="space-y-2">
+    <div class="flex justify-between text-sm">
+    <span class="text-slate-600 dark:text-slate-400">西部办事处</span>
+    <span class="font-bold">120</span>
+    </div>
+    <div class="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+    <div class="h-full bg-primary/40" style="width: 35%"></div>
+    </div>
+    </div>
+    <div class="space-y-2">
+    <div class="flex justify-between text-sm">
+    <span class="text-slate-600 dark:text-slate-400">海外节点</span>
+    <span class="font-bold">96</span>
+    </div>
+    <div class="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+    <div class="h-full bg-primary/20" style="width: 25%"></div>
+    </div>
+    </div>
+    </div>
+    </div>
+    <!-- Level Distribution (List) -->
+    <div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col"><div class="flex items-center justify-between mb-6"><h3 class="text-base font-bold">告警等级分布</h3><span class="text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 uppercase tracking-wider font-bold">实时更新</span></div><div class="flex-1 flex flex-col items-center justify-center"><div class="relative size-32 mb-8"><svg class="size-full -rotate-90" viewbox="0 0 36 36"><circle class="dark:stroke-slate-800" cx="18" cy="18" fill="none" r="16" stroke="#e2e8f0" stroke-width="4"></circle><circle cx="18" cy="18" fill="none" r="16" stroke="#ef4444" stroke-dasharray="1, 100" stroke-width="4"></circle><circle cx="18" cy="18" fill="none" r="16" stroke="#f59e0b" stroke-dasharray="23, 100" stroke-dashoffset="-1" stroke-width="4"></circle><circle cx="18" cy="18" fill="none" r="16" stroke="#60a5fa" stroke-dasharray="76, 100" stroke-dashoffset="-24" stroke-width="4"></circle></svg><div class="absolute inset-0 flex flex-col items-center justify-center"><span class="text-xl font-bold">1,284</span><span class="text-[10px] text-slate-400 uppercase">告警总计</span></div></div><div class="w-full space-y-2"><div class="flex items-center justify-between text-xs"><div class="flex items-center gap-2"><span class="size-2 rounded-full bg-red-500"></span><span class="text-slate-600 dark:text-slate-400">致命等级 (Critical)</span></div><div class="flex gap-3 text-slate-900 dark:text-slate-100"><span class="font-bold">12</span><span>0.9%</span></div></div><div class="flex items-center justify-between text-xs"><div class="flex items-center gap-2"><span class="size-2 rounded-full bg-amber-500"></span><span class="text-slate-600 dark:text-slate-400">警告等级 (Warning)</span></div><div class="flex gap-3 text-slate-900 dark:text-slate-100"><span class="font-bold">284</span><span>22.1%</span></div></div><div class="flex items-center justify-between text-xs"><div class="flex items-center gap-2"><span class="size-2 rounded-full bg-blue-400"></span><span class="text-slate-600 dark:text-slate-400">提示等级 (Info)</span></div><div class="flex gap-3 text-slate-900 dark:text-slate-100"><span class="font-bold">988</span><span>77.0%</span></div></div></div></div></div>
+    </div>
+    </div>
+    </main>
+    </div>
+    </body></html>

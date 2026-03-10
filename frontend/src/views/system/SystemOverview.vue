@@ -9,7 +9,7 @@
     <section class="section">
       <h3 class="section__title">运行状态</h3>
       <div class="status-grid">
-        <div class="status-card">
+        <div class="status-card card-border-xl">
           <div class="status-card__icon status-card__icon--primary">
             <n-icon :size="24"><ServerOutline /></n-icon>
           </div>
@@ -18,7 +18,7 @@
             <span class="status-card__value">{{ systemInfo.uptime }}</span>
           </div>
         </div>
-        <div class="status-card">
+        <div class="status-card card-border-xl">
           <div class="status-card__icon status-card__icon--success">
             <n-icon :size="24"><SpeedometerOutline /></n-icon>
           </div>
@@ -28,7 +28,7 @@
           </div>
           <n-progress type="line" :percentage="systemInfo.cpuUsage" :show-indicator="false" />
         </div>
-        <div class="status-card">
+        <div class="status-card card-border-xl">
           <div class="status-card__icon status-card__icon--warning">
             <n-icon :size="24"><HardwareChipOutline /></n-icon>
           </div>
@@ -38,7 +38,7 @@
           </div>
           <n-progress type="line" :percentage="(systemInfo.memoryUsed / systemInfo.memoryTotal) * 100" :show-indicator="false" status="warning" />
         </div>
-        <div class="status-card">
+        <div class="status-card card-border-xl">
           <div class="status-card__icon status-card__icon--info">
             <n-icon :size="24"><CloudOutline /></n-icon>
           </div>
@@ -54,7 +54,7 @@
     <!-- Version Info -->
     <section class="section">
       <h3 class="section__title">版本信息</h3>
-      <div class="version-table">
+      <div class="version-table card-border-xl">
         <div class="version-row">
           <span class="version-label">平台版本</span>
           <span class="version-value">V2.5.1</span>
@@ -79,7 +79,7 @@
     <!-- License Info -->
     <section class="section">
       <h3 class="section__title">授权信息</h3>
-      <div class="license-card">
+      <div class="license-card card-border-xl">
         <div class="license-header">
           <span class="license-type">企业版授权</span>
           <n-tag type="success">有效</n-tag>
@@ -166,8 +166,6 @@ const systemInfo = ref({
 
 .status-card {
   background: var(--bg-card);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-color);
   padding: var(--spacing-lg);
   display: flex;
   flex-wrap: wrap;
@@ -196,8 +194,6 @@ const systemInfo = ref({
 
 .version-table {
   background: var(--bg-card);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-color);
   overflow: hidden;
 }
 
@@ -214,8 +210,6 @@ const systemInfo = ref({
 
 .license-card {
   background: var(--bg-card);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-color);
   padding: var(--spacing-lg);
 }
 

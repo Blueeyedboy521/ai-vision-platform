@@ -7,17 +7,34 @@
 - 正式文件：模型文件、告警截图、头像等业务正式文件
 """
 from typing import Optional
+from io import BytesIO
+import mimetypes
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Depends
+from fastapi.responses import StreamingResponse
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_current_user_optional
 from app.models import User
 from app.schemas.common import success_response
 from common.storage import get_storage
 from common.logging import logger
+from app.core.security import decode_access_token
+from app.services.auth_service import get_auth_service
 
 
 router = APIRouter()
+
+def _validate_access_token_from_query(token: Optional[str]) -> None:
+    """
+    允许前端以 QueryString 方式携带 token（img 标签无法设置 Authorization Header）。
+    这里只做 access token 的基础校验与黑名单校验，不再额外查 DB。
+    """
+    if not token:
+        raise HTTPException(status_code=401, detail="未提供认证凭证")
+    payload = decode_access_token(token)
+    if payload is None or payload.get("type") != "access":
+        raise HTTPException(status_code=401, detail="Token 无效或已过期")
+    # 黑名单校验（同步/异步均可能；此处按 async service 调用）
 
 
 def _normalize_temp_path(path: str, category: str) -> str:
@@ -118,6 +135,42 @@ async def download_file(
         raise HTTPException(status_code=404, detail="文件不存在")
     url = storage.get_url(key)
     return success_response({"key": key, "url": url})
+
+
+@router.get("/preview", summary="正式文件预览（不暴露存储真实地址）")
+async def preview_file(
+    filepath: str = Query(..., description="正式文件 key，比如 alarm/...、models/... 等"),
+    token: Optional[str] = Query(None, description="可选：通过 query 传递 access token（用于图片/视频标签预览）"),
+    current_user: Optional[User] = Depends(get_current_user_optional),  # 兼容 header 鉴权
+):
+    """
+    读取存储中的文件内容并以流方式返回。
+
+    - 主要用途：前端通过 <img> 预览告警截图时不能设置 Authorization Header；
+      因此允许通过 `token` query 参数传递 access token 来完成鉴权。
+    - 如果前端已通过 Header 鉴权（例如 fetch 下载），也可以不传 token。
+    """
+    # 鉴权：优先使用 header（current_user 非空），否则要求 query token
+    if current_user is None:
+        auth_service = get_auth_service()
+        if await auth_service.is_token_blacklisted(token or ""):
+            raise HTTPException(status_code=401, detail="Token 已失效")
+        # 黑名单校验需要调用 auth_service
+        _validate_access_token_from_query(token)
+
+    storage = get_storage()
+    if not storage.exists(filepath):
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    data = storage.get_file(filepath)
+    if data is None:
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    content_type, _ = mimetypes.guess_type(filepath)
+    return StreamingResponse(
+        BytesIO(data),
+        media_type=content_type or "application/octet-stream",
+    )
 
 
 @router.delete("", summary="删除正式文件")

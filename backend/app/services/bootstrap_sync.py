@@ -15,6 +15,7 @@ from common.logging import logger
 from common.redis import RedisKeys
 from common.media import get_stream_manager
 from app.core.redis import write_model_to_redis
+from app.services.data_fix import run_startup_data_fix
 
 async def sync_configs_to_redis_and_streams() -> None:
   """
@@ -26,6 +27,12 @@ async def sync_configs_to_redis_and_streams() -> None:
   stream_manager = get_stream_manager()
 
   async with get_db_session() as session:
+    # 启动期数据修复（幂等）：补齐区域层级与告警冗余字段
+    try:
+      await run_startup_data_fix(session)
+    except Exception as e:
+      logger.warning(f"启动期数据修复失败(可忽略): {e}")
+
     # 同步模型配置
     result = await session.execute(select(Model))
     models: List[Model] = result.scalars().all()

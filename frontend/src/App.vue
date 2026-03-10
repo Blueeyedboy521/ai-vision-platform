@@ -2,6 +2,8 @@
   <n-config-provider :theme="currentTheme" :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN">
     <n-message-provider>
       <AppLayout />
+      <!-- 全局告警 WS 提示与详情弹框 -->
+      <AlarmNotificationContainer />
     </n-message-provider>
   </n-config-provider>
 </template>
@@ -12,9 +14,14 @@ import { NConfigProvider, NMessageProvider, darkTheme, zhCN, dateZhCN } from 'na
 import type { GlobalThemeOverrides } from 'naive-ui'
 import { useAppStore } from '@/stores/app'
 import AppLayout from '@/components/AppLayout.vue'
+import AlarmNotificationContainer from '@/components/AlarmNotificationContainer.vue'
+import { useAppWebSocket } from '@/composables/useAppWebSocket'
 
 const appStore = useAppStore()
 const currentTheme = computed(() => appStore.isDarkMode ? darkTheme : null)
+
+// 初始化全局告警 WebSocket
+useAppWebSocket()
 
 /**
  * Naive UI 全局主题覆盖

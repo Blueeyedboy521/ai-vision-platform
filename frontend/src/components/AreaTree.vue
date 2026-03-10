@@ -1,5 +1,5 @@
 <template>
-  <div class="area-tree">
+  <div class="area-tree card-border-xl">
     <div class="area-tree__header">
       <span class="area-tree__title">区域架构</span>
       <n-button
@@ -295,8 +295,6 @@ defineExpose({
   width: 260px;
   min-width: 260px;
   background: var(--bg-card);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
   height: fit-content;

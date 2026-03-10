@@ -73,6 +73,12 @@ class AlgorithmUpdate(BaseModel):
         max_length=100,
         description="算法名称"
     )
+    code: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=50,
+        description="算法编码"
+    )
     description: Optional[str] = Field(
         default=None,
         description="算法描述"

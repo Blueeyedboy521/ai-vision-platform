@@ -18,6 +18,7 @@ class AlarmResponse(BaseModel):
     id: str = Field(description="告警ID")
     camera_id: str = Field(description="摄像头ID")
     camera_name: Optional[str] = Field(default=None, description="摄像头名称")
+    area_name: Optional[str] = Field(default=None, description="区域名称")
     algorithm_id: str = Field(description="算法ID")
     algorithm_name: Optional[str] = Field(default=None, description="算法名称")
     alarm_type: str = Field(description="告警类型")

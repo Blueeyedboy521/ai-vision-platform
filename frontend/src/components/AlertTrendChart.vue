@@ -1,5 +1,5 @@
 <template>
-  <div class="chart-card">
+  <div class="chart-card card-border-xl">
     <div class="chart-header">
       <div class="chart-title">
         <div class="title-bar"></div>

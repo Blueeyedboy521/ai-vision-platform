@@ -93,6 +93,9 @@ const currentKey = computed(() => {
   // Map child route names to sidebar keys
   if (name === 'CameraManagement') return 'video-devices'
   if (name === 'VideoPreview') return 'video-preview'
+  if (name === 'AlarmList') return 'alarm-list'
+  if (name === 'AlarmStats') return 'alarm-stats'
+  if (name === 'AlarmStats2') return 'alarm-stats2'
   if (name === 'SystemOverview') return 'system-overview'
   if (name === 'UserManagement') return 'system-users'
   if (name === 'RoleManagement') return 'system-roles'
@@ -133,7 +136,12 @@ const platformMenuOptions: MenuOption[] = [
   {
     label: '告警管理',
     key: 'AlarmManagement',
-    icon: renderIcon(NotificationsOutline)
+    icon: renderIcon(NotificationsOutline),
+    children: [
+      { label: '告警统计', key: 'alarm-stats' },
+      { label: '告警统计2', key: 'alarm-stats2' },
+      { label: '告警列表', key: 'alarm-list' }
+    ]
   }
 ]
 
@@ -189,7 +197,10 @@ function handleMenuSelect(key: string) {
     'video-preview': 'VideoPreview',
     'AlgorithmManagement': 'AlgorithmManagement',
     'PushManagement': 'PushManagement',
-    'AlarmManagement': 'AlarmManagement',
+    'AlarmManagement': 'AlarmList',
+    'alarm-list': 'AlarmList',
+    'alarm-stats': 'AlarmStats',
+    'alarm-stats2': 'AlarmStats2',
     'system-overview': 'SystemOverview',
     'system-users': 'UserManagement',
     'system-roles': 'RoleManagement',

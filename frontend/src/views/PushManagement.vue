@@ -10,7 +10,7 @@
     <div class="channel-section">
       <div class="channel-cards">
         <!-- 钉钉推送 -->
-        <div class="channel-card">
+        <div class="channel-card card-border-xl">
           <div class="channel-card__icon channel-card__icon--dingtalk">
             <n-icon :size="32"><ChatboxEllipsesOutline /></n-icon>
           </div>
@@ -26,7 +26,7 @@
         </div>
 
         <!-- 企业微信 -->
-        <div class="channel-card">
+        <div class="channel-card card-border-xl">
           <div class="channel-card__icon channel-card__icon--wechat">
             <n-icon :size="32"><PeopleOutline /></n-icon>
           </div>
@@ -42,7 +42,7 @@
         </div>
 
         <!-- 邮件推送 -->
-        <div class="channel-card">
+        <div class="channel-card card-border-xl">
           <div class="channel-card__icon channel-card__icon--email">
             <n-icon :size="32"><MailOutline /></n-icon>
           </div>
@@ -58,7 +58,7 @@
         </div>
 
         <!-- 短信推送 -->
-        <div class="channel-card">
+        <div class="channel-card card-border-xl">
           <div class="channel-card__icon channel-card__icon--sms">
             <n-icon :size="32"><PhonePortraitOutline /></n-icon>
           </div>
@@ -76,7 +76,7 @@
     </div>
 
     <!-- Message Template Section -->
-    <div class="template-section">
+    <div class="template-section card-border-xl">
       <div class="template-header">
         <h2 class="template-header__title">消息模板管理</h2>
         <n-button type="primary" size="small" @click="showTemplateModal = true">
@@ -87,11 +87,11 @@
         </n-button>
       </div>
 
-      <div class="template-list">
+      <div class="template-list card-border-xl">
         <div 
           v-for="template in templates" 
           :key="template.id" 
-          class="template-item"
+          class="template-item card-border-xl"
         >
           <div class="template-item__icon">
             <n-icon :size="20" color="var(--primary-color)"><DocumentTextOutline /></n-icon>
@@ -404,8 +404,6 @@ function saveTemplate() {
 
 .channel-card {
   background: var(--bg-card);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-color);
   padding: var(--spacing-xl);
   text-align: center;
   transition: all 0.3s ease;
@@ -499,8 +497,6 @@ function saveTemplate() {
 /* Template Section */
 .template-section {
   background: var(--bg-card);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-color);
   padding: var(--spacing-xl);
   flex: 1;
   min-height: 0;
