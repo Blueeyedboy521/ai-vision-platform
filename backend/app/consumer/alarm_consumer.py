@@ -12,7 +12,6 @@ import redis
 
 from common.logging import logger
 from common.notification import get_notifiers, NotificationMessage
-from common.storage import get_storage
 from common.redis.channels import RedisChannels
 from config.settings import settings
 
@@ -246,7 +245,8 @@ def publish_realtime_alarm(alarm_data: dict) -> None:
         snapshot_url = None
         if snapshot_key:
             from urllib.parse import quote
-            snapshot_url = f"/api/v1/files/preview?filepath={quote(str(snapshot_key))}"
+            # WS/列表优先使用缩略图
+            snapshot_url = f"/api/v1/files/preview?filepath={quote(str(snapshot_key))}&variant=thumb"
         message = {
             "type": "new_alarm",
             "alarm_id": alarm_data.get("alarm_id"),

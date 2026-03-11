@@ -3,6 +3,8 @@
 .idea/
 *.swp
 *.swo
+.cursor/skills/ui-ux-pro-max/
+.trae/
 
 # OS
 .DS_Store
@@ -21,3 +23,7 @@ Thumbs.db
 /src/
 /.vite/
 node_modules
+
+# Local experiments / scripts
+backend/sql/
+tests_onnx/

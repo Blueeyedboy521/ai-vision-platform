@@ -15,6 +15,7 @@ from datetime import timedelta
 
 import cv2
 import numpy as np
+import urllib3
 from minio import Minio
 from minio.error import S3Error
 
@@ -49,12 +50,31 @@ class MinIOStorage(StorageInterface):
         self.bucket = bucket
         self.secure = secure
 
-        self.client = Minio(
-            endpoint,
-            access_key=access_key,
-            secret_key=secret_key,
-            secure=secure,
+        # 兼容不同版本 minio SDK：
+        # - 新版/旧版通常都支持 http_client 参数（urllib3 PoolManager）
+        # - 旧版不支持 http_client_kwargs（你现在遇到的 TypeError）
+        http_client = urllib3.PoolManager(
+            timeout=urllib3.Timeout(connect=10.0, read=30.0),
+            maxsize=100,
+            retries=False,
+            cert_reqs="CERT_REQUIRED" if secure else "CERT_NONE",
         )
+        try:
+            self.client = Minio(
+                endpoint=endpoint,
+                access_key=access_key,
+                secret_key=secret_key,
+                secure=secure,
+                http_client=http_client,
+            )
+        except TypeError:
+            # 极老版本兜底：不带连接池参数初始化
+            self.client = Minio(
+                endpoint=endpoint,
+                access_key=access_key,
+                secret_key=secret_key,
+                secure=secure,
+            )
 
         # 确保存储桶存在
         try:

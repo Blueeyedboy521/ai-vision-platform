@@ -140,6 +140,7 @@ async def download_file(
 @router.get("/preview", summary="正式文件预览（不暴露存储真实地址）")
 async def preview_file(
     filepath: str = Query(..., description="正式文件 key，比如 alarm/...、models/... 等"),
+    variant: str = Query("origin", description="图片变体: origin/thumb（默认 origin）"),
     token: Optional[str] = Query(None, description="可选：通过 query 传递 access token（用于图片/视频标签预览）"),
     current_user: Optional[User] = Depends(get_current_user_optional),  # 兼容 header 鉴权
 ):
@@ -159,14 +160,23 @@ async def preview_file(
         _validate_access_token_from_query(token)
 
     storage = get_storage()
-    if not storage.exists(filepath):
+
+    # variant=thumb 时尝试读取同路径缩略图，不存在则回退原图
+    read_key = filepath
+    if (variant or "").lower() == "thumb":
+        from common.media.image import build_thumb_key
+        thumb_key = build_thumb_key(filepath)
+        if storage.exists(thumb_key):
+            read_key = thumb_key
+
+    if not storage.exists(read_key):
         raise HTTPException(status_code=404, detail="文件不存在")
 
-    data = storage.get_file(filepath)
+    data = storage.get_file(read_key)
     if data is None:
         raise HTTPException(status_code=404, detail="文件不存在")
 
-    content_type, _ = mimetypes.guess_type(filepath)
+    content_type, _ = mimetypes.guess_type(read_key)
     return StreamingResponse(
         BytesIO(data),
         media_type=content_type or "application/octet-stream",

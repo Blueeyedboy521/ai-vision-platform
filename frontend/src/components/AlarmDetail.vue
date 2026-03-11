@@ -56,8 +56,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import ImageViewer from '@/components/ImageViewer.vue'
+import { useUserStore } from '@/stores/user'
+import { appendToken } from '@/utils/auth_url'
 
 const props = defineProps<{ alarm: any | null }>()
+
+const userStore = useUserStore()
 
 const showViewer = ref(false)
 
@@ -103,7 +107,15 @@ const fullTime = computed(() => {
 
 const snapshotUrl = computed(() => {
   const a = props.alarm as any
-  return a?.snapshot_url || a?.snapshotUrl || a?.snapshot_path || ''
+  const rawUrl = a?.snapshot_url || a?.snapshotUrl || a?.snapshot_path || ''
+  // 详情/查看器强制使用原图（列表/冒泡通常传的是 variant=thumb）
+  const url = String(rawUrl || '')
+  const withOrigin = url.includes('variant=thumb')
+    ? url.replace('variant=thumb', 'variant=origin')
+    : url.includes('variant=origin')
+      ? url
+      : (url.includes('?') ? `${url}&variant=origin` : `${url}?variant=origin`)
+  return appendToken(withOrigin, userStore.token)
 })
 
 const detections = computed<any[] | null>(() => {

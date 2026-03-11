@@ -188,8 +188,84 @@ class AlarmTrendItem(BaseModel):
     告警趋势项
     """
     
-    date: str = Field(description="日期")
+    date: str = Field(description="日期/时间")
     count: int = Field(description="数量")
+
+
+class AlarmOverviewStats(BaseModel):
+    """
+    告警概览统计（顶部卡片数据）
+    """
+    
+    total: int = Field(description="总告警数")
+    total_trend: float = Field(description="总数趋势百分比")
+    total_new: int = Field(description="较昨日新增数")
+    unconfirmed: int = Field(description="待处理数")
+    unconfirmed_trend: float = Field(description="待处理趋势百分比")
+    urgent_count: int = Field(description="紧急处理中数量")
+    confirmed: int = Field(description="已解决数")
+    confirmed_trend: float = Field(description="已解决趋势百分比")
+    avg_handle_time: float = Field(description="平均处理时间(分钟)")
+    completion_rate: float = Field(description="处理完成率")
+    completion_trend: float = Field(description="完成率趋势百分比")
+    site_rank_percent: float = Field(description="站点排名百分比")
+
+
+class AlarmDeviceTopItem(BaseModel):
+    """
+    高频告警设备项
+    """
+    
+    camera_id: str = Field(description="摄像头ID")
+    camera_name: str = Field(description="设备名称")
+    area_name: Optional[str] = Field(description="所属区域")
+    count: int = Field(description="告警数")
+
+
+class AlarmAreaTopItem(BaseModel):
+    """
+    高频告警区域项
+    """
+    
+    area_name: str = Field(description="区域名称")
+    count: int = Field(description="告警数")
+    percentage: float = Field(description="占比百分比")
+
+
+class AlarmTypeStatsItem(BaseModel):
+    """
+    告警类型统计项
+    """
+    
+    algorithm_id: str = Field(description="算法ID")
+    algorithm_name: str = Field(description="告警类型名称")
+    count: int = Field(description="数量")
+    percentage: float = Field(description="占比百分比")
+
+
+class AlarmLevelStatsItem(BaseModel):
+    """
+    告警等级统计项
+    """
+    
+    level: str = Field(description="等级: info/warning/danger/critical")
+    label: str = Field(description="等级标签")
+    count: int = Field(description="数量")
+    percentage: float = Field(description="占比百分比")
+
+
+class AlarmDashboardStats(BaseModel):
+    """
+    告警仪表盘统计数据（完整统计页面）
+    """
+    
+    overview: AlarmOverviewStats = Field(description="概览统计")
+    trend: List[AlarmTrendItem] = Field(description="趋势数据")
+    trend_range: str = Field(description="趋势时间范围描述")
+    device_top: List[AlarmDeviceTopItem] = Field(description="高频告警设备Top5")
+    area_top: List[AlarmAreaTopItem] = Field(description="高频告警区域Top5")
+    type_stats: List[AlarmTypeStatsItem] = Field(description="告警类型统计")
+    level_stats: List[AlarmLevelStatsItem] = Field(description="告警等级分布")
 
 
 # 更新前向引用

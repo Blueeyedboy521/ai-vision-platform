@@ -168,6 +168,37 @@ async def dashboard(
         )).scalar() or 0
         level_stats.append({"label": level, "value": count})
     
+    # 算法统计
+    total_algorithms = (await db.execute(
+        select(func.count(Algorithm.id))
+    )).scalar() or 0
+    
+    enabled_algorithms = (await db.execute(
+        select(func.count(Algorithm.id))
+        .where(Algorithm.is_enabled == True)
+    )).scalar() or 0
+    
+    # 模型统计（假设模型表存在）
+    try:
+        from app.models import Model
+        total_models = (await db.execute(
+            select(func.count(Model.id))
+        )).scalar() or 0
+        
+        loaded_models = (await db.execute(
+            select(func.count(Model.id))
+            .where(Model.is_enabled == True)
+        )).scalar() or 0
+    except ImportError:
+        # 如果模型表不存在，返回默认值
+        total_models = 0
+        loaded_models = 0
+    
+    # 用户统计
+    total_users = (await db.execute(
+        select(func.count(User.id))
+    )).scalar() or 0
+    
     return success_response({
         "cameras": {
             "total": total_cameras,
@@ -175,9 +206,21 @@ async def dashboard(
             "offline": offline_cameras,
             "error": error_cameras
         },
+        "algorithms": {
+            "total": total_algorithms,
+            "enabled": enabled_algorithms
+        },
+        "models": {
+            "total": total_models,
+            "loaded": loaded_models
+        },
         "today_alarms": {
             "total": today_alarms,
             "unconfirmed": today_unconfirmed,
             "by_level": level_stats
+        },
+        "users": {
+            "total": total_users,
+            "active": 0  # 暂时返回0，可根据实际情况计算
         }
     })

@@ -333,6 +333,7 @@ backend/
 - **预览接口**：`GET /api/v1/files/preview`
   - 入参：
     - `filepath: str`：存储 key，例如 `alarms/2026-03-03/xxx.jpg` 或 `models/{model_id}/...`。
+    - `variant: str`：图片变体，支持 `origin|thumb`（默认 `origin`）。`thumb` 会优先读取同路径缩略图，不存在则回退原图（兼容历史数据）。
     - `token: Optional[str]`：可选，通过 query 传递 access token，用于 `<img>` / `<video>` 标签场景。
   - 鉴权逻辑：
     - 优先通过 `Authorization` Header + `get_current_user_optional` 获取当前用户。
@@ -340,11 +341,26 @@ backend/
   - 返回值：
     - 从 `common.storage` 读取文件内容与 MIME 类型，使用 `StreamingResponse` 直接返回字节流。
 
+缩略图约定（同目录存储）：
+
+- 原图 key：`alarm/YYYY/MM/DD/{camera_id}/{ts_ms}.jpg`
+- 缩略图 key：在原图文件名上追加 `__thumb` 后缀：`.../{ts_ms}__thumb.jpg`
+- 生成时机：`Engine Scheduler._start_alarm_dispatcher` 在上传原图后立刻生成并上传缩略图，用于列表与告警气泡快速加载。
+
 前端约定：
 
 - 所有快照URL均通过 `/api/v1/files/preview?filepath=...` 访问，不再拼接 MinIO 的直连地址。
+- 列表/缩略图场景优先使用 `variant=thumb`（如告警列表、首页告警列表、WebSocket 告警气泡）；详情/放大预览使用 `variant=origin`。
 - 通过 `frontend/src/utils/auth_url.ts` 中的 `appendToken(url, token)` 工具函数，在路由守卫或调用点为 URL 自动附加 `?token=...`。
 - 告警列表、首页告警列表、告警详情弹窗与 WebSocket 告警气泡均复用同一套 URL 透传与拼接逻辑。
+
+#### 3.3.5 日志组件统一（app / engine 共用）
+
+为避免 app 与 engine 两套日志初始化/格式不一致，统一使用 `common.logging.setup_logging()`：
+
+- app：`backend/app/main.py` 在启动生命周期最早阶段调用 `setup_logging(...)`，保证从第一行日志开始格式一致。
+- engine：`backend/engine/main.py` 也调用同一函数，通过 `file_prefix="engine"` 将日志文件写入 `engine_{date}.log` / `engine_error_{date}.log`。
+- Windows 兼容：初始化时对 `stdout/stderr` 尝试切换 UTF-8 输出，避免中文日志乱码。
 
 #### 3.3.4 前端告警中心与统计大屏
 

@@ -238,7 +238,7 @@ class Scheduler:
             return
         self._alarm_running = True
 
-        # 本地截图上传去重与回收：
+        # 本地截图上传去重与回收（多算法同帧复用）：
         # key: local_snapshot_path
         # value: {"snapshot_path": str, "total": int, "seen": int}
         uploaded_snapshots: Dict[str, dict] = {}
@@ -255,55 +255,73 @@ class Scheduler:
                         if not alarm:
                             continue
 
-                        # 将本地截图上传到 Storage 的正式目录，并写回 snapshot_path（不再在后端绘制检测框，前端负责绘框）
+                        # 将本地截图上传到 Storage 的正式目录，并生成缩略图（列表/冒泡使用 variant=thumb）。
+                        # 同一 local_snapshot_path 可能被多条告警引用：用 ref_total 做去重与回收。
                         camera_id = str(alarm.get("camera_id") or "")
                         ts_str = str(alarm.get("timestamp") or "")
                         local_path = alarm.pop("local_snapshot_path", None)
-                        # local_snapshot_ref_total 表示同一 local_path 预计被多少条告警复用
                         ref_total_raw = alarm.get("local_snapshot_ref_total") or 1
                         try:
                             ref_total = int(ref_total_raw)
                         except Exception:
                             ref_total = 1
+                        ref_total = max(1, ref_total)
 
                         if local_path and camera_id:
                             try:
                                 import os
                                 from datetime import datetime
                                 from common.storage import get_storage
+                                from common.media.image import (
+                                    ThumbnailOptions,
+                                    build_thumb_key,
+                                    make_thumbnail_jpeg_from_file,
+                                )
 
                                 entry = uploaded_snapshots.get(local_path)
                                 if entry is None:
-                                    # 读取本地原始截图并绘制检测框，仅在首次出现该 local_path 时执行
                                     if not os.path.exists(local_path):
                                         logger.error(f"本地告警截图不存在: {local_path}")
                                     else:
-                                        import cv2
+                                        storage = get_storage()
+                                        try:
+                                            dt = datetime.fromisoformat(ts_str)
+                                        except Exception:
+                                            dt = datetime.now()
+                                        date_path = dt.strftime("%Y/%m/%d")
+                                        file_id = str(int(dt.timestamp() * 1000))
+                                        origin_key = f"alarm/{date_path}/{camera_id}/{file_id}.jpg"
 
-                                        img = cv2.imread(local_path)
-                                        if img is None:
-                                            logger.error(f"读取本地告警截图失败: {local_path}")
-                                        else:
-                                            storage = get_storage()
-                                            try:
-                                                dt = datetime.fromisoformat(ts_str)
-                                            except Exception:
-                                                dt = datetime.now()
-                                            date_path = dt.strftime("%Y/%m/%d")
-                                            file_id = str(int(dt.timestamp() * 1000))
-                                            rel_path = f"alarm/{date_path}/{camera_id}/{file_id}.jpg"
+                                        # 上传原图（不在 Engine 绘框）
+                                        try:
+                                            with open(local_path, "rb") as f:
+                                                origin_bytes = f.read()
+                                            storage.save_file(origin_bytes, origin_key, content_type="image/jpeg")
+                                            alarm["snapshot_path"] = origin_key
+                                        except Exception as e:
+                                            logger.error(f"上传告警原图失败: {local_path}, err={e}")
 
-                                            # 直接通过 save_image 将原始截图保存到正式目录（前端负责绘框）
-                                            snapshot_path = storage.save_image(img, rel_path) or rel_path
-                                            alarm["snapshot_path"] = snapshot_path
-                                            uploaded_snapshots[local_path] = {
-                                                "snapshot_path": snapshot_path,
-                                                "total": max(1, ref_total),
-                                                "seen": 1,
-                                            }
+                                        # 生成并上传缩略图（失败不影响主流程）
+                                        try:
+                                            thumb_bytes = make_thumbnail_jpeg_from_file(
+                                                local_path, ThumbnailOptions(max_side=320, quality=70)
+                                            )
+                                            if thumb_bytes:
+                                                thumb_key = build_thumb_key(origin_key)
+                                                storage.save_file(thumb_bytes, thumb_key, content_type="image/jpeg")
+                                        except Exception as e:
+                                            logger.warning(f"上传告警缩略图失败(可忽略): {e}")
+
+                                        uploaded_snapshots[local_path] = {
+                                            "snapshot_path": alarm.get("snapshot_path"),
+                                            "total": ref_total,
+                                            "seen": 1,
+                                        }
+                                        entry = uploaded_snapshots[local_path]
                                 else:
                                     # 已经上传过该本地截图：直接复用远程路径
-                                    alarm["snapshot_path"] = entry["snapshot_path"]
+                                    if entry.get("snapshot_path"):
+                                        alarm["snapshot_path"] = entry["snapshot_path"]
                                     entry["seen"] += 1
 
                                 # 判断是否所有引用都已消费完，若是则回收本地文件与缓存

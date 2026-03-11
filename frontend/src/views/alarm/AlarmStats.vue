@@ -9,16 +9,17 @@
               <WarningOutline />
             </n-icon>
           </div>
-          <div class="stat-trend" style="color: #22c55e;">
+          <div class="stat-trend" :style="{ color: overview.total_trend >= 0 ? '#22c55e' : '#ef4444' }">
             <n-icon :size="14">
-              <TrendingUpOutline />
+              <TrendingUpOutline v-if="overview.total_trend >= 0" />
+              <TrendingDownOutline v-else />
             </n-icon>
-            <span>+12%</span>
+            <span>{{ overview.total_trend >= 0 ? '+' : '' }}{{ overview.total_trend }}%</span>
           </div>
         </div>
         <div class="stat-label">报警总数</div>
-        <div class="stat-value">1,284</div>
-        <div class="stat-desc">较昨日新增 142 条</div>
+        <div class="stat-value">{{ overview.total.toLocaleString() }}</div>
+        <div class="stat-desc">今日新增 {{ overview.total_new }} 条</div>
       </div>
       <div class="stat-card card-border-xl">
         <div class="stat-header">
@@ -27,16 +28,17 @@
               <AlertCircleOutline />
             </n-icon>
           </div>
-          <div class="stat-trend" style="color: #ef4444;">
+          <div class="stat-trend" :style="{ color: overview.unconfirmed_trend >= 0 ? '#ef4444' : '#22c55e' }">
             <n-icon :size="14">
-              <TrendingDownOutline />
+              <TrendingUpOutline v-if="overview.unconfirmed_trend >= 0" />
+              <TrendingDownOutline v-else />
             </n-icon>
-            <span>-5%</span>
+            <span>{{ overview.unconfirmed_trend >= 0 ? '+' : '' }}{{ overview.unconfirmed_trend }}%</span>
           </div>
         </div>
         <div class="stat-label">待处理告警</div>
-        <div class="stat-value">42</div>
-        <div class="stat-desc">紧急处理中 8 条</div>
+        <div class="stat-value">{{ overview.unconfirmed }}</div>
+        <div class="stat-desc">紧急处理中 {{ overview.urgent_count }} 条</div>
       </div>
       <div class="stat-card card-border-xl">
         <div class="stat-header">
@@ -49,12 +51,12 @@
             <n-icon :size="14">
               <TrendingUpOutline />
             </n-icon>
-            <span>+15%</span>
+            <span>+{{ overview.confirmed_trend }}%</span>
           </div>
         </div>
         <div class="stat-label">已解决告警</div>
-        <div class="stat-value">1,242</div>
-        <div class="stat-desc">平均处理时间 12.4m</div>
+        <div class="stat-value">{{ overview.confirmed }}</div>
+        <div class="stat-desc">平均处理时间 {{ overview.avg_handle_time }}m</div>
       </div>
       <div class="stat-card card-border-xl">
         <div class="stat-header">
@@ -67,12 +69,12 @@
             <n-icon :size="14">
               <TrendingUpOutline />
             </n-icon>
-            <span>+2.1%</span>
+            <span>+{{ overview.completion_trend }}%</span>
           </div>
         </div>
         <div class="stat-label">处理完成率</div>
-        <div class="stat-value">96.7%</div>
-        <div class="stat-desc">优于 92% 的站点</div>
+        <div class="stat-value">{{ overview.completion_rate }}%</div>
+        <div class="stat-desc">优于 {{ overview.site_rank_percent }}% 的站点</div>
       </div>
     </div>
 
@@ -83,39 +85,40 @@
         <div class="chart-header">
           <div>
             <h3 class="text-lg font-bold">报警趋势分析</h3>
-            <p class="text-sm text-slate-500">数据统计范围: 2023-10-01 至 2023-10-30</p>
+            <p class="text-sm text-slate-500">数据统计范围: {{ trendRange }}</p>
           </div>
           <div class="chart-controls">
             <div class="time-selector">
-              <button class="time-btn">今日</button>
-              <button class="time-btn">7日</button>
-              <button class="time-btn">14日</button>
-              <button class="time-btn active">30日</button>
+              <button 
+                class="time-btn" 
+                :class="{ active: currentTrendDays === 1 }"
+                @click="handleTrendChange(1)"
+              >今日</button>
+              <button 
+                class="time-btn" 
+                :class="{ active: currentTrendDays === 7 }"
+                @click="handleTrendChange(7)"
+              >7日</button>
+              <button 
+                class="time-btn" 
+                :class="{ active: currentTrendDays === 14 }"
+                @click="handleTrendChange(14)"
+              >14日</button>
+              <button 
+                class="time-btn" 
+                :class="{ active: currentTrendDays === 30 }"
+                @click="handleTrendChange(30)"
+              >30日</button>
             </div>
             <button class="export-btn">导出报表</button>
           </div>
         </div>
         <div class="chart-container">
-          <svg class="chart-svg" preserveAspectRatio="none" viewBox="0 0 1000 200">
-            <defs>
-              <linearGradient id="chart-poly" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stop-color="#137fec" stop-opacity="0.2"></stop>
-                <stop offset="100%" stop-color="#137fec" stop-opacity="0"></stop>
-              </linearGradient>
-            </defs>
-            <path class="chart-gradient" d="M0,150 Q100,80 200,120 T400,60 T600,100 T800,40 T1000,80 L1000,200 L0,200 Z"></path>
-            <path class="chart-line" d="M0,150 Q100,80 200,120 T400,60 T600,100 T800,40 T1000,80" fill="none" stroke-linecap="round"></path>
-            <line class="grid-line" x1="0" x2="1000" y1="180" y2="180"></line>
-            <line class="grid-line" x1="0" x2="1000" y1="120" y2="120"></line>
-            <line class="grid-line" x1="0" x2="1000" y1="60" y2="60"></line>
-          </svg>
-          <div class="chart-labels">
-            <span>10-01</span>
-            <span>10-07</span>
-            <span>10-14</span>
-            <span>10-21</span>
-            <span>10-30</span>
-          </div>
+          <v-chart
+            class="trend-chart"
+            :option="chartOption"
+            autoresize
+          />
         </div>
       </div>
 
@@ -128,30 +131,13 @@
             <span>所属区域</span>
             <span>告警数</span>
           </div>
-          <div class="table-row">
-            <span class="device-name">Core-Switch-01</span>
-            <span class="device-region">华东中心</span>
-            <span class="device-count">128</span>
+          <div class="table-row" v-for="device in deviceTop" :key="device.camera_id">
+            <span class="device-name">{{ device.camera_name }}</span>
+            <span class="device-region">{{ device.area_name || '-' }}</span>
+            <span class="device-count">{{ device.count }}</span>
           </div>
-          <div class="table-row">
-            <span class="device-name">Edge-Router-B</span>
-            <span class="device-region">华北研发</span>
-            <span class="device-count">86</span>
-          </div>
-          <div class="table-row">
-            <span class="device-name">Auth-Server-02</span>
-            <span class="device-region">华南分部</span>
-            <span class="device-count">64</span>
-          </div>
-          <div class="table-row">
-            <span class="device-name">Storage-Array-A</span>
-            <span class="device-region">西部办</span>
-            <span class="device-count">42</span>
-          </div>
-          <div class="table-row">
-            <span class="device-name">Gateway-FW-03</span>
-            <span class="device-region">海外节点</span>
-            <span class="device-count">31</span>
+          <div v-if="deviceTop.length === 0" class="empty-state">
+            暂无数据
           </div>
         </div>
       </div>
@@ -163,69 +149,24 @@
       <div class="card card-border-xl p-lg card-animated">
         <h3 class="text-base font-bold mb-6">告警类型统计</h3>
         <div class="type-list">
-          <div class="type-item">
+          <div class="type-item" v-for="(item, index) in typeStats" :key="item.algorithm_id">
             <div class="type-info">
-              <div class="type-icon" style="background: rgba(67, 24, 255, 0.1);">
-                <n-icon :size="20" color="#4318FF">
-                  <WifiOutline />
+              <div class="type-icon" :style="{ background: getTypeIconBg(index) }">
+                <n-icon :size="20" :color="getTypeIconColor(index)">
+                  <component :is="getTypeIcon(index)" />
                 </n-icon>
               </div>
               <div class="type-detail">
-                <span class="type-name">网络入侵</span>
-                <span class="type-percent">占比 65%</span>
+                <span class="type-name">{{ item.algorithm_name }}</span>
+                <span class="type-percent">占比 {{ item.percentage }}%</span>
               </div>
             </div>
             <div class="type-count">
-              <span class="count-value">834</span>
+              <span class="count-value">{{ item.count }}</span>
             </div>
           </div>
-          <div class="type-item">
-            <div class="type-info">
-              <div class="type-icon" style="background: rgba(99, 102, 241, 0.1);">
-                <n-icon :size="20" color="#6366f1">
-                  <LockClosedOutline />
-                </n-icon>
-              </div>
-              <div class="type-detail">
-                <span class="type-name">非法访问</span>
-                <span class="type-percent">占比 20%</span>
-              </div>
-            </div>
-            <div class="type-count">
-              <span class="count-value">257</span>
-            </div>
-          </div>
-          <div class="type-item">
-            <div class="type-info">
-              <div class="type-icon" style="background: rgba(245, 158, 11, 0.1);">
-                <n-icon :size="20" color="#f59e0b">
-                  <SettingsOutline />
-                </n-icon>
-              </div>
-              <div class="type-detail">
-                <span class="type-name">硬件故障</span>
-                <span class="type-percent">占比 15%</span>
-              </div>
-            </div>
-            <div class="type-count">
-              <span class="count-value">193</span>
-            </div>
-          </div>
-          <div class="type-item">
-            <div class="type-info">
-              <div class="type-icon" style="background: rgba(148, 163, 184, 0.1);">
-                <n-icon :size="20" color="#94a3b8">
-                  <EllipsisHorizontalOutline />
-                </n-icon>
-              </div>
-              <div class="type-detail">
-                <span class="type-name">其他告警</span>
-                <span class="type-percent">占比 0%</span>
-              </div>
-            </div>
-            <div class="type-count">
-              <span class="count-value">0</span>
-            </div>
+          <div v-if="typeStats.length === 0" class="empty-state">
+            暂无数据
           </div>
         </div>
       </div>
@@ -234,50 +175,17 @@
       <div class="card card-border-xl p-lg card-animated">
         <h3 class="text-base font-bold mb-6">高频告警区域 Top 5</h3>
         <div class="region-list">
-          <div class="region-item">
+          <div class="region-item" v-for="item in areaTop" :key="item.area_name">
             <div class="region-info">
-              <span class="region-name">华东数据中心</span>
-              <span class="region-count">342</span>
+              <span class="region-name">{{ item.area_name }}</span>
+              <span class="region-count">{{ item.count }}</span>
             </div>
             <div class="region-bar">
-              <div class="region-progress" style="width: 85%"></div>
+              <div class="region-progress" :style="{ width: item.percentage + '%' }"></div>
             </div>
           </div>
-          <div class="region-item">
-            <div class="region-info">
-              <span class="region-name">华北研发部</span>
-              <span class="region-count">215</span>
-            </div>
-            <div class="region-bar">
-              <div class="region-progress" style="width: 65%"></div>
-            </div>
-          </div>
-          <div class="region-item">
-            <div class="region-info">
-              <span class="region-name">华南分公司</span>
-              <span class="region-count">189</span>
-            </div>
-            <div class="region-bar">
-              <div class="region-progress" style="width: 55%"></div>
-            </div>
-          </div>
-          <div class="region-item">
-            <div class="region-info">
-              <span class="region-name">西部办事处</span>
-              <span class="region-count">120</span>
-            </div>
-            <div class="region-bar">
-              <div class="region-progress" style="width: 35%"></div>
-            </div>
-          </div>
-          <div class="region-item">
-            <div class="region-info">
-              <span class="region-name">海外节点</span>
-              <span class="region-count">96</span>
-            </div>
-            <div class="region-bar">
-              <div class="region-progress" style="width: 25%"></div>
-            </div>
+          <div v-if="areaTop.length === 0" class="empty-state">
+            暂无数据
           </div>
         </div>
       </div>
@@ -292,45 +200,32 @@
           <div class="donut-chart">
             <svg class="donut-svg" viewBox="0 0 36 36">
               <circle class="donut-bg" cx="18" cy="18" r="16"></circle>
-              <circle class="donut-segment donut-critical" cx="18" cy="18" r="16"></circle>
-              <circle class="donut-segment donut-warning" cx="18" cy="18" r="16"></circle>
-              <circle class="donut-segment donut-info" cx="18" cy="18" r="16"></circle>
+              <circle 
+                v-for="(item, index) in levelStats" 
+                :key="item.level"
+                class="donut-segment" 
+                :style="getDonutStyle(item, index)"
+                cx="18" cy="18" r="16"
+              ></circle>
             </svg>
             <div class="donut-center">
-              <span class="donut-value">1,284</span>
+              <span class="donut-value">{{ levelTotal.toLocaleString() }}</span>
               <span class="donut-label">告警总计</span>
             </div>
           </div>
           <div class="level-legend">
-            <div class="legend-item">
-              <div class="legend-dot" style="background: #ef4444;"></div>
+            <div class="legend-item" v-for="item in levelStats" :key="item.level">
+              <div class="legend-dot" :style="{ background: getLevelColor(item.level) }"></div>
               <div class="legend-info">
-                <span class="legend-name">致命等级 (Critical)</span>
+                <span class="legend-name">{{ item.label }}</span>
                 <div class="legend-stats">
-                  <span class="legend-count">12</span>
-                  <span class="legend-percent">0.9%</span>
+                  <span class="legend-count">{{ item.count }}</span>
+                  <span class="legend-percent">{{ item.percentage }}%</span>
                 </div>
               </div>
             </div>
-            <div class="legend-item">
-              <div class="legend-dot" style="background: #f59e0b;"></div>
-              <div class="legend-info">
-                <span class="legend-name">警告等级 (Warning)</span>
-                <div class="legend-stats">
-                  <span class="legend-count">284</span>
-                  <span class="legend-percent">22.1%</span>
-                </div>
-              </div>
-            </div>
-            <div class="legend-item">
-              <div class="legend-dot" style="background: #3b82f6;"></div>
-              <div class="legend-info">
-                <span class="legend-name">提示等级 (Info)</span>
-                <div class="legend-stats">
-                  <span class="legend-count">988</span>
-                  <span class="legend-percent">77.0%</span>
-                </div>
-              </div>
+            <div v-if="levelStats.length === 0" class="empty-state">
+              暂无数据
             </div>
           </div>
         </div>
@@ -340,6 +235,7 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed, onMounted, watch } from 'vue'
 import { NIcon } from 'naive-ui'
 import {
   WarningOutline,
@@ -353,6 +249,211 @@ import {
   SettingsOutline,
   EllipsisHorizontalOutline
 } from '@vicons/ionicons5'
+import { use } from 'echarts/core'
+import { BarChart, LineChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent, TitleComponent, LegendComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+import VChart from 'vue-echarts'
+import { getAlarmDashboard, getAlarmTrend, type AlarmDashboardStats } from '@/api/alarm'
+
+// 注册 ECharts 组件
+use([
+  BarChart,
+  LineChart,
+  GridComponent,
+  TooltipComponent,
+  TitleComponent,
+  LegendComponent,
+  CanvasRenderer
+])
+
+const loading = ref(false)
+const currentTrendDays = ref(1)
+const dashboardData = ref<AlarmDashboardStats | null>(null)
+
+const overview = computed(() => dashboardData.value?.overview || {
+  total: 0,
+  total_trend: 0,
+  total_new: 0,
+  unconfirmed: 0,
+  unconfirmed_trend: 0,
+  urgent_count: 0,
+  confirmed: 0,
+  confirmed_trend: 0,
+  avg_handle_time: 0,
+  completion_rate: 0,
+  completion_trend: 0,
+  site_rank_percent: 0
+})
+
+const trendData = computed(() => dashboardData.value?.trend || [])
+const trendRange = computed(() => dashboardData.value?.trend_range || '')
+const deviceTop = computed(() => dashboardData.value?.device_top || [])
+const areaTop = computed(() => dashboardData.value?.area_top || [])
+const typeStats = computed(() => dashboardData.value?.type_stats || [])
+const levelStats = computed(() => dashboardData.value?.level_stats || [])
+const levelTotal = computed(() => levelStats.value.reduce((sum, item) => sum + item.count, 0))
+
+
+
+const chartOption = computed(() => {
+  const data = trendData.value
+  return {
+    color: ['#137fec'],
+    grid: {
+      left: '3%',
+      right: '4%',
+      bottom: '3%',
+      containLabel: true
+    },
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      data: data.map(item => item.date),
+      axisLine: {
+        lineStyle: {
+          color: '#e2e8f0'
+        }
+      },
+      axisLabel: {
+        color: '#64748b'
+      }
+    },
+    yAxis: {
+      type: 'value',
+      axisLine: {
+        show: false
+      },
+      axisTick: {
+        show: false
+      },
+      splitLine: {
+        lineStyle: {
+          color: '#f1f5f9'
+        }
+      },
+      axisLabel: {
+        color: '#64748b'
+      }
+    },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(255, 255, 255, 0.95)',
+      borderColor: '#e2e8f0',
+      textStyle: {
+        color: '#1e293b'
+      }
+    },
+    series: [
+      {
+        name: '告警数',
+        type: 'line',
+        smooth: true,
+        data: data.map(item => item.count),
+        lineStyle: {
+          width: 3
+        },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [{
+              offset: 0,
+              color: 'rgba(19, 127, 236, 0.2)'
+            }, {
+              offset: 1,
+              color: 'rgba(19, 127, 236, 0)'
+            }]
+          }
+        },
+        symbol: 'circle',
+        symbolSize: 6,
+        itemStyle: {
+          color: '#137fec'
+        }
+      }
+    ]
+  }
+})
+
+const typeIcons = [WifiOutline, LockClosedOutline, SettingsOutline, EllipsisHorizontalOutline]
+const typeColors = ['#4318FF', '#6366f1', '#f59e0b', '#94a3b8']
+const typeBgs = ['rgba(67, 24, 255, 0.1)', 'rgba(99, 102, 241, 0.1)', 'rgba(245, 158, 11, 0.1)', 'rgba(148, 163, 184, 0.1)']
+
+const getTypeIcon = (index: number) => typeIcons[index % typeIcons.length]
+const getTypeIconColor = (index: number) => typeColors[index % typeColors.length]
+const getTypeIconBg = (index: number) => typeBgs[index % typeBgs.length]
+
+const levelColors: Record<string, string> = {
+  critical: 'var(--error-color)',
+  danger: 'var(--warning-color)',
+  warning: 'var(--warning-color)',
+  info: 'var(--info-color)'
+}
+
+const getLevelColor = (level: string) => levelColors[level] || '#94a3b8'
+
+const getDonutStyle = (item: { level: string; count: number; percentage: number }, index: number) => {
+  const prevOffset = levelStats.value.slice(0, index).reduce((sum, s) => sum + s.percentage, 0)
+  return {
+    stroke: getLevelColor(item.level),
+    strokeDasharray: `${item.percentage} 100`,
+    strokeDashoffset: `-${prevOffset}`
+  }
+}
+
+const fetchDashboardData = async (trendDays: number = 1) => {
+  loading.value = true
+  try {
+    const res = await getAlarmDashboard(trendDays)
+    dashboardData.value = res.data?.data ?? null
+    currentTrendDays.value = trendDays
+  } catch (error) {
+    console.error('获取告警统计数据失败:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+const handleTrendChange = async (days: number) => {
+  if (days === currentTrendDays.value) return
+  loading.value = true
+  try {
+    const res = await getAlarmTrend(days)
+    const payload = res.data?.data
+    if (!payload) return
+    if (!dashboardData.value) {
+      // 理论上不会发生：onMounted 已先加载 dashboard
+      dashboardData.value = {
+        overview: overview.value as any,
+        trend: payload.trend || [],
+        trend_range: payload.trend_range || '',
+        device_top: [],
+        area_top: [],
+        type_stats: [],
+        level_stats: []
+      }
+    } else {
+      dashboardData.value = {
+        ...dashboardData.value,
+        trend: payload.trend || [],
+        trend_range: payload.trend_range || ''
+      }
+    }
+    currentTrendDays.value = days
+  } catch (error) {
+    console.error('获取告警趋势失败:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  fetchDashboardData(1)
+})
 </script>
 
 <style scoped>
@@ -364,7 +465,6 @@ import {
   overflow-y: auto;
 }
 
-/* Stat Card Styles - Same as Home Page */
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -434,7 +534,6 @@ import {
   margin-top: 8px;
 }
 
-/* Charts Grid */
 .charts-grid {
   display: grid;
   grid-template-columns: 2fr 1fr;
@@ -513,6 +612,12 @@ import {
 
 .chart-container {
   position: relative;
+  height: 300px;
+}
+
+.trend-chart {
+  width: 100%;
+  height: 100%;
 }
 
 .chart-svg {
@@ -542,7 +647,6 @@ import {
   color: var(--text-muted);
 }
 
-/* Device Table */
 .chart-side {
   min-width: 0;
 }
@@ -589,14 +693,12 @@ import {
   text-align: right;
 }
 
-/* Bottom Grid */
 .bottom-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
 }
 
-/* Type Distribution */
 .type-list {
   display: flex;
   flex-direction: column;
@@ -654,7 +756,6 @@ import {
   color: var(--text-primary);
 }
 
-/* Region List */
 .region-list {
   display: flex;
   flex-direction: column;
@@ -698,7 +799,6 @@ import {
   transition: width 0.3s ease;
 }
 
-/* Level Distribution */
 .level-card {
   display: flex;
   flex-direction: column;
@@ -753,23 +853,6 @@ import {
   fill: none;
   stroke-width: 4;
   stroke-linecap: round;
-}
-
-.donut-critical {
-  stroke: #ef4444;
-  stroke-dasharray: 1 100;
-}
-
-.donut-warning {
-  stroke: #f59e0b;
-  stroke-dasharray: 23 100;
-  stroke-dashoffset: -1;
-}
-
-.donut-info {
-  stroke: #3b82f6;
-  stroke-dasharray: 76 100;
-  stroke-dashoffset: -24;
 }
 
 .donut-center {
@@ -845,7 +928,13 @@ import {
   text-align: right;
 }
 
-/* Responsive */
+.empty-state {
+  text-align: center;
+  padding: 20px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
 @media (max-width: 1200px) {
   .stat-grid {
     grid-template-columns: repeat(2, 1fr);

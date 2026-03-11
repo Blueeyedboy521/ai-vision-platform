@@ -1,5 +1,14 @@
 ## Changelog
 
+### v2.8.3 - 2026-03-11
+
+- **告警快照缩略图**：`Scheduler._start_alarm_dispatcher` 在上传告警原图到 Storage 后，同步生成并上传同路径 `__thumb` 缩略图；前端列表/WS 气泡默认通过 `files/preview?variant=thumb` 访问缩略图，详情强制 `variant=origin` 查看原图。
+- **文件预览增强**：`GET /api/v1/files/preview` 支持 `variant=origin|thumb`，缩略图不存在时自动回退原图，保证历史数据兼容。
+- **告警统计趋势按需加载**：新增 `GET /api/v1/alarms/trend?days=...` 仅返回趋势数据；`AlarmStats.vue` 默认加载“今日趋势”，点击 7/14/30 日时只拉趋势不重复拉整页统计数据。
+- **日志组件统一**：`common.logging.setup_logging()` 增加 `file_prefix`，app/engine 统一使用同一套日志初始化与格式；同时增强 Windows 控制台 UTF-8 输出，避免中文乱码。
+- **MinIO SDK 兼容与稳定性**：修复旧版 `minio` 不支持 `http_client_kwargs` 导致的初始化失败；`get_file()` 增加兜底异常捕获，避免连接异常直接打爆业务接口。
+- **告警列表筛选 UI 修复**：修复告警类型/区域下拉在容器 `overflow` 场景下不显示的问题（下拉层 `to="body"`），并兼容区域根节点 `parent_id` 为 `null/''/'0'` 的树构建。
+
 ### v2.8.1 - 2026-03-03
 
 - **告警清洗与异步转发链路**：`ResultHandler` 对推理结果做阈值/区域/变化检测（3 秒窗口 + IoU 变化）后生成告警，先落本地临时截图，再由 `Scheduler` 内部告警线程上传到 Storage（MinIO）并写入 Redis `alarm_queue`，由 app 侧 `AlarmConsumer` 入库并推送 WS/通知。

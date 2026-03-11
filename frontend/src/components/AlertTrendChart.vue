@@ -10,13 +10,13 @@
           :class="['tab-btn', { active: activeTab === 'today' }]"
           @click="activeTab = 'today'"
         >
-          今日实况
+          今日
         </button>
         <button
           :class="['tab-btn', { active: activeTab === 'week' }]"
           @click="activeTab = 'week'"
         >
-          本周趋势
+          近7天
         </button>
       </div>
     </div>
@@ -27,76 +27,196 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { useAppStore } from '@/stores/app'
+import { getAlarmDashboard, getAlarmTrend } from '@/api/alarm'
 
 use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 const appStore = useAppStore()
 const activeTab = ref('today')
+const loading = ref(false)
 
-const todayData = [12, 10, 8, 6, 14, 16, 22, 24, 23, 20, 26, 28, 22]
-const weekData = [18, 22, 16, 28, 20, 14, 24, 30, 26, 18, 22, 20, 16]
+const todayData = ref([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+const weekData = ref([0, 0, 0, 0, 0, 0, 0])
 const timeLabels = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00']
+const weekLabels = ref<string[]>([])
+
+// 生成近7天的日期标签
+function generateWeekLabels() {
+  const labels: string[] = []
+  for (let i = 6; i >= 0; i--) {
+    const date = new Date()
+    date.setDate(date.getDate() - i)
+    const month = date.getMonth() + 1
+    const day = date.getDate()
+    labels.push(`${month}/${day}`)
+  }
+  return labels
+}
+
+// 加载今日趋势数据
+async function loadTodayData() {
+  loading.value = true
+  try {
+    const response = await getAlarmDashboard(1)
+    if (response.data && response.data.data && response.data.data.trend) {
+      // 处理今日数据，按小时整理
+      const trendData = response.data.data.trend
+      const hourlyData = Array(13).fill(0)
+      
+      // 假设数据格式为 {date: '2024-01-01 12:00:00', count: 5}
+      trendData.forEach((item: any) => {
+        const hour = new Date(item.date).getHours()
+        if (hour >= 8 && hour <= 20) {
+          const index = hour - 8
+          hourlyData[index] = item.count
+        }
+      })
+      
+      todayData.value = hourlyData
+    }
+  } catch (error) {
+    console.error('加载今日趋势数据失败:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+// 加载近7天趋势数据
+async function loadWeekData() {
+  loading.value = true
+  try {
+    // 生成近7天的日期标签
+    weekLabels.value = generateWeekLabels()
+    
+    const response = await getAlarmTrend(7)
+    if (response.data && response.data.data && response.data.data.trend) {
+      // 处理近7天数据，按日期整理
+      const trendData = response.data.data.trend
+      const dailyData = Array(7).fill(0)
+      
+      // 假设数据格式为 {date: '2024-01-01', count: 10}
+      trendData.forEach((item: any) => {
+        const itemDate = new Date(item.date)
+        const itemDateStr = `${itemDate.getMonth() + 1}/${itemDate.getDate()}`
+        const index = weekLabels.value.indexOf(itemDateStr)
+        if (index >= 0) {
+          dailyData[index] = item.count
+        }
+      })
+      
+      weekData.value = dailyData
+    }
+  } catch (error) {
+    console.error('加载近7天趋势数据失败:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+// 监听标签切换
+watch(activeTab, (newTab) => {
+  if (newTab === 'today') {
+    loadTodayData()
+  } else {
+    loadWeekData()
+  }
+})
+
+onMounted(() => {
+  loadTodayData()
+})
 
 const chartOption = computed(() => {
   const dark = appStore.isDarkMode
+  const data = activeTab.value === 'today' ? todayData.value : weekData.value
+  const labels = activeTab.value === 'today' ? timeLabels : weekLabels.value
+  
   return {
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: dark ? '#333338' : '#fff',
-      borderColor: dark ? '#444' : '#e0e0e0',
-      borderWidth: 1,
-      textStyle: { color: dark ? '#e4e4e8' : '#333' }
-    },
+    color: ['#137fec'],
     grid: {
-      left: 40,
-      right: 20,
-      top: 20,
-      bottom: 30
+      left: '3%',
+      right: '4%',
+      bottom: '3%',
+      containLabel: true
     },
     xAxis: {
       type: 'category',
-      data: timeLabels,
       boundaryGap: false,
-      axisLine: { lineStyle: { color: dark ? '#444' : '#e8e8e8' } },
-      axisTick: { show: false },
-      axisLabel: { color: dark ? '#6b7280' : '#a0aec0', fontSize: 12 }
+      data: labels,
+      axisLine: {
+        lineStyle: {
+          color: dark ? '#444' : '#e2e8f0'
+        }
+      },
+      axisLabel: {
+        color: dark ? '#6b7280' : '#64748b',
+        fontSize: 12
+      }
     },
     yAxis: {
       type: 'value',
       min: 0,
-      max: 32,
-      interval: 8,
-      axisLine: { show: false },
-      axisTick: { show: false },
-      splitLine: { lineStyle: { color: dark ? '#333338' : '#f0f0f0', type: 'dashed' } },
-      axisLabel: { color: dark ? '#6b7280' : '#a0aec0', fontSize: 12 }
+      axisLine: {
+        show: false
+      },
+      axisTick: {
+        show: false
+      },
+      splitLine: {
+        lineStyle: {
+          color: dark ? '#333338' : '#f1f5f9',
+          type: 'dashed'
+        }
+      },
+      axisLabel: {
+        color: dark ? '#6b7280' : '#64748b',
+        fontSize: 12
+      }
+    },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: dark ? '#333338' : 'rgba(255, 255, 255, 0.95)',
+      borderColor: dark ? '#444' : '#e2e8f0',
+      borderWidth: 1,
+      textStyle: { color: dark ? '#e4e4e8' : '#1e293b' }
     },
     series: [
       {
+        name: '告警数',
         type: 'line',
-        data: activeTab.value === 'today' ? todayData : weekData,
         smooth: true,
-        symbol: 'none',
+        data: data,
         lineStyle: {
-          color: '#4318FF',
-          width: 3
+          width: 3,
+          color: '#137fec'
         },
         areaStyle: {
           color: {
             type: 'linear',
-            x: 0, y: 0, x2: 0, y2: 1,
-            colorStops: [
-              { offset: 0, color: 'rgba(67, 24, 255, 0.12)' },
-              { offset: 1, color: 'rgba(67, 24, 255, 0)' }
-            ]
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [{
+              offset: 0,
+              color: 'rgba(19, 127, 236, 0.2)'
+            }, {
+              offset: 1,
+              color: 'rgba(19, 127, 236, 0)'
+            }]
           }
+        },
+        symbol: 'circle',
+        symbolSize: 6,
+        itemStyle: {
+          color: '#137fec'
         }
       }
     ]

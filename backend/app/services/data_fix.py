@@ -102,7 +102,24 @@ async def fix_alarm_denormalized_fields(session: AsyncSession) -> None:
         await session.rollback()
         logger.warning(f"[data_fix] 回填 alarms.algorithm_name 失败(可忽略): {e}")
 
-    # 3) area_name（层级路径）
+    # 3) area_id（冗余存储）
+    try:
+        await session.execute(
+            text(
+                """
+                UPDATE alarms a
+                LEFT JOIN cameras c ON a.camera_id = c.id
+                SET a.area_id = c.area_id
+                WHERE (a.area_id IS NULL OR a.area_id = '')
+                """
+            )
+        )
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        logger.warning(f"[data_fix] 回填 alarms.area_id 失败(可忽略): {e}")
+
+    # 4) area_name（层级路径）
     try:
         await session.execute(
             text(

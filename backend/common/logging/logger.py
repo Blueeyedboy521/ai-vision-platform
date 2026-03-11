@@ -16,7 +16,8 @@ def setup_logging(
     log_path: str = "./logs",
     rotation: str = "00:00",
     retention: str = "30 days",
-    enable_console: bool = True
+    enable_console: bool = True,
+    file_prefix: str = "app",
 ) -> None:
     """
     配置日志系统
@@ -27,7 +28,17 @@ def setup_logging(
         rotation: 日志轮转时间或大小
         retention: 日志保留时间
         enable_console: 是否输出到控制台
+        file_prefix: 日志文件名前缀（如 app / engine）
     """
+    # Windows 控制台常见编码问题：尽量切到 UTF-8，避免中文乱码
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     # 移除默认的 handler
     logger.remove()
     
@@ -39,11 +50,11 @@ def setup_logging(
         "<level>{message}</level>"
     )
     
-    # 简化的控制台格式
+    # 控制台格式：与文件格式保持一致（含日期 + 调用位置），便于排查问题
     console_format = (
-        "<green>{time:HH:mm:ss}</green> | "
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
         "<level>{level: <8}</level> | "
-        "<cyan>{name}</cyan> | "
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
         "<level>{message}</level>"
     )
     
@@ -53,7 +64,7 @@ def setup_logging(
             sys.stdout,
             format=console_format,
             level=log_level,
-            colorize=True,
+            colorize=False,
             backtrace=True,
             diagnose=True
         )
@@ -61,10 +72,11 @@ def setup_logging(
     # 确保日志目录存在
     if log_path:
         os.makedirs(log_path, exist_ok=True)
+        prefix = (file_prefix or "app").strip() or "app"
         
         # 添加文件输出 - 所有日志
         logger.add(
-            os.path.join(log_path, "app_{time:YYYY-MM-DD}.log"),
+            os.path.join(log_path, f"{prefix}_{{time:YYYY-MM-DD}}.log"),
             format=log_format,
             level=log_level,
             rotation=rotation,
@@ -77,7 +89,7 @@ def setup_logging(
         
         # 添加文件输出 - 错误日志
         logger.add(
-            os.path.join(log_path, "error_{time:YYYY-MM-DD}.log"),
+            os.path.join(log_path, f"{prefix}_error_{{time:YYYY-MM-DD}}.log"),
             format=log_format,
             level="ERROR",
             rotation=rotation,
@@ -88,7 +100,7 @@ def setup_logging(
             diagnose=True
         )
     
-    logger.info(f"日志系统初始化完成 | 级别: {log_level} | 路径: {log_path}")
+    logger.info(f"日志系统初始化完成 | 级别: {log_level} | 路径: {log_path} | prefix: {file_prefix}")
 
 
 def get_logger(name: Optional[str] = None):

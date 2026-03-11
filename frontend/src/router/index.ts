@@ -76,12 +76,7 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/alarm/AlarmStats.vue'),
         meta: { title: '告警统计' }
       },
-      {
-        path: 'stats2',
-        name: 'AlarmStats2',
-        component: () => import('@/views/alarm/alarmstats2.vue'),
-        meta: { title: '告警统计2' }
-      }
+
     ]
   },
   {

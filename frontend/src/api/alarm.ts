@@ -41,6 +41,7 @@ export interface AlarmQueryParams {
   algorithm_id?: string
   level?: AlarmLevel
   status?: AlarmStatus
+  area_id?: string
   start_time?: string
   end_time?: string
   keyword?: string
@@ -121,4 +122,87 @@ export function getAlarmStatistics(params?: { days?: number }) {
  */
 export function exportAlarms(params?: AlarmQueryParams) {
   return request.get('/alarms/export', { params, responseType: 'blob' as any })
+}
+
+// 告警概览统计
+export interface AlarmOverviewStats {
+  total: number
+  total_trend: number
+  total_new: number
+  unconfirmed: number
+  unconfirmed_trend: number
+  urgent_count: number
+  confirmed: number
+  confirmed_trend: number
+  avg_handle_time: number
+  completion_rate: number
+  completion_trend: number
+  site_rank_percent: number
+}
+
+// 高频告警设备项
+export interface AlarmDeviceTopItem {
+  camera_id: string
+  camera_name: string
+  area_name: string | null
+  count: number
+}
+
+// 高频告警区域项
+export interface AlarmAreaTopItem {
+  area_name: string
+  count: number
+  percentage: number
+}
+
+// 告警类型统计项
+export interface AlarmTypeStatsItem {
+  algorithm_id: string
+  algorithm_name: string
+  count: number
+  percentage: number
+}
+
+// 告警等级统计项
+export interface AlarmLevelStatsItem {
+  level: string
+  label: string
+  count: number
+  percentage: number
+}
+
+// 告警仪表盘统计数据
+export interface AlarmDashboardStats {
+  overview: AlarmOverviewStats
+  trend: { date: string; count: number }[]
+  trend_range: string
+  device_top: AlarmDeviceTopItem[]
+  area_top: AlarmAreaTopItem[]
+  type_stats: AlarmTypeStatsItem[]
+  level_stats: AlarmLevelStatsItem[]
+}
+
+export interface AlarmTrendResponse {
+  trend: { date: string; count: number }[]
+  trend_range: string
+}
+
+/**
+ * 获取告警仪表盘统计数据
+ * @param trendDays 趋势统计天数，1=今日，7=7日，14=14日，30=30日
+ */
+export function getAlarmDashboard(trendDays: number = 1) {
+  return request.get<AlarmDashboardStats>('/alarms/dashboard', {
+    params: { trend_days: trendDays }
+  })
+}
+
+/**
+ * 获取告警趋势（仅趋势，用于按需切换）
+ * @param days 1=今日，7/14/30=近N天
+ */
+export function getAlarmTrend(days: number = 1) {
+  return request.get<AlarmTrendResponse>('/alarms/trend', {
+    params: { days }
+  })
 }

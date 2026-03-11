@@ -38,18 +38,19 @@ async def lifespan(app: FastAPI):
     在应用启动和关闭时执行初始化和清理工作
     """
     # ==================== 启动阶段 ====================
-    logger.info("=" * 50)
-    logger.info(f"启动 {settings.PROJECT_NAME}")
-    logger.info(f"环境: {settings.ENVIRONMENT}")
-    logger.info("=" * 50)
-    
-    # 初始化日志
+    # 先初始化日志，再输出启动横幅，避免启动初期与后续日志格式不一致
     setup_logging(
         log_level=settings.LOG_LEVEL,
         log_path=settings.LOG_PATH,
         rotation=settings.LOG_ROTATION,
         retention=settings.LOG_RETENTION
+        file_prefix="app",
     )
+
+    logger.info("=" * 50)
+    logger.info(f"启动 {settings.PROJECT_NAME}")
+    logger.info(f"环境: {settings.ENVIRONMENT}")
+    logger.info("=" * 50)
     
     # 初始化数据库
     logger.info("初始化数据库...")

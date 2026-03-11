@@ -64,6 +64,12 @@ class Alarm(Base, AuditMixin):
         nullable=True,
         comment="算法名称(冗余)"
     )
+    area_id: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+        index=True,
+        comment="区域ID(冗余)"
+    )
     area_name: Mapped[Optional[str]] = mapped_column(
         String(200),
         nullable=True,

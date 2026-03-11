@@ -20,43 +20,21 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
-from loguru import logger
 from config.settings import settings
 from engine.scheduler import Scheduler
-
-
-def setup_logging():
-    """配置日志"""
-    log_dir = ROOT_DIR / "logs"
-    log_dir.mkdir(exist_ok=True)
-    
-    # 移除默认处理器
-    logger.remove()
-    
-    # 控制台输出
-    logger.add(
-        sys.stderr,
-        level="DEBUG" if settings.DEBUG else "INFO",
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-               "<level>{level: <8}</level> | "
-               "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-               "<level>{message}</level>",
-               colorize=False # 不使用颜色输出,避免在终端输出时出现颜色乱码
-    )
-    
-    # 文件输出
-    logger.add(
-        log_dir / "engine_{time}.log",
-        rotation="100 MB",
-        retention="7 days",
-        level="DEBUG",
-        encoding="utf-8"
-    )
+from common.logging import setup_logging, logger
 
 
 def main():
     """引擎主函数"""
-    setup_logging()
+    # 统一使用 common.logging 组件（与 app 一致），仅区分日志文件名前缀
+    setup_logging(
+        log_level=settings.LOG_LEVEL if hasattr(settings, "LOG_LEVEL") else ("DEBUG" if settings.DEBUG else "INFO"),
+        log_path=settings.LOG_PATH if hasattr(settings, "LOG_PATH") else str(ROOT_DIR / "logs"),
+        rotation=getattr(settings, "LOG_ROTATION", "00:00"),
+        retention=getattr(settings, "LOG_RETENTION", "30 days"),
+        file_prefix="engine",
+    )
     logger.info("=" * 60)
     logger.info("AI 视觉平台 - 视频处理引擎")
     logger.info("=" * 60)

@@ -129,7 +129,7 @@ function timeAgoFromIso(iso: string): string {
 
 async function loadAlerts() {
   try {
-    const res = await getAlarmList({ page: 1, page_size: 4 })
+    const res = await getAlarmList({ page: 1, page_size: 10 })
     const items = (res.data.data || []) as Alarm[]
     alerts.value = items.map((a) => {
       const camera = a.camera_name || a.camera_id
