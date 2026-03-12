@@ -10,6 +10,7 @@ from . import algorithms
 from . import alarms
 from . import system
 from . import media_hooks
+from . import notifications
 
 __all__ = [
     "auth",
@@ -19,5 +20,6 @@ __all__ = [
     "algorithms",
     "alarms",
     "system",
-    "media_hooks"
+    "media_hooks",
+    "notifications",
 ]

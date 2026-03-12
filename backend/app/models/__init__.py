@@ -12,6 +12,12 @@ from .model import Model
 from .algorithm import Algorithm
 from .camera_algorithm import CameraAlgorithm
 from .alarm import Alarm
+from .notification import (
+    NotificationEndpoint,
+    NotificationTemplate,
+    NotificationPolicy,
+    NotificationDeliveryLog,
+)
 
 __all__ = [
     "Base",
@@ -24,5 +30,9 @@ __all__ = [
     "Model",
     "Algorithm",
     "CameraAlgorithm",
-    "Alarm"
+    "Alarm",
+    "NotificationEndpoint",
+    "NotificationTemplate",
+    "NotificationPolicy",
+    "NotificationDeliveryLog",
 ]

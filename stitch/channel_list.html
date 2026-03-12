@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="js/container-queries@0.1.1.js"></script> 
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#137fec",
+                        "background-light": "#f8fafc",
+                        "background-dark": "#0f172a",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "system-ui", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.5rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        /* Custom styles for logos to look official */
+        .logo-dingtalk { color: #007FFF; }
+        .logo-wecom { color: #1877F2; }
+        .logo-lark { color: #00D26A; }
+    </style>
+    <link href="css/channel_list.css" rel="stylesheet"/>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 antialiased min-h-screen">
+<div class="flex flex-col min-h-screen">
+<!-- Main Content (No Sidebar/Header as requested) -->
+<main class="flex-1 flex flex-col min-w-0 overflow-y-auto">
+<!-- Content Wrapper -->
+<div class="max-w-6xl mx-auto w-full px-4 py-12 md:px-8">
+<!-- Header Section -->
+<div class="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
+<div>
+<h2 class="text-3xl font-bold text-slate-900 dark:text-white">通知渠道配置</h2>
+<p class="text-slate-500 mt-2">管理并配置各类通知推送渠道，确保消息实时触达。</p>
+</div>
+<div class="flex flex-col sm:flex-row items-center gap-4">
+<div class="relative w-full sm:w-64">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">search</span>
+<input class="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm transition-all shadow-sm" placeholder="搜索渠道名称..." type="text"/>
+</div>
+<button class="w-full sm:w-auto bg-primary text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-sm">add</span>
+                            新增渠道
+                        </button>
+</div>
+</div>
+<!-- Cards Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+<!-- Card 1: DingTalk -->
+<div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow p-6 flex flex-col h-full">
+<div class="flex justify-between items-start mb-4">
+<div class="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center">
+<!-- DingTalk Official Style Icon -->
+<svg class="w-8 h-8 fill-current logo-dingtalk" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M1.34 11.33c0-4.64 3.76-8.4 8.4-8.4h4.52c4.64 0 8.4 3.76 8.4 8.4v4.52c0 4.64-3.76 8.4-8.4 8.4H9.74l-4.4 3.7c-.55.46-1.4.07-1.4-.65v-3.05c-1.57-1.12-2.6-3-2.6-5.12zM15.5 8.5c-.28 0-.5.22-.5.5v2.5c0 .28.22.5.5.5s.5-.22.5-.5V9c0-.28-.22-.5-.5-.5zm-4 0c-.28 0-.5.22-.5.5v5c0 .28.22.5.5.5s.5-.22.5-.5V9c0-.28-.22-.5-.5-.5zm-4 2c-.28 0-.5.22-.5.5v3c0 .28.22.5.5.5s.5-.22.5-.5v-3c0-.28-.22-.5-.5-.5z"></path></svg>
+</div>
+<div class="flex flex-col items-end gap-2">
+<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">已启用</span>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+</div>
+<div class="mb-6 flex-1">
+<div class="flex flex-col gap-1">
+<span class="text-[10px] font-bold text-primary uppercase tracking-wider">生产告警通知群</span>
+<h3 class="text-lg font-bold">钉钉机器人</h3>
+</div>
+<div class="mt-4 p-4 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700">
+<p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">用于向生产车间钉钉群推送实时告警和生产状态更新，确保一线人员快速响应。</p>
+</div>
+</div>
+<button class="w-full py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors">编辑配置</button>
+</div>
+<!-- Card 2: WeChat Work -->
+<div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow p-6 flex flex-col h-full">
+<div class="flex justify-between items-start mb-4">
+<div class="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center">
+<!-- WeChat Work Official Style Icon -->
+<svg class="w-8 h-8 fill-current logo-wecom" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zM9 13H7v-2h2v2zm0-3H7V8h2v2zm4 3h-2v-2h2v2zm0-3h-2V8h2v2zm4 3h-2v-2h2v2zm0-3h-2V8h2v2z"></path></svg>
+</div>
+<div class="flex flex-col items-end gap-2">
+<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">已禁用</span>
+<label class="relative inline-flex items-center cursor-pointer">
+<input class="sr-only peer" type="checkbox"/>
+<div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+</div>
+<div class="mb-6 flex-1">
+<div class="flex flex-col gap-1">
+<span class="text-[10px] font-bold text-primary uppercase tracking-wider">内部审批通知</span>
+<h3 class="text-lg font-bold">企业微信</h3>
+</div>
+<div class="mt-4 p-4 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700">
+<p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">配置用于企业内部管理消息推送，包括审批流程通知、系统维护公告及部门内部协作提醒。</p>
+</div>
+</div>
+<button class="w-full py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors">编辑配置</button>
+</div>
+<!-- Card 3: Feishu / Lark -->
+<div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow p-6 flex flex-col h-full">
+<div class="flex justify-between items-start mb-4">
+<div class="w-12 h-12 rounded-xl bg-green-50 dark:bg-green-900/30 flex items-center justify-center">
+<!-- Lark/Feishu Official Style Icon -->
+<svg class="w-8 h-8 fill-current logo-lark" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71L12 2z"></path></svg>
+</div>
+<div class="flex flex-col items-end gap-2">
+<span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">已启用</span>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+</div>
+<div class="mb-6 flex-1">
+<div class="flex flex-col gap-1">
+<span class="text-[10px] font-bold text-primary uppercase tracking-wider">研发效能监控组</span>
+<h3 class="text-lg font-bold">飞书机器人</h3>
+</div>
+<div class="mt-4 p-4 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700">
+<p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">主要用于开发团队的项目进度监控及线上故障告警，支持通过富文本卡片展示详细的性能指标。</p>
+</div>
+</div>
+<button class="w-full py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors">编辑配置</button>
+</div>
+<!-- Card 4: Placeholder/Add New -->
+<div class="border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl p-6 flex flex-col items-center justify-center text-center group cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-all min-h-[300px]">
+<div class="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-4 group-hover:bg-primary group-hover:text-white transition-colors">
+<span class="material-symbols-outlined">add</span>
+</div>
+<h3 class="font-bold text-slate-400 group-hover:text-primary transition-colors">添加新渠道</h3>
+<p class="text-xs text-slate-400 mt-1">支持 Email, SMS, Slack 等更多渠道</p>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

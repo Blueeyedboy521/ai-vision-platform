@@ -221,6 +221,21 @@ class Settings(BaseSettings):
         default="alarm_queue",
         description="告警队列名称"
     )
+
+    # ==================== 推送/通知（多通道配置） ====================
+    NOTIFICATION_QUEUE_NAME: str = Field(
+        default="notification_queue",
+        description="推送任务队列名称（Redis list）"
+    )
+    NOTIFICATION_CONSUMER_WORKERS: int = Field(
+        default=2,
+        description="推送消费者 Worker 数量"
+    )
+    # Fernet key: base64 urlsafe 32-byte
+    NOTIFICATION_ENCRYPTION_KEY: str = Field(
+        default="",
+        description="通知配置加密密钥（Fernet），用于加密存储 endpoint 配置"
+    )
     
     # ==================== 通知配置 ====================
     # 钉钉机器人

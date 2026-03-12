@@ -1,5 +1,13 @@
 ## Changelog
 
+### v2.8.4 - 2026-03-12
+
+- **告警推送配置后端落地**：新增通知相关 ORM 与 Schema（`NotificationEndpoint/NotificationTemplate/NotificationPolicy/NotificationDeliveryLog`），`/api/v1/notifications/...` 完成通道、模板、策略、审计日志与测试发送等管理接口，应用启动时拉起 `NotificationWorkerPool` 从 Redis `notification_queue` 异步消费事件并写入审计表。
+- **策略匹配模型增强**：`NotificationPolicy.match` 支持多选与通配符（`alarm_type[]/area_path[]/camera_id[]/algorithm_id[]/level[]`）以及 `exclude` 排除条件，后端统一按 `area_path` 的层级路径 + 通配符匹配，通知事件从 `AlarmConsumer.enqueue_notification_event_from_alarm` 入队时补充 `area_path`、`category/level/...` 等标准字段。
+- **动作模型与节流重试**：`NotificationPolicy.actions` 升级为 `actions[]` 数组，每个 action 支持 `endpoint_ids[]/template_id/throttle_sec/dedup_key/push_order/retry_times/retry_interval_sec`；`notification_service.dispatch_event` 内部基于 Redis Key 实现 action 级节流（skipped 记入 DeliveryLog），并对单个 endpoint 做按配置次数与间隔的同步重试。
+- **策略描述自动生成**：`match_desc/actions_desc` 生成逻辑改造为面向业务可读的中文摘要，可识别多区域（含通配符“含子区域/仅本区域”）、多摄像头、多算法、多等级与排除条件，并在数据修复脚本 `fix_notification_policies` 中为历史策略统一升级 `actions` 结构并回填描述，便于前端列表展示与搜索。
+- **推送策略前端列表静态页**：`frontend/src/views/push/PolicyManagement.vue` 按 `stitch/policy_list.html` 1:1 还原为纯静态策略列表页面（头部搜索+Tab+表格+分页），仅包含 HTML + CSS，不引入任何业务逻辑，为后续接入 `/notifications/policies` 接口和交互提供 UI 基线。
+
 ### v2.8.3 - 2026-03-11
 
 - **告警快照缩略图**：`Scheduler._start_alarm_dispatcher` 在上传告警原图到 Storage 后，同步生成并上传同路径 `__thumb` 缩略图；前端列表/WS 气泡默认通过 `files/preview?variant=thumb` 访问缩略图，详情强制 `variant=origin` 查看原图。

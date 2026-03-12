@@ -266,6 +266,73 @@ CREATE TABLE IF NOT EXISTS push_rules (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='推送规则表';
 
 -- -----------------------------------------------------
+-- 8.1 新推送体系（Endpoint / Template / Policy / DeliveryLog）
+-- -----------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS notification_endpoints (
+    id CHAR(32) NOT NULL COMMENT '通道ID (UUID)',
+    name VARCHAR(100) NOT NULL COMMENT '通道名称',
+    provider VARCHAR(32) NOT NULL COMMENT 'provider: wecom_bot/dingtalk_bot',
+    is_enabled TINYINT(1) DEFAULT 1 COMMENT '是否启用: 1-启用, 0-禁用',
+    encrypted_config TEXT NOT NULL COMMENT '加密配置（Fernet）',
+    config_hint VARCHAR(255) DEFAULT NULL COMMENT '配置提示（脱敏）',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    KEY idx_provider (provider),
+    KEY idx_is_enabled (is_enabled)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='推送通道配置';
+
+CREATE TABLE IF NOT EXISTS notification_templates (
+    id CHAR(32) NOT NULL COMMENT '模板ID (UUID)',
+    name VARCHAR(100) NOT NULL COMMENT '模板名称',
+    type VARCHAR(16) NOT NULL COMMENT 'text/rich',
+    is_enabled TINYINT(1) DEFAULT 1 COMMENT '是否启用',
+    content JSON NOT NULL COMMENT '模板内容 JSON（title/text/image_url/link_url 等）',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    KEY idx_type (type),
+    KEY idx_is_enabled (is_enabled)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='推送模板';
+
+CREATE TABLE IF NOT EXISTS notification_policies (
+    id CHAR(32) NOT NULL COMMENT '策略ID (UUID)',
+    name VARCHAR(100) NOT NULL COMMENT '策略名称',
+    priority INT DEFAULT 100 COMMENT '优先级（小优先）',
+    is_enabled TINYINT(1) DEFAULT 1 COMMENT '是否启用',
+    `match` JSON NOT NULL COMMENT '匹配条件 JSON（支持多选/通配符/exclude/time_window 等）',
+    actions JSON NOT NULL COMMENT '动作 JSON（actions 数组：endpoint_ids/template_id/throttle/dedup/retry 等）',
+    match_desc TEXT DEFAULT NULL COMMENT '匹配条件中文描述（冗余）',
+    actions_desc TEXT DEFAULT NULL COMMENT '动作中文描述（冗余）',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    KEY idx_priority (priority),
+    KEY idx_is_enabled (is_enabled)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='推送路由策略';
+
+CREATE TABLE IF NOT EXISTS notification_delivery_logs (
+    id CHAR(32) NOT NULL COMMENT '投递日志ID (UUID)',
+    alarm_id CHAR(32) DEFAULT NULL COMMENT '告警ID（业务告警）',
+    category VARCHAR(16) NOT NULL COMMENT 'ai/system',
+    alarm_type VARCHAR(64) NOT NULL COMMENT '告警类型/系统类型',
+    level VARCHAR(16) NOT NULL COMMENT 'info/warning/danger/critical',
+    endpoint_id CHAR(32) NOT NULL COMMENT 'endpoint_id',
+    provider VARCHAR(32) NOT NULL COMMENT 'provider',
+    template_id CHAR(32) DEFAULT NULL COMMENT 'template_id',
+    status VARCHAR(16) NOT NULL COMMENT 'success/failed/skipped',
+    error TEXT DEFAULT NULL COMMENT '错误（脱敏）',
+    request_meta JSON DEFAULT NULL COMMENT '请求元信息（脱敏）',
+    response_meta JSON DEFAULT NULL COMMENT '响应元信息（脱敏）',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    KEY idx_alarm_id (alarm_id),
+    KEY idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='推送审计日志';
+
+-- -----------------------------------------------------
 -- 9. 系统配置
 -- -----------------------------------------------------
 

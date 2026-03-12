@@ -60,6 +60,19 @@ from .alarm import (
     AlarmConfirmRequest,
     AlarmStatsResponse
 )
+from .notification import (
+    NotificationEndpointCreate,
+    NotificationEndpointUpdate,
+    NotificationEndpointResponse,
+    NotificationTemplateCreate,
+    NotificationTemplateUpdate,
+    NotificationTemplateResponse,
+    NotificationPolicyCreate,
+    NotificationPolicyUpdate,
+    NotificationPolicyResponse,
+    NotificationDeliveryLogResponse,
+    NotificationTestSendRequest,
+)
 
 __all__ = [
     # Common
@@ -109,5 +122,17 @@ __all__ = [
     "AlarmResponse",
     "AlarmListResponse",
     "AlarmConfirmRequest",
-    "AlarmStatsResponse"
+    "AlarmStatsResponse",
+    # Notification
+    "NotificationEndpointCreate",
+    "NotificationEndpointUpdate",
+    "NotificationEndpointResponse",
+    "NotificationTemplateCreate",
+    "NotificationTemplateUpdate",
+    "NotificationTemplateResponse",
+    "NotificationPolicyCreate",
+    "NotificationPolicyUpdate",
+    "NotificationPolicyResponse",
+    "NotificationDeliveryLogResponse",
+    "NotificationTestSendRequest",
 ]

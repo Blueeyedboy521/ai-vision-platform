@@ -147,7 +147,20 @@ async def init_db() -> None:
     创建表结构和插入默认数据
     """
     from app.models.base import Base
-    from app.models import User, Area, Model, Algorithm  # 导入所有模型
+    # 导入所有模型，确保 Base.metadata 完整（含通知/推送相关表）
+    from app.models import (  # noqa: F401
+        User,
+        Area,
+        Model,
+        Algorithm,
+        Camera,
+        CameraAlgorithm,
+        Alarm,
+        NotificationEndpoint,
+        NotificationTemplate,
+        NotificationPolicy,
+        NotificationDeliveryLog,
+    )
     
     engine = get_engine()
     

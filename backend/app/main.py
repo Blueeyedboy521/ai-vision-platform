@@ -27,6 +27,7 @@ from app.websocket.handlers import websocket_handler
 from app.services.bootstrap_sync import sync_configs_to_redis_and_streams
 from app.services.live_heartbeat_monitor import start_live_heartbeat_monitor, stop_live_heartbeat_monitor
 from app.consumer.worker_pool import alarm_worker_pool
+from app.consumer.notification_worker_pool import notification_worker_pool
 
 
 # 这段代码是 FastAPI（0.92.0+ 版本）中异步生命周期管理的标准写法，核心作用是：
@@ -43,7 +44,7 @@ async def lifespan(app: FastAPI):
         log_level=settings.LOG_LEVEL,
         log_path=settings.LOG_PATH,
         rotation=settings.LOG_ROTATION,
-        retention=settings.LOG_RETENTION
+        retention=settings.LOG_RETENTION,
         file_prefix="app",
     )
 
@@ -75,6 +76,8 @@ async def lifespan(app: FastAPI):
         redis_ok = True
         logger.info("启动告警消费者线程池...")
         alarm_worker_pool.start(num_workers=settings.ALARM_CONSUMER_WORKERS)
+        logger.info("启动推送消费者线程池...")
+        notification_worker_pool.start(num_workers=settings.NOTIFICATION_CONSUMER_WORKERS)
         logger.info("启动直播心跳超时检测任务...")
         start_live_heartbeat_monitor()
     except Exception as e:
@@ -106,6 +109,8 @@ async def lifespan(app: FastAPI):
         stop_live_heartbeat_monitor()
         logger.info("停止告警消费者线程池...")
         alarm_worker_pool.stop(timeout=5.0)
+        logger.info("停止推送消费者线程池...")
+        notification_worker_pool.stop(timeout=5.0)
         logger.info("停止 WebSocket 处理器...")
         await websocket_handler.stop()
     logger.info("关闭 Redis 连接...")

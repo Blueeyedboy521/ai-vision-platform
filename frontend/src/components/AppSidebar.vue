@@ -100,6 +100,9 @@ const currentKey = computed(() => {
   if (name === 'RoleManagement') return 'system-roles'
   if (name === 'SystemSettings') return 'system-settings'
   if (name === 'OperationLogs') return 'system-logs'
+  if (name === 'PushChannels') return 'push-channels'
+  if (name === 'PushTemplates') return 'push-templates'
+  if (name === 'PushPolicies') return 'push-policies'
   return name
 })
 
@@ -130,7 +133,12 @@ const platformMenuOptions: MenuOption[] = [
   {
     label: '推送管理',
     key: 'PushManagement',
-    icon: renderIcon(SendOutline)
+    icon: renderIcon(SendOutline),
+    children: [
+      { label: '通道配置', key: 'push-channels' },
+      { label: '模板配置', key: 'push-templates' },
+      { label: '推送策略', key: 'push-policies' }
+    ]
   },
   {
     label: '告警管理',
@@ -194,7 +202,10 @@ function handleMenuSelect(key: string) {
     'video-devices': 'CameraManagement',
     'video-preview': 'VideoPreview',
     'AlgorithmManagement': 'AlgorithmManagement',
-    'PushManagement': 'PushManagement',
+    'PushManagement': 'PushChannels',
+    'push-channels': 'PushChannels',
+    'push-templates': 'PushTemplates',
+    'push-policies': 'PushPolicies',
     'AlarmManagement': 'AlarmList',
     'alarm-list': 'AlarmList',
     'alarm-stats': 'AlarmStats',

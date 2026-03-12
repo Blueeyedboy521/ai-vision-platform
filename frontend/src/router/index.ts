@@ -54,8 +54,35 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/push',
     name: 'PushManagement',
-    component: () => import('@/views/PushManagement.vue'),
-    meta: { title: '推送管理' }
+    component: () => import('@/views/RouterViewWrapper.vue'),
+    redirect: '/push/channels',
+    meta: { title: '推送管理' },
+    children: [
+      {
+        path: 'channels',
+        name: 'PushChannels',
+        component: () => import('@/views/push/ChannelManager.vue'),
+        meta: { title: '通道配置' }
+      },
+      {
+        path: 'templates',
+        name: 'PushTemplates',
+        component: () => import('@/views/push/TemplateManagement.vue'),
+        meta: { title: '模板配置' }
+      },
+      {
+        path: 'policies',
+        name: 'PushPolicies',
+        component: () => import('@/views/push/PolicyManagement.vue'),
+        meta: { title: '推送策略' }
+      },
+      {
+        path: 'add-policy',
+        name: 'AddPolicy',
+        component: () => import('@/views/push/AddPolicy.vue'),
+        meta: { title: '新建推送策略' }
+      }
+    ]
   },
   {
     path: '/alarm',

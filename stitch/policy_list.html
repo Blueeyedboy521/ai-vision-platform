@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>告警策略配置 - 推送管理系统</title>
+
+<script src="js/container-queries@0.1.1.js"></script> 
+<!-- <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script> -->
+<!-- <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/> -->
+ <link href="css/Inter_wght@400_500.css" rel="stylesheet"/>
+<!-- <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/> -->
+ <link href="css/Material_Symbols_Outlined_wght_FILL_100.css" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#137fec",
+                        "background-light": "#f6f7f8",
+                        "background-dark": "#0d141b",
+                        "accent-purple": "#6366f1",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "system-ui", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.5rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', 'Noto Sans SC', sans-serif; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100">
+<div class="min-h-screen">
+<!-- Main Content -->
+<main class="max-w-7xl mx-auto bg-background-light dark:bg-background-dark">
+<!-- Content Area -->
+<div class="p-8">
+<!-- Top Actions & Search -->
+<div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+<div>
+<h2 class="text-2xl font-bold text-slate-900 dark:text-white">告警策略配置</h2>
+<p class="text-slate-500 text-sm mt-1">管理系统中所有告警触发及推送规则</p>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+<input class="pl-10 pr-4 py-2 rounded-lg border-slate-200 dark:border-slate-700 dark:bg-slate-800 text-sm focus:ring-primary focus:border-primary w-64 shadow-sm" placeholder="搜索策略名称..." type="text"/>
+</div>
+<button class="bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 shadow-lg shadow-primary/20 transition-all">
+<span class="material-symbols-outlined text-lg">add</span>
+                        新建策略
+                    </button>
+</div>
+</div>
+<!-- Tabs -->
+<div class="border-b border-slate-200 dark:border-slate-800 mb-6 flex gap-8">
+<button class="pb-4 border-b-2 border-primary text-primary font-bold text-sm tracking-wide">全部策略 (12)</button>
+<button class="pb-4 border-b-2 border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium text-sm tracking-wide transition-colors">系统告警 (4)</button>
+<button class="pb-4 border-b-2 border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium text-sm tracking-wide transition-colors">业务告警 (8)</button>
+</div>
+<!-- Table Container -->
+<div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 text-xs font-semibold uppercase tracking-wider">
+<th class="px-6 py-4">策略名称</th>
+<th class="px-6 py-4">类别</th>
+<th class="px-6 py-4">告警类型</th>
+<th class="px-6 py-4">匹配规则 (区域/设备/等级)</th>
+<th class="px-6 py-4">动作描述 (action_desc)</th>
+<th class="px-6 py-4">渠道</th>
+<th class="px-6 py-4 text-center">状态</th>
+<th class="px-6 py-4 text-right">操作</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
+<!-- Row 1 -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+<td class="px-6 py-4">
+<div class="font-semibold text-slate-900 dark:text-white">高空抛物实时推送</div>
+<div class="text-xs text-slate-400 mt-0.5">ID: STR-00912</div>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 rounded bg-accent-purple/10 text-accent-purple text-xs font-medium">业务告警</span>
+</td>
+<td class="px-6 py-4 text-slate-600 dark:text-slate-300">高空抛物检测</td>
+<td class="px-6 py-4">
+<div class="flex flex-wrap gap-1">
+<span class="text-[11px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">西区宿舍</span>
+<span class="text-[11px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-primary">CAM-01...</span>
+<span class="text-[11px] bg-red-100 dark:bg-red-900/30 text-red-600 px-1.5 py-0.5 rounded">特级</span>
+</div>
+</td>
+<td class="px-6 py-4 text-slate-600 dark:text-slate-300">
+                                    推送钉钉群A，60s 静默
+                                </td>
+<td class="px-6 py-4">
+<div class="flex gap-2">
+<span class="material-symbols-outlined text-base text-slate-400" title="钉钉">chat</span>
+<span class="material-symbols-outlined text-base text-slate-400" title="短信">sms</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<div class="flex justify-center">
+<div class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 text-right space-x-3">
+<button class="text-slate-400 hover:text-primary transition-colors"><span class="material-symbols-outlined text-lg">edit</span></button>
+<button class="text-slate-400 hover:text-red-500 transition-colors"><span class="material-symbols-outlined text-lg">delete</span></button>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+<td class="px-6 py-4">
+<div class="font-semibold text-slate-900 dark:text-white">边缘网关离线告警</div>
+<div class="text-xs text-slate-400 mt-0.5">ID: STR-00755</div>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 rounded bg-primary/10 text-primary text-xs font-medium">系统告警</span>
+</td>
+<td class="px-6 py-4 text-slate-600 dark:text-slate-300">网络状态异常</td>
+<td class="px-6 py-4">
+<div class="flex flex-wrap gap-1">
+<span class="text-[11px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">全区域</span>
+<span class="text-[11px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-primary">GW-Node...</span>
+<span class="text-[11px] bg-orange-100 dark:bg-orange-900/30 text-orange-600 px-1.5 py-0.5 rounded">一级</span>
+</div>
+</td>
+<td class="px-6 py-4 text-slate-600 dark:text-slate-300">
+                                    发送运维邮件，5min 静默
+                                </td>
+<td class="px-6 py-4">
+<div class="flex gap-2">
+<span class="material-symbols-outlined text-base text-slate-400" title="邮件">mail</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<div class="flex justify-center">
+<div class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 text-right space-x-3">
+<button class="text-slate-400 hover:text-primary transition-colors"><span class="material-symbols-outlined text-lg">edit</span></button>
+<button class="text-slate-400 hover:text-red-500 transition-colors"><span class="material-symbols-outlined text-lg">delete</span></button>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+<td class="px-6 py-4">
+<div class="font-semibold text-slate-900 dark:text-white">明火烟雾自动报警</div>
+<div class="text-xs text-slate-400 mt-0.5">ID: STR-00632</div>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 rounded bg-accent-purple/10 text-accent-purple text-xs font-medium">业务告警</span>
+</td>
+<td class="px-6 py-4 text-slate-600 dark:text-slate-300">火焰探测器</td>
+<td class="px-6 py-4">
+<div class="flex flex-wrap gap-1">
+<span class="text-[11px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">仓库A/B区</span>
+<span class="text-[11px] bg-red-100 dark:bg-red-900/30 text-red-600 px-1.5 py-0.5 rounded">特级</span>
+</div>
+</td>
+<td class="px-6 py-4 text-slate-600 dark:text-slate-300">
+                                    语音电话 + 钉钉，无静默
+                                </td>
+<td class="px-6 py-4">
+<div class="flex gap-2">
+<span class="material-symbols-outlined text-base text-slate-400" title="语音电话">call</span>
+<span class="material-symbols-outlined text-base text-slate-400" title="钉钉">chat</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<div class="flex justify-center">
+<div class="relative inline-flex items-center cursor-pointer">
+<input class="sr-only peer" type="checkbox"/>
+<div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 text-right space-x-3">
+<button class="text-slate-400 hover:text-primary transition-colors"><span class="material-symbols-outlined text-lg">edit</span></button>
+<button class="text-slate-400 hover:text-red-500 transition-colors"><span class="material-symbols-outlined text-lg">delete</span></button>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+<td class="px-6 py-4">
+<div class="font-semibold text-slate-900 dark:text-white">非法入侵周界报警</div>
+<div class="text-xs text-slate-400 mt-0.5">ID: STR-00421</div>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 rounded bg-accent-purple/10 text-accent-purple text-xs font-medium">业务告警</span>
+</td>
+<td class="px-6 py-4 text-slate-600 dark:text-slate-300">区域入侵检测</td>
+<td class="px-6 py-4">
+<div class="flex flex-wrap gap-1">
+<span class="text-[11px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">东侧围墙</span>
+<span class="text-[11px] bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 px-1.5 py-0.5 rounded">二级</span>
+</div>
+</td>
+<td class="px-6 py-4 text-slate-600 dark:text-slate-300">
+                                    钉钉 + APP推送，300s 静默
+                                </td>
+<td class="px-6 py-4">
+<div class="flex gap-2 text-primary">
+<span class="material-symbols-outlined text-base" title="钉钉">chat</span>
+<span class="material-symbols-outlined text-base" title="App推送">send_to_mobile</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<div class="flex justify-center">
+<div class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 text-right space-x-3">
+<button class="text-slate-400 hover:text-primary transition-colors"><span class="material-symbols-outlined text-lg">edit</span></button>
+<button class="text-slate-400 hover:text-red-500 transition-colors"><span class="material-symbols-outlined text-lg">delete</span></button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- Pagination -->
+<div class="mt-6 flex items-center justify-between">
+<p class="text-xs text-slate-500">显示 1 到 4 条数据，共 12 条记录</p>
+<div class="flex gap-1">
+<button class="w-8 h-8 flex items-center justify-center rounded border border-slate-200 dark:border-slate-800 text-slate-400 disabled:opacity-50" disabled="">
+<span class="material-symbols-outlined text-base">chevron_left</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center rounded border border-primary bg-primary text-white text-xs font-bold">1</button>
+<button class="w-8 h-8 flex items-center justify-center rounded border border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-medium">2</button>
+<button class="w-8 h-8 flex items-center justify-center rounded border border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-medium">3</button>
+<button class="w-8 h-8 flex items-center justify-center rounded border border-slate-200 dark:border-slate-800 text-slate-400">
+<span class="material-symbols-outlined text-base">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

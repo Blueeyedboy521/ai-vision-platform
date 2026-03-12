@@ -2,206 +2,92 @@
   <div class="push-management">
     <!-- Page Header -->
     <div class="page-header">
-      <h1 class="page-header__title">推送渠道管理</h1>
+      <h1 class="page-header__title">通道配置</h1>
       <p class="page-header__subtitle">配置多维度的告警触达方式，确保信息及时传递</p>
+      <div class="page-header__actions">
+        <n-button type="primary" @click="showAddModal = true">
+          <template #icon>
+            <n-icon><AddOutline /></n-icon>
+          </template>
+          新增通道
+        </n-button>
+      </div>
     </div>
 
     <!-- Channel Cards -->
     <div class="channel-section">
       <div class="channel-cards">
-        <!-- 钉钉推送 -->
-        <div class="channel-card card-border-xl">
-          <div class="channel-card__icon channel-card__icon--dingtalk">
-            <n-icon :size="32"><ChatboxEllipsesOutline /></n-icon>
-          </div>
-          <h3 class="channel-card__title">钉钉推送</h3>
-          <p class="channel-card__desc">
-            通过钉钉机器人 Webhook 实现告警消息实时推送到指定的钉钉群组。
-          </p>
-          <div class="channel-card__status">
-            <span class="status-dot status-dot--enabled"></span>
-            <span class="status-text status-text--enabled">已开启</span>
-          </div>
-          <n-button block @click="showChannelConfig('dingtalk')">渠道配置</n-button>
-        </div>
-
-        <!-- 企业微信 -->
-        <div class="channel-card card-border-xl">
-          <div class="channel-card__icon channel-card__icon--wechat">
-            <n-icon :size="32"><PeopleOutline /></n-icon>
-          </div>
-          <h3 class="channel-card__title">企业微信</h3>
-          <p class="channel-card__desc">
-            集成企业微信 API，支持卡片式、图文式告警展示，消息点击直达回放。
-          </p>
-          <div class="channel-card__status">
-            <span class="status-dot status-dot--disabled"></span>
-            <span class="status-text status-text--disabled">已禁用</span>
-          </div>
-          <n-button block type="primary" @click="enableChannel('wechat')">立即开启</n-button>
-        </div>
-
-        <!-- 邮件推送 -->
-        <div class="channel-card card-border-xl">
-          <div class="channel-card__icon channel-card__icon--email">
-            <n-icon :size="32"><MailOutline /></n-icon>
-          </div>
-          <h3 class="channel-card__title">邮件推送</h3>
-          <p class="channel-card__desc">
-            支持 SMTP 协议，可配置多个收件人，支持 HTML 富文本格式告警邮件。
-          </p>
-          <div class="channel-card__status">
-            <span class="status-dot status-dot--disabled"></span>
-            <span class="status-text status-text--disabled">已禁用</span>
-          </div>
-          <n-button block type="primary" @click="enableChannel('email')">立即开启</n-button>
-        </div>
-
-        <!-- 短信推送 -->
-        <div class="channel-card card-border-xl">
-          <div class="channel-card__icon channel-card__icon--sms">
-            <n-icon :size="32"><PhonePortraitOutline /></n-icon>
-          </div>
-          <h3 class="channel-card__title">短信推送</h3>
-          <p class="channel-card__desc">
-            对接阿里云、腾讯云短信服务，支持紧急告警短信通知，确保重要信息触达。
-          </p>
-          <div class="channel-card__status">
-            <span class="status-dot status-dot--disabled"></span>
-            <span class="status-text status-text--disabled">已禁用</span>
-          </div>
-          <n-button block type="primary" @click="enableChannel('sms')">立即开启</n-button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Message Template Section -->
-    <div class="template-section card-border-xl">
-      <div class="template-header">
-        <h2 class="template-header__title">消息模板管理</h2>
-        <n-button type="primary" size="small" @click="showTemplateModal = true">
-          <template #icon>
-            <n-icon><AddOutline /></n-icon>
-          </template>
-          新建模板
-        </n-button>
-      </div>
-
-      <div class="template-list card-border-xl">
         <div 
-          v-for="template in templates" 
-          :key="template.id" 
-          class="template-item card-border-xl"
+          v-for="channel in channels" 
+          :key="channel.id" 
+          class="channel-card card-border-xl"
         >
-          <div class="template-item__icon">
-            <n-icon :size="20" color="var(--primary-color)"><DocumentTextOutline /></n-icon>
+          <div class="channel-card__icon" :class="`channel-card__icon--${channel.type}`">
+            <n-icon :size="32"><ChatboxEllipsesOutline v-if="channel.type === 'dingtalk'" /><PeopleOutline v-else /></n-icon>
           </div>
-          <div class="template-item__info">
-            <h4 class="template-item__name">{{ template.name }}</h4>
-            <span class="template-item__type">{{ template.type }}</span>
+          <h3 class="channel-card__title">{{ channel.name }}</h3>
+          <p class="channel-card__desc">
+            {{ channel.type === 'dingtalk' ? '钉钉机器人' : '企业微信机器人' }} 通道
+          </p>
+          <div class="channel-card__status">
+            <span class="status-dot" :class="channel.isEnabled ? 'status-dot--enabled' : 'status-dot--disabled'"></span>
+            <span class="status-text" :class="channel.isEnabled ? 'status-text--enabled' : 'status-text--disabled'">
+              {{ channel.isEnabled ? '已启用' : '已禁用' }}
+            </span>
           </div>
-          <div class="template-item__meta">
-            <span class="template-item__time">上次使用: {{ template.lastUsed }}</span>
-            <div class="template-item__actions">
-              <n-button text type="primary" size="small" @click="editTemplate(template)">编辑</n-button>
-              <n-button text type="error" size="small" @click="deleteTemplate(template)">删除</n-button>
-            </div>
+          <div class="channel-card__meta">
+            <span class="channel-card__webhook">{{ maskWebhook(channel.webhook) }}</span>
           </div>
+          <div class="channel-card__actions">
+            <n-switch 
+              v-model:value="channel.isEnabled" 
+              @update:value="updateChannelStatus(channel)"
+              style="margin-right: 12px"
+            />
+            <n-button text type="primary" size="small" @click="editChannel(channel)">编辑</n-button>
+            <n-button text type="error" size="small" @click="deleteChannel(channel)">删除</n-button>
+          </div>
+        </div>
+        <div v-if="channels.length === 0" class="empty-state">
+          <n-empty description="暂无通道数据" />
         </div>
       </div>
     </div>
 
-    <!-- Channel Config Modal -->
+    <!-- Add/Edit Channel Modal -->
     <n-modal 
-      v-model:show="showConfigModal" 
+      v-model:show="showAddModal" 
       preset="card" 
-      :title="configModalTitle"
+      :title="editingChannel ? '编辑通道' : '新增通道'"
       :style="{ width: '560px' }"
       :bordered="false"
     >
       <n-form :model="channelForm" label-placement="left" label-width="100">
-        <n-form-item label="Webhook URL" v-if="currentChannel === 'dingtalk'">
-          <n-input v-model:value="channelForm.webhook" placeholder="请输入钉钉机器人 Webhook 地址" />
+        <n-form-item label="通道名称" required>
+          <n-input v-model:value="channelForm.name" placeholder="请输入通道名称" />
         </n-form-item>
-        <n-form-item label="加签密钥" v-if="currentChannel === 'dingtalk'">
+        <n-form-item label="通道类型" required>
+          <n-select 
+            v-model:value="channelForm.type" 
+            :options="channelTypes"
+            placeholder="请选择通道类型"
+          />
+        </n-form-item>
+        <n-form-item label="Webhook URL" required>
+          <n-input v-model:value="channelForm.webhook" placeholder="请输入机器人 Webhook 地址" />
+        </n-form-item>
+        <n-form-item label="加签密钥">
           <n-input v-model:value="channelForm.secret" placeholder="请输入加签密钥（可选）" />
         </n-form-item>
-        <n-form-item label="Corp ID" v-if="currentChannel === 'wechat'">
-          <n-input v-model:value="channelForm.corpId" placeholder="请输入企业微信 Corp ID" />
-        </n-form-item>
-        <n-form-item label="Agent ID" v-if="currentChannel === 'wechat'">
-          <n-input v-model:value="channelForm.agentId" placeholder="请输入应用 Agent ID" />
-        </n-form-item>
-        <n-form-item label="Secret" v-if="currentChannel === 'wechat'">
-          <n-input v-model:value="channelForm.secret" type="password" placeholder="请输入应用 Secret" />
-        </n-form-item>
-        <n-form-item label="SMTP 服务器" v-if="currentChannel === 'email'">
-          <n-input v-model:value="channelForm.smtpHost" placeholder="例如: smtp.qq.com" />
-        </n-form-item>
-        <n-form-item label="端口" v-if="currentChannel === 'email'">
-          <n-input-number v-model:value="channelForm.smtpPort" placeholder="465" :min="1" :max="65535" />
-        </n-form-item>
-        <n-form-item label="发件邮箱" v-if="currentChannel === 'email'">
-          <n-input v-model:value="channelForm.email" placeholder="请输入发件人邮箱" />
-        </n-form-item>
-        <n-form-item label="授权码" v-if="currentChannel === 'email'">
-          <n-input v-model:value="channelForm.password" type="password" placeholder="请输入邮箱授权码" />
-        </n-form-item>
         <n-form-item label="启用状态">
-          <n-switch v-model:value="channelForm.enabled" />
+          <n-switch v-model:value="channelForm.isEnabled" />
         </n-form-item>
       </n-form>
       <template #footer>
         <div class="modal-footer">
           <n-button @click="testChannel">测试连接</n-button>
-          <n-button @click="showConfigModal = false">取消</n-button>
-          <n-button type="primary" @click="saveChannelConfig">保存配置</n-button>
-        </div>
-      </template>
-    </n-modal>
-
-    <!-- Template Modal -->
-    <n-modal 
-      v-model:show="showTemplateModal" 
-      preset="card" 
-      :title="editingTemplate ? '编辑模板' : '新建模板'"
-      :style="{ width: '600px' }"
-      :bordered="false"
-    >
-      <n-form :model="templateForm" label-placement="left" label-width="100">
-        <n-form-item label="模板名称">
-          <n-input v-model:value="templateForm.name" placeholder="请输入模板名称" />
-        </n-form-item>
-        <n-form-item label="消息类型">
-          <n-select 
-            v-model:value="templateForm.type" 
-            :options="messageTypes"
-            placeholder="请选择消息类型"
-          />
-        </n-form-item>
-        <n-form-item label="适用渠道">
-          <n-checkbox-group v-model:value="templateForm.channels">
-            <n-space>
-              <n-checkbox value="dingtalk">钉钉</n-checkbox>
-              <n-checkbox value="wechat">企业微信</n-checkbox>
-              <n-checkbox value="email">邮件</n-checkbox>
-              <n-checkbox value="sms">短信</n-checkbox>
-            </n-space>
-          </n-checkbox-group>
-        </n-form-item>
-        <n-form-item label="模板内容">
-          <n-input 
-            v-model:value="templateForm.content" 
-            type="textarea" 
-            placeholder="支持变量: ${alarmType}, ${deviceName}, ${alarmTime}, ${alarmLevel}"
-            :rows="5"
-          />
-        </n-form-item>
-      </n-form>
-      <template #footer>
-        <div class="modal-footer">
-          <n-button @click="showTemplateModal = false">取消</n-button>
-          <n-button type="primary" @click="saveTemplate">保存</n-button>
+          <n-button @click="showAddModal = false">取消</n-button>
+          <n-button type="primary" @click="saveChannel">保存</n-button>
         </div>
       </template>
     </n-modal>
@@ -209,158 +95,140 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { 
-  NButton, NIcon, NModal, NForm, NFormItem, NInput, NInputNumber,
-  NSwitch, NSelect, NCheckbox, NCheckboxGroup, NSpace, useMessage 
+  NButton, NIcon, NModal, NForm, NFormItem, NInput, NSwitch, NSelect, 
+  NEmpty, useMessage 
 } from 'naive-ui'
 import { 
-  ChatboxEllipsesOutline,
-  PeopleOutline,
-  MailOutline,
-  PhonePortraitOutline,
-  AddOutline,
-  DocumentTextOutline
+  AddOutline, ChatboxEllipsesOutline, PeopleOutline
 } from '@vicons/ionicons5'
 
-interface Template {
+interface Channel {
   id: string
   name: string
-  type: string
-  lastUsed: string
-  content?: string
-  channels?: string[]
+  type: 'dingtalk' | 'wechat'
+  webhook: string
+  secret?: string
+  isEnabled: boolean
 }
 
 const message = useMessage()
 
-// Channel config
-const showConfigModal = ref(false)
-const currentChannel = ref('')
-const channelForm = ref({
-  webhook: '',
-  secret: '',
-  corpId: '',
-  agentId: '',
-  smtpHost: '',
-  smtpPort: 465,
-  email: '',
-  password: '',
-  enabled: true
-})
-
-const configModalTitle = computed(() => {
-  const titles: Record<string, string> = {
-    dingtalk: '钉钉推送配置',
-    wechat: '企业微信配置',
-    email: '邮件推送配置',
-    sms: '短信推送配置'
-  }
-  return titles[currentChannel.value] || '渠道配置'
-})
-
-// Template data
-const showTemplateModal = ref(false)
-const editingTemplate = ref<Template | null>(null)
-const templateForm = ref({
-  name: '',
-  type: null as string | null,
-  channels: [] as string[],
-  content: ''
-})
-
-const templates = ref<Template[]>([
+// Channel data
+const channels = ref<Channel[]>([
   {
     id: '1',
-    name: '安全告警通用模板',
-    type: '卡片消息',
-    lastUsed: '10分钟前'
+    name: '监控告警群',
+    type: 'dingtalk',
+    webhook: 'https://oapi.dingtalk.com/robot/send?access_token=1234567890abcdef1234567890abcdef',
+    secret: 'SEC1234567890abcdef1234567890abcdef',
+    isEnabled: true
   },
   {
     id: '2',
-    name: '设备离线预警模板',
-    type: '文本消息',
-    lastUsed: '1小时前'
-  },
-  {
-    id: '3',
-    name: '入侵检测告警模板',
-    type: '图文消息',
-    lastUsed: '3小时前'
+    name: '安保通知群',
+    type: 'wechat',
+    webhook: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=1234567890abcdef1234567890abcdef',
+    isEnabled: false
   }
 ])
 
-const messageTypes = [
-  { label: '文本消息', value: 'text' },
-  { label: '卡片消息', value: 'card' },
-  { label: '图文消息', value: 'news' },
-  { label: 'Markdown', value: 'markdown' }
+// Form data
+const showAddModal = ref(false)
+const editingChannel = ref<Channel | null>(null)
+const channelForm = ref({
+  name: '',
+  type: 'dingtalk' as 'dingtalk' | 'wechat',
+  webhook: '',
+  secret: '',
+  isEnabled: true
+})
+
+// Channel types
+const channelTypes = [
+  { label: '钉钉机器人', value: 'dingtalk' },
+  { label: '企业微信机器人', value: 'wechat' }
 ]
 
-function showChannelConfig(channel: string) {
-  currentChannel.value = channel
-  showConfigModal.value = true
+// Methods
+function editChannel(channel: Channel) {
+  editingChannel.value = channel
+  channelForm.value = {
+    name: channel.name,
+    type: channel.type,
+    webhook: channel.webhook,
+    secret: channel.secret || '',
+    isEnabled: channel.isEnabled
+  }
+  showAddModal.value = true
 }
 
-function enableChannel(channel: string) {
-  currentChannel.value = channel
-  showConfigModal.value = true
+function deleteChannel(channel: Channel) {
+  const index = channels.value.findIndex(c => c.id === channel.id)
+  if (index > -1) {
+    channels.value.splice(index, 1)
+    message.success('通道已删除')
+  }
+}
+
+function saveChannel() {
+  if (!channelForm.value.name || !channelForm.value.webhook) {
+    message.error('请填写完整的通道信息')
+    return
+  }
+  
+  if (editingChannel.value) {
+    const index = channels.value.findIndex(c => c.id === editingChannel.value!.id)
+    if (index > -1) {
+      channels.value[index] = {
+        ...channels.value[index],
+        name: channelForm.value.name,
+        type: channelForm.value.type,
+        webhook: channelForm.value.webhook,
+        secret: channelForm.value.secret,
+        isEnabled: channelForm.value.isEnabled
+      }
+    }
+    message.success('通道更新成功')
+  } else {
+    channels.value.push({
+      id: Date.now().toString(),
+      name: channelForm.value.name,
+      type: channelForm.value.type,
+      webhook: channelForm.value.webhook,
+      secret: channelForm.value.secret,
+      isEnabled: channelForm.value.isEnabled
+    })
+    message.success('通道创建成功')
+  }
+  
+  showAddModal.value = false
+  editingChannel.value = null
+  channelForm.value = {
+    name: '',
+    type: 'dingtalk',
+    webhook: '',
+    secret: '',
+    isEnabled: true
+  }
+}
+
+function updateChannelStatus(channel: Channel) {
+  message.success(channel.isEnabled ? '通道已启用' : '通道已禁用')
 }
 
 function testChannel() {
-  message.loading('正在测试连接...')
-  setTimeout(() => {
-    message.success('连接测试成功')
-  }, 1500)
+  message.success('测试消息已发送，请检查对应通道')
 }
 
-function saveChannelConfig() {
-  message.success('配置保存成功')
-  showConfigModal.value = false
-}
-
-function editTemplate(template: Template) {
-  editingTemplate.value = template
-  templateForm.value = {
-    name: template.name,
-    type: template.type === '卡片消息' ? 'card' : template.type === '文本消息' ? 'text' : 'news',
-    channels: template.channels || ['dingtalk'],
-    content: template.content || ''
+function maskWebhook(webhook: string): string {
+  // 只显示域名和部分路径，隐藏敏感信息
+  const match = webhook.match(/^(https?:\/\/[^/]+\/[^?]+)\?.*$/)
+  if (match) {
+    return match[1] + '?***'
   }
-  showTemplateModal.value = true
-}
-
-function deleteTemplate(template: Template) {
-  const index = templates.value.findIndex(t => t.id === template.id)
-  if (index > -1) {
-    templates.value.splice(index, 1)
-    message.success('模板已删除')
-  }
-}
-
-function saveTemplate() {
-  if (editingTemplate.value) {
-    const index = templates.value.findIndex(t => t.id === editingTemplate.value!.id)
-    if (index > -1) {
-      templates.value[index] = {
-        ...templates.value[index],
-        name: templateForm.value.name,
-        type: messageTypes.find(t => t.value === templateForm.value.type)?.label || '文本消息'
-      }
-    }
-    message.success('模板更新成功')
-  } else {
-    templates.value.push({
-      id: Date.now().toString(),
-      name: templateForm.value.name,
-      type: messageTypes.find(t => t.value === templateForm.value.type)?.label || '文本消息',
-      lastUsed: '刚刚'
-    })
-    message.success('模板创建成功')
-  }
-  showTemplateModal.value = false
-  editingTemplate.value = null
-  templateForm.value = { name: '', type: null, channels: [], content: '' }
+  return webhook
 }
 </script>
 
@@ -376,6 +244,9 @@ function saveTemplate() {
 /* Page Header */
 .page-header {
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
 }
 
 .page-header__title {
@@ -388,83 +259,79 @@ function saveTemplate() {
 .page-header__subtitle {
   font-size: var(--font-size-base);
   color: var(--text-muted);
-  margin: var(--spacing-xs) 0 0;
+  margin: 0;
+}
+
+.page-header__actions {
+  margin-top: var(--spacing-sm);
 }
 
 /* Channel Section */
 .channel-section {
-  flex-shrink: 0;
+  flex: 1;
+  min-height: 0;
 }
 
 .channel-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: var(--spacing-lg);
 }
 
 .channel-card {
   background: var(--bg-card);
   padding: var(--spacing-xl);
-  text-align: center;
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
   transition: all 0.3s ease;
 }
 
 .channel-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px -4px rgba(0, 0, 0, 0.1);
 }
 
 .channel-card__icon {
   width: 64px;
   height: 64px;
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0 auto var(--spacing-md);
+  color: white;
+  flex-shrink: 0;
 }
 
 .channel-card__icon--dingtalk {
   background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
-  color: #fff;
 }
 
 .channel-card__icon--wechat {
   background: linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%);
-  color: #fff;
-}
-
-.channel-card__icon--email {
-  background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);
-  color: #fff;
-}
-
-.channel-card__icon--sms {
-  background: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
-  color: #fff;
 }
 
 .channel-card__title {
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
-  margin: 0 0 var(--spacing-sm);
+  margin: 0;
 }
 
 .channel-card__desc {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
-  line-height: 1.6;
-  margin: 0 0 var(--spacing-md);
-  min-height: 48px;
+  line-height: 1.5;
+  margin: 0;
+  flex: 1;
 }
 
 .channel-card__status {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: var(--spacing-xs);
-  margin-bottom: var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
 }
 
 .status-dot {
@@ -484,6 +351,7 @@ function saveTemplate() {
 
 .status-text {
   font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
 }
 
 .status-text--enabled {
@@ -494,103 +362,28 @@ function saveTemplate() {
   color: var(--text-muted);
 }
 
-/* Template Section */
-.template-section {
-  background: var(--bg-card);
-  padding: var(--spacing-xl);
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+.channel-card__meta {
+  margin-bottom: var(--spacing-sm);
 }
 
-.template-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--spacing-lg);
-  flex-shrink: 0;
+.channel-card__webhook {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  word-break: break-all;
 }
 
-.template-header__title {
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
-  margin: 0;
+.channel-card__actions {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
+  justify-content: flex-end;
 }
 
-.template-header__title::before {
-  content: '';
-  width: 4px;
-  height: 20px;
-  background: var(--primary-color);
-  border-radius: 2px;
-}
-
-.template-list {
-  flex: 1;
-  overflow-y: auto;
-}
-
-.template-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-md) var(--spacing-lg);
-  border-radius: var(--radius-lg);
-  transition: background 0.2s;
-}
-
-.template-item:hover {
-  background: var(--bg-hover);
-}
-
-.template-item__icon {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-md);
-  background: rgba(67, 24, 255, 0.1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.template-item__info {
-  flex: 1;
-  min-width: 0;
-}
-
-.template-item__name {
-  font-size: var(--font-size-base);
-  font-weight: var(--font-weight-medium);
-  color: var(--text-primary);
-  margin: 0 0 2px;
-}
-
-.template-item__type {
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-}
-
-.template-item__meta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: var(--spacing-xs);
-}
-
-.template-item__time {
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-}
-
-.template-item__actions {
-  display: flex;
-  gap: var(--spacing-sm);
+/* Empty State */
+.empty-state {
+  grid-column: 1 / -1;
+  padding: var(--spacing-3xl) var(--spacing-xl);
+  text-align: center;
 }
 
 /* Modal Footer */
@@ -601,35 +394,25 @@ function saveTemplate() {
 }
 
 /* Scrollbar */
-.push-management::-webkit-scrollbar,
-.template-list::-webkit-scrollbar {
+.push-management::-webkit-scrollbar {
   width: 6px;
 }
 
-.push-management::-webkit-scrollbar-track,
-.template-list::-webkit-scrollbar-track {
+.push-management::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.push-management::-webkit-scrollbar-thumb,
-.template-list::-webkit-scrollbar-thumb {
+.push-management::-webkit-scrollbar-thumb {
   background: var(--border-color);
   border-radius: 3px;
 }
 
-.push-management::-webkit-scrollbar-thumb:hover,
-.template-list::-webkit-scrollbar-thumb:hover {
+.push-management::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
 }
 
 /* Responsive */
-@media (max-width: 900px) {
-  .channel-cards {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (max-width: 600px) {
+@media (max-width: 768px) {
   .channel-cards {
     grid-template-columns: 1fr;
   }

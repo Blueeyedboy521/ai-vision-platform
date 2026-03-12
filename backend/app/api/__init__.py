@@ -16,6 +16,7 @@ from .endpoints import (
     system,
     media_hooks,
     files,
+    notifications,
 )
 
 
@@ -75,4 +76,10 @@ api_router.include_router(
     media_hooks.router,
     prefix="/media/hook",
     tags=["流媒体Hook"]
+)
+
+api_router.include_router(
+    notifications.router,
+    prefix="/notifications",
+    tags=["推送配置"]
 )

@@ -11,7 +11,6 @@ from typing import Optional
 import redis
 
 from common.logging import logger
-from common.notification import get_notifiers, NotificationMessage
 from common.redis.channels import RedisChannels
 from config.settings import settings
 
@@ -45,11 +44,11 @@ def process_alarm(alarm_data: dict) -> None:
         logger.error(f"保存告警到数据库失败: {e}")
     
     # 2. 发送通知 (高级别告警)
-    if alert_level in ("high", "danger", "critical"):
-        try:
-            send_notifications(alarm_data)
-        except Exception as e:
-            logger.error(f"发送告警通知失败: {e}")
+    # 2. 异步推送：入队 notification_queue，由 NotificationWorkerPool 消费
+    try:
+        enqueue_notification_event_from_alarm(alarm_data)
+    except Exception as e:
+        logger.error(f"入队推送任务失败(可忽略): {e}")
     
     # 3. 发布实时告警事件
     try:
@@ -147,50 +146,34 @@ def _map_alert_level(level: str) -> str:
     return level_map.get(level.lower(), "info")
 
 
-def send_notifications(alarm_data: dict) -> None:
+def enqueue_notification_event_from_alarm(alarm_data: dict) -> None:
     """
-    发送告警通知
-    
-    根据配置的通知渠道发送通知
-    
-    Args:
-        alarm_data: 告警数据
+    将告警推送任务写入 Redis notification_queue（异步发送）。
     """
-    notifiers = get_notifiers()
-    
-    if not notifiers:
-        logger.debug("没有配置通知渠道，跳过通知发送")
-        return
-    
-    # 创建通知消息
-    message = NotificationMessage.from_alarm(alarm_data)
-    
-    # 发送到所有通知渠道
-    success_channels = []
-    
-    for notifier in notifiers:
-        if not notifier.is_enabled():
-            continue
-        
-        try:
-            # 使用同步方法发送
-            success = notifier.send_sync(message)
-            if success:
-                success_channels.append(notifier.name)
-        except Exception as e:
-            logger.error(f"通知发送失败 [{notifier.name}]: {e}")
-    
-    if success_channels:
-        logger.info(
-            f"告警通知已发送: alarm_id={alarm_data.get('alarm_id')}, "
-            f"渠道={','.join(success_channels)}"
-        )
-        
-        # 更新数据库中的推送状态
-        _update_push_status(
-            alarm_data.get("alarm_id"),
-            success_channels
-        )
+    r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    try:
+        payload = {
+            "category": "ai",
+            "alarm_id": alarm_data.get("alarm_id"),
+            "alarm_type": alarm_data.get("alarm_type") or alarm_data.get("algorithm_code") or "ai_alarm",
+            "level": _map_alert_level(alarm_data.get("alert_level", "info")),
+            "camera_id": alarm_data.get("camera_id"),
+            "camera_name": alarm_data.get("camera_name"),
+            # 统一用 area_path 做策略匹配（层级路径，如 /厂区A/涂装车间/产线1）
+            "area_path": alarm_data.get("area_name") or alarm_data.get("region_name"),
+            # 兼容旧字段：模板渲染/展示仍可用 area_name
+            "area_name": alarm_data.get("area_name") or alarm_data.get("region_name"),
+            "algorithm_id": alarm_data.get("algorithm_id"),
+            "algorithm_name": alarm_data.get("algorithm_name"),
+            "title": alarm_data.get("title") or alarm_data.get("algorithm_name") or "告警通知",
+            "text": alarm_data.get("description") or "",
+            # snapshot_url 建议走 preview（缩略图），由模板决定是否使用
+            "image_url": None,
+            "link_url": None,
+        }
+        r.rpush(settings.NOTIFICATION_QUEUE_NAME, json.dumps(payload, ensure_ascii=False))
+    finally:
+        r.close()
 
 
 def _update_push_status(
