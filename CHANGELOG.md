@@ -1,5 +1,9 @@
 ## Changelog
 
+### v2.8.5 - 2026-03-12
+
+- **推送管理前端页面补全**：新增并纳入版本管理的推送配置前端页面，包括通道管理 `ChannelManager.vue`、模板管理 `TemplateManagement.vue` 以及策略新增表单 `AddPolicy.vue`，整体风格与 `stitch/*.html` 设计稿保持一致，为后续与通知后端接口联调提供完整 UI 入口。
+
 ### v2.8.4 - 2026-03-12
 
 - **告警推送配置后端落地**：新增通知相关 ORM 与 Schema（`NotificationEndpoint/NotificationTemplate/NotificationPolicy/NotificationDeliveryLog`），`/api/v1/notifications/...` 完成通道、模板、策略、审计日志与测试发送等管理接口，应用启动时拉起 `NotificationWorkerPool` 从 Redis `notification_queue` 异步消费事件并写入审计表。
