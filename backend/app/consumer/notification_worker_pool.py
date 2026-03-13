@@ -2,18 +2,20 @@
 """
 推送处理线程池
 
-从 Redis notification_queue 消费推送事件，调用 notification_service.dispatch_event
+通过 Redis Stream 消费通知事件，调用 notification_service.dispatch_event
 """
 
 import json
 import threading
+import os
+import socket
 from typing import List, Optional
 
 import redis
 
 from common.logging import logger
-from config.settings import settings
 from common.redis.client import get_redis_client
+from common.redis.channels import RedisKeys
 
 
 class NotificationWorkerPool:
@@ -21,6 +23,8 @@ class NotificationWorkerPool:
         self.workers: List[threading.Thread] = []
         self.running = False
         self.redis_client: Optional[redis.Redis] = None
+        self._consumer_group = "notification_workers"
+        self._instance_id = f"{socket.gethostname()}:{os.getpid()}"
 
     def start(self, num_workers: int = 2) -> None:
         if self.running:
@@ -35,6 +39,20 @@ class NotificationWorkerPool:
             self.running = False
             return
         self.redis_client = wrapper.sync_client
+
+        # ensure consumer group exists
+        try:
+            self.redis_client.xgroup_create(
+                RedisKeys.NOTIFICATION_EVENTS_STREAM,
+                self._consumer_group,
+                # 只消费 group 创建后的新消息，避免历史消息干扰
+                id="$",
+                mkstream=True,
+            )
+        except Exception as e:
+            # BUSYGROUP is ok
+            if "BUSYGROUP" not in str(e):
+                logger.error(f"创建通知事件消费者组失败: {e}")
 
         for i in range(num_workers):
             t = threading.Thread(
@@ -51,12 +69,6 @@ class NotificationWorkerPool:
         if not self.running:
             return
         self.running = False
-        if self.redis_client:
-            for _ in range(len(self.workers)):
-                try:
-                    self.redis_client.rpush(settings.NOTIFICATION_QUEUE_NAME, json.dumps({"__stop__": True}))
-                except Exception:
-                    pass
         for t in self.workers:
             t.join(timeout=timeout)
         self.workers.clear()
@@ -71,25 +83,48 @@ class NotificationWorkerPool:
         logger.info(f"{name} 已启动")
         from app.services.notification_service import dispatch_event
 
+        # consumername 需跨进程唯一，避免多实例/多机重名导致消费异常
+        consumer_name = f"{self._instance_id}:{name}"
         while self.running:
             try:
-                res = self.redis_client.blpop(settings.NOTIFICATION_QUEUE_NAME, timeout=1)
-                if res is None:
+                res = self.redis_client.xreadgroup(
+                    groupname=self._consumer_group,
+                    consumername=consumer_name,
+                    streams={RedisKeys.NOTIFICATION_EVENTS_STREAM: ">"},
+                    count=1,
+                    block=1000,  # 最多阻塞 1000ms 等待新消息；超时后返回空，再进入下一轮循环检查 self.running
+                )
+                logger.info(f"res: {res}")
+                if not res:
                     continue
-                _, data = res
-                try:
-                    payload = json.loads(data)
-                except Exception:
-                    continue
-                if payload.get("__stop__"):
-                    break
-                dispatch_event(payload)
+
+                # res: [(stream, [(msg_id, {"data": b"..."}), ...])]
+                _stream, messages = res[0]
+                for msg_id, fields in messages:
+                    raw = fields.get("data") if isinstance(fields, dict) else None
+                    logger.info(f"msg_id: {msg_id}, raw: {raw}")
+                    if raw is None:
+                        # ack malformed
+                        self.redis_client.xack(
+                            RedisKeys.NOTIFICATION_EVENTS_STREAM,
+                            self._consumer_group,
+                            msg_id,
+                        )
+                        continue
+                    if isinstance(raw, (bytes, bytearray)):
+                        raw = raw.decode("utf-8", errors="ignore")
+                    payload = json.loads(raw)
+                    dispatch_event(payload)
+                    self.redis_client.xack(
+                        RedisKeys.NOTIFICATION_EVENTS_STREAM,
+                        self._consumer_group,
+                        msg_id,
+                    )
             except redis.ConnectionError as e:
                 logger.error(f"{name} Redis 连接错误: {e}")
                 threading.Event().wait(timeout=1.0)
             except Exception as e:
                 logger.error(f"{name} 处理推送异常: {e}")
-
         logger.info(f"{name} 已停止")
 
 

@@ -2,7 +2,7 @@
  * 消息推送配置 API（通道 / 模板）
  * 对应后端 /api/v1/notifications
  */
-import { request, type ApiResponse } from './request'
+import { request, type ApiResponse, type PageResponse } from './request'
 
 export type ProviderType = 'dingtalk_bot' | 'wecom_bot'
 export type TemplateType = 'text' | 'rich'
@@ -23,6 +23,19 @@ export interface NotificationTemplate {
   type: TemplateType
   is_enabled: boolean
   content: Record<string, unknown>
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface NotificationPolicy {
+  id: string
+  name: string
+  priority: number
+  is_enabled: boolean
+  match: Record<string, unknown>
+  actions: Record<string, unknown>[]
+  match_desc?: string
+  actions_desc?: string
   created_at?: string | null
   updated_at?: string | null
 }
@@ -51,6 +64,22 @@ export interface UpdateTemplateRequest {
   name?: string
   is_enabled?: boolean
   content?: Record<string, unknown>
+}
+
+export interface CreatePolicyRequest {
+  name: string
+  priority?: number
+  is_enabled?: boolean
+  match: Record<string, unknown>
+  actions: Record<string, unknown>[]
+}
+
+export interface UpdatePolicyRequest {
+  name?: string
+  priority?: number
+  is_enabled?: boolean
+  match?: Record<string, unknown>
+  actions?: Record<string, unknown>[]
 }
 
 /** 获取推送通道列表 */
@@ -91,4 +120,29 @@ export function updateNotificationTemplate(id: string, data: UpdateTemplateReque
 /** 删除推送模板 */
 export function deleteNotificationTemplate(id: string) {
   return request.delete<ApiResponse<{ deleted: boolean }>>(`/notifications/templates/${id}`)
+}
+
+/** 获取推送策略列表 */
+export function getNotificationPolicies() {
+  return request.get<ApiResponse<NotificationPolicy[]>>('/notifications/policies')
+}
+
+/** 获取推送策略详情 */
+export function getNotificationPolicy(id: string) {
+  return request.get<ApiResponse<NotificationPolicy>>(`/notifications/policies/${id}`)
+}
+
+/** 创建推送策略 */
+export function createNotificationPolicy(data: CreatePolicyRequest) {
+  return request.post<ApiResponse<{ id: string }>>('/notifications/policies', data)
+}
+
+/** 更新推送策略 */
+export function updateNotificationPolicy(id: string, data: UpdatePolicyRequest) {
+  return request.put<ApiResponse<{ updated: boolean }>>(`/notifications/policies/${id}`, data)
+}
+
+/** 删除推送策略 */
+export function deleteNotificationPolicy(id: string) {
+  return request.delete<ApiResponse<{ deleted: boolean }>>(`/notifications/policies/${id}`)
 }

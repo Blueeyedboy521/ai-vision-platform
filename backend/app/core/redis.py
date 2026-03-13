@@ -419,3 +419,41 @@ async def delete_notification_template_from_redis(template_id: str) -> None:
         await redis.client.hdel(RedisKeys.NOTIFICATION_TEMPLATES_SNAPSHOT, template_id)
     except Exception as e:
         logger.warning(f"从 Redis 删除推送模板失败: {template_id}, {e}")
+
+
+async def set_notification_policy_in_redis(item: Dict[str, Any]) -> None:
+    """
+    新增或更新单条推送策略到 Redis。不查库、不循环，只写一条。
+    Hash key:
+    - 按类别拆分：NOTIFICATION_POLICIES_AI_SNAPSHOT / NOTIFICATION_POLICIES_SYSTEM_SNAPSHOT
+    - field: id，value: JSON
+    """
+    policy_id = str((item or {}).get("id") or "").strip()
+    if not policy_id:
+        return
+    try:
+        redis = get_redis()
+        match = (item or {}).get("match") or {}
+        category = str(match.get("category") or "").strip().lower() or "ai"
+        if category == "system":
+            key = RedisKeys.NOTIFICATION_POLICIES_SYSTEM_SNAPSHOT
+        else:
+            key = RedisKeys.NOTIFICATION_POLICIES_AI_SNAPSHOT
+
+        await redis.client.hset(key, policy_id, json.dumps(item, ensure_ascii=False))
+    except Exception as e:
+        logger.warning(f"写入推送策略到 Redis 失败: {policy_id}, {e}")
+
+
+async def delete_notification_policy_from_redis(policy_id: str) -> None:
+    """从 Redis 删除单条推送策略。两个类别 Hash 中都尝试删除。"""
+    try:
+        redis = get_redis()
+        await redis.client.hdel(
+            RedisKeys.NOTIFICATION_POLICIES_AI_SNAPSHOT, policy_id
+        )
+        await redis.client.hdel(
+            RedisKeys.NOTIFICATION_POLICIES_SYSTEM_SNAPSHOT, policy_id
+        )
+    except Exception as e:
+        logger.warning(f"从 Redis 删除推送策略失败: {policy_id}, {e}")

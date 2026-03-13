@@ -30,6 +30,10 @@ class RedisChannels:
     # ==================== 配置更新 ====================
     # 引擎配置更新 (FastAPI -> Engine)
     ENGINE_CONFIG_UPDATE = "engine:config_update"
+
+    # ==================== 通知推送事件 ====================
+    # 通知事件发布 (AlarmConsumer/live_heartbeat_monitor -> NotificationWorkerPool)
+    NOTIFICATION_EVENTS = "notifications:events"
     
     # 摄像头状态变化 (添加/删除/启停)
     CAMERA_STATUS_CHANGE = "camera:status_change"
@@ -57,6 +61,10 @@ class RedisKeys:
     # ==================== 告警队列 ====================
     # 告警消息队列 (Engine -> AlarmConsumer)
     ALARM_QUEUE = "alarm_queue"
+
+    # ==================== 通知推送事件流 ====================
+    # 通知事件流 (AlarmConsumer/live_heartbeat_monitor -> NotificationWorkerPool)
+    NOTIFICATION_EVENTS_STREAM = "notification:events:stream"
     
     # ==================== Token 黑名单 ====================
     # Token 黑名单前缀
@@ -133,5 +141,12 @@ class RedisKeys:
 
     # ==================== 通知推送配置快照 ====================
     # 使用 Hash：field=id，value=单条 JSON。增/改 HSET 一条，删 HDEL 一条。消费方 HGETALL 后对 value 做 json.loads 得列表。
+    # endpoints/templates：全部配置放一个 Hash 里即可。
     NOTIFICATION_ENDPOINTS_SNAPSHOT = "notification:endpoints:snapshot"
     NOTIFICATION_TEMPLATES_SNAPSHOT = "notification:templates:snapshot"
+    # policies：按类别拆成两个 Hash，减少单次读取体量。
+    # - ai 告警策略："notification:policies:ai"
+    # - system 告警策略："notification:policies:system"
+    # 如需全量，可自行在消费侧合并两个 Hash。
+    NOTIFICATION_POLICIES_AI_SNAPSHOT = "notification:policies:ai"
+    NOTIFICATION_POLICIES_SYSTEM_SNAPSHOT = "notification:policies:system"

@@ -8,8 +8,6 @@ import json
 from datetime import datetime
 from typing import Optional
 
-import redis
-
 from common.logging import logger
 from common.redis.channels import RedisChannels
 from config.settings import settings
@@ -150,30 +148,28 @@ def enqueue_notification_event_from_alarm(alarm_data: dict) -> None:
     """
     将告警推送任务写入 Redis notification_queue（异步发送）。
     """
-    r = redis.from_url(settings.REDIS_URL, decode_responses=True)
-    try:
-        payload = {
-            "category": "ai",
-            "alarm_id": alarm_data.get("alarm_id"),
-            "alarm_type": alarm_data.get("alarm_type") or alarm_data.get("algorithm_code") or "ai_alarm",
-            "level": _map_alert_level(alarm_data.get("alert_level", "info")),
-            "camera_id": alarm_data.get("camera_id"),
-            "camera_name": alarm_data.get("camera_name"),
-            # 统一用 area_path 做策略匹配（层级路径，如 /厂区A/涂装车间/产线1）
-            "area_path": alarm_data.get("area_name") or alarm_data.get("region_name"),
-            # 兼容旧字段：模板渲染/展示仍可用 area_name
-            "area_name": alarm_data.get("area_name") or alarm_data.get("region_name"),
-            "algorithm_id": alarm_data.get("algorithm_id"),
-            "algorithm_name": alarm_data.get("algorithm_name"),
-            "title": alarm_data.get("title") or alarm_data.get("algorithm_name") or "告警通知",
-            "text": alarm_data.get("description") or "",
-            # snapshot_url 建议走 preview（缩略图），由模板决定是否使用
-            "image_url": None,
-            "link_url": None,
-        }
-        r.rpush(settings.NOTIFICATION_QUEUE_NAME, json.dumps(payload, ensure_ascii=False))
-    finally:
-        r.close()
+    from app.services.notification_service import enqueue_notification_event
+
+    payload = {
+        "category": "ai",
+        "alarm_id": alarm_data.get("alarm_id"),
+        "alarm_type": alarm_data.get("alarm_type") or alarm_data.get("algorithm_code") or "ai_alarm",
+        "level": _map_alert_level(alarm_data.get("alert_level", "info")),
+        "camera_id": alarm_data.get("camera_id"),
+        "camera_name": alarm_data.get("camera_name"),
+        # 统一用 area_path 做策略匹配（层级路径，如 /厂区A/涂装车间/产线1）
+        "area_path": alarm_data.get("area_name") or alarm_data.get("region_name"),
+        # 兼容旧字段：模板渲染/展示仍可用 area_name
+        "area_name": alarm_data.get("area_name") or alarm_data.get("region_name"),
+        "algorithm_id": alarm_data.get("algorithm_id"),
+        "algorithm_name": alarm_data.get("algorithm_name"),
+        "title": alarm_data.get("title") or alarm_data.get("algorithm_name") or "告警通知",
+        "text": alarm_data.get("description") or "",
+        # snapshot_url 建议走 preview（缩略图），由模板决定是否使用
+        "image_url": None,
+        "link_url": None,
+    }
+    enqueue_notification_event(payload)
 
 
 def _update_push_status(
@@ -216,11 +212,10 @@ def publish_realtime_alarm(alarm_data: dict) -> None:
     Args:
         alarm_data: 告警数据
     """
-    # 创建同步 Redis 客户端
-    redis_client = redis.from_url(
-        settings.REDIS_URL,
-        decode_responses=True
-    )
+    # 创建同步 Redis 客户端（使用 common.redis 封装）
+    from common.redis.client import get_redis_client
+
+    redis_client = get_redis_client().sync_client
     
     try:
         # 构建发布消息

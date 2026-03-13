@@ -237,43 +237,6 @@ class Settings(BaseSettings):
         description="通知配置加密密钥（Fernet），用于加密存储 endpoint 配置"
     )
     
-    # ==================== 通知配置 ====================
-    # 钉钉机器人
-    DINGTALK_WEBHOOK_URL: str = Field(
-        default="",
-        description="钉钉机器人 Webhook URL"
-    )
-    DINGTALK_SECRET: str = Field(
-        default="",
-        description="钉钉机器人签名密钥"
-    )
-    
-    # 邮件配置
-    SMTP_HOST: str = Field(
-        default="smtp.qq.com",
-        description="SMTP 服务器地址"
-    )
-    SMTP_PORT: int = Field(
-        default=465,
-        description="SMTP 端口"
-    )
-    SMTP_USER: str = Field(
-        default="",
-        description="SMTP 用户名"
-    )
-    SMTP_PASSWORD: str = Field(
-        default="",
-        description="SMTP 密码"
-    )
-    SMTP_FROM: str = Field(
-        default="",
-        description="发件人地址"
-    )
-    SMTP_USE_SSL: bool = Field(
-        default=True,
-        description="是否使用 SSL"
-    )
-    
     # ==================== 日志配置 ====================
     LOG_LEVEL: str = Field(
         default="INFO",

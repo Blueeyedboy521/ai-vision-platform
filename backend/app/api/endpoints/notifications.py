@@ -53,6 +53,8 @@ from app.core.redis import (
     delete_notification_endpoint_from_redis,
     set_notification_template_in_redis,
     delete_notification_template_from_redis,
+    set_notification_policy_in_redis,
+    delete_notification_policy_from_redis,
 )
 
 
@@ -101,6 +103,13 @@ async def _build_policy_desc(
     match: Dict[str, Any],
     actions: Any,
 ) -> tuple[str, str]:
+    """
+    根据新的 match 结构生成中文描述：
+    - alarm_config: [{value,label}]
+    - area_config: [{value,label,idPath}]
+    - camera_config: [{value,label}]
+    - exclude: 同上结构
+    """
     m = match or {}
 
     def _as_list(v: Any) -> list:
@@ -110,105 +119,85 @@ async def _build_policy_desc(
             return v
         return [v]
 
-    def _format_area_items(paths: Any) -> list[str]:
-        items: list[str] = []
-        for raw in _as_list(paths):
-            p = str(raw or "").strip()
-            if not p:
-                continue
-            is_wild = "*" in p or "?" in p
-            # 去掉末尾通配符，取有意义的段
-            clean = p.rstrip("*").rstrip("/").strip()
-            segs = [s for s in clean.split("/") if s]
-            if not segs:
-                continue
-            # 更偏业务的展示：尽量显示最后两段（如 冲压车间产线2）
-            name = "".join(segs[-2:]) if len(segs) >= 2 else segs[-1]
-            suffix = "（含子区域）" if is_wild else "（仅本区域）"
-            items.append(f"{name}{suffix}")
-        return items
-
     parts: list[str] = []
     cat = str(m.get("category") or "").strip()
     if cat:
         parts.append(_CATEGORY_CN.get(cat, cat))
-    alarm_types = m.get("alarm_type")
-    if isinstance(alarm_types, list):
-        ats = [str(x).strip() for x in alarm_types if str(x).strip()]
-        if ats:
-            parts.append("、".join(ats))
-    elif alarm_types:
-        parts.append(str(alarm_types).strip())
 
+    # 报警类型（alarm_config）
+    alarm_cfgs = [x for x in _as_list(m.get("alarm_config")) if isinstance(x, dict)]
+    if alarm_cfgs:
+        labels = [str(x.get("label") or x.get("value") or "").strip() for x in alarm_cfgs]
+        labels = [x for x in labels if x]
+        if labels:
+            parts.append("类型: " + "、".join(labels))
+
+    # 区域（area_config）
+    area_cfgs = [x for x in _as_list(m.get("area_config")) if isinstance(x, dict)]
+    if area_cfgs:
+        labels = [str(x.get("label") or "").strip() for x in area_cfgs if str(x.get("label") or "").strip()]
+        if labels:
+            parts.append("区域: " + "、".join(labels))
+
+    # 设备（camera_config）
+    cam_cfgs = [x for x in _as_list(m.get("camera_config")) if isinstance(x, dict)]
+    if cam_cfgs:
+        labels = [str(x.get("label") or "").strip() for x in cam_cfgs if str(x.get("label") or "").strip()]
+        if labels:
+            parts.append("设备: " + "、".join(labels))
+
+    # 等级
     levels = m.get("level")
     if isinstance(levels, list):
         ls = [str(x).strip() for x in levels if str(x).strip()]
         if ls:
-            parts.append("、".join(_LEVEL_CN.get(x, x) for x in ls))
+            parts.append("等级: " + "、".join(_LEVEL_CN.get(x, x) for x in ls))
     elif levels:
         lvl = str(levels).strip()
         if lvl:
-            parts.append(_LEVEL_CN.get(lvl, lvl))
+            parts.append("等级: " + _LEVEL_CN.get(lvl, lvl))
 
-    area_paths = m.get("area_path")
-    area_items = _format_area_items(area_paths)
-    if area_items:
-        parts.append("、".join(area_items))
-
-    cam_ids = m.get("camera_id")
-    if isinstance(cam_ids, list):
-        names: list[str] = []
-        for cid in cam_ids:
-            cid_s = str(cid).strip()
-            if not cid_s:
-                continue
-            n = await _get_name_by_id(db, Camera, cid_s)
-            names.append(n or cid_s)
-        if names:
-            parts.append("摄像头：" + "、".join(names))
-    elif cam_ids:
-        cam_id = str(cam_ids).strip()
-        cam_name = await _get_name_by_id(db, Camera, cam_id)
-        if cam_id:
-            parts.append("摄像头：" + str(cam_name or cam_id))
-
-    algo_ids = m.get("algorithm_id")
-    if isinstance(algo_ids, list):
-        names = []
-        for aid in algo_ids:
-            aid_s = str(aid).strip()
-            if not aid_s:
-                continue
-            n = await _get_name_by_id(db, Algorithm, aid_s)
-            names.append(n or aid_s)
-        if names:
-            parts.append("算法：" + "、".join(names))
-    elif algo_ids:
-        algo_id = str(algo_ids).strip()
-        algo_name = await _get_name_by_id(db, Algorithm, algo_id)
-        if algo_id:
-            parts.append("算法：" + str(algo_name or algo_id))
-
+    # 触发时段
     tw = _format_time_window(m.get("time_window"))
-    parts.append(f"（{tw}）" if tw else "（全天生效）")
+    parts.append(f"时段: {tw}" if tw else "时段: 全天生效")
 
     # exclude 描述（可选）
     ex = m.get("exclude") if isinstance(m.get("exclude"), dict) else {}
     if ex:
         ex_parts: list[str] = []
-        ex_areas = _format_area_items(ex.get("area_path"))
-        if ex_areas:
-            ex_parts.append("区域=" + "、".join(ex_areas))
-        for k, label in (("camera_id", "摄像头"), ("algorithm_id", "算法"), ("alarm_type", "类型"), ("level", "等级")):
-            vals = [str(x).strip() for x in _as_list(ex.get(k)) if str(x).strip()]
-            if vals:
-                if k == "level":
-                    vals = [_LEVEL_CN.get(x, x) for x in vals]
-                ex_parts.append(label + "=" + "、".join(vals))
+        ex_alarm_cfgs = [x for x in _as_list(ex.get("alarm_config")) if isinstance(x, dict)]
+        if ex_alarm_cfgs:
+            labels = [str(x.get("label") or x.get("value") or "").strip() for x in ex_alarm_cfgs]
+            labels = [x for x in labels if x]
+            if labels:
+                ex_parts.append("类型=" + "、".join(labels))
+
+        ex_area_cfgs = [x for x in _as_list(ex.get("area_config")) if isinstance(x, dict)]
+        if ex_area_cfgs:
+            labels = [str(x.get("label") or "").strip() for x in ex_area_cfgs if str(x.get("label") or "").strip()]
+            if labels:
+                ex_parts.append("区域=" + "、".join(labels))
+
+        ex_cam_cfgs = [x for x in _as_list(ex.get("camera_config")) if isinstance(x, dict)]
+        if ex_cam_cfgs:
+            labels = [str(x.get("label") or "").strip() for x in ex_cam_cfgs if str(x.get("label") or "").strip()]
+            if labels:
+                ex_parts.append("设备=" + "、".join(labels))
+
+        ex_levels = ex.get("level")
+        if isinstance(ex_levels, list):
+            ls = [str(x).strip() for x in ex_levels if str(x).strip()]
+            if ls:
+                ex_parts.append("等级=" + "、".join(_LEVEL_CN.get(x, x) for x in ls))
+        elif ex_levels:
+            lvl = str(ex_levels).strip()
+            if lvl:
+                ex_parts.append("等级=" + _LEVEL_CN.get(lvl, lvl))
+
         if ex_parts:
             parts.append("排除：" + "；".join(ex_parts))
 
-    match_desc = "-".join([p for p in parts if p]) if parts else "（无匹配条件）"
+    match_desc = " | ".join([p for p in parts if p]) if parts else "（无匹配条件）"
 
     acts: list[dict] = []
     if isinstance(actions, list):
@@ -353,6 +342,7 @@ async def update_endpoint(
         "name": row.name,
         "provider": row.provider,
         "is_enabled": row.is_enabled,
+        "encrypted_config": row.encrypted_config,
         "config_hint": row.config_hint,
     })
     return success_response({"updated": True})
@@ -484,6 +474,30 @@ async def list_policies(
     return success_response(data)
 
 
+@router.get("/policies/{policy_id}", summary="获取推送策略详情")
+async def get_policy(
+    policy_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(NotificationPolicy).where(NotificationPolicy.id == policy_id))
+    r = result.scalar_one_or_none()
+    if r is None:
+        raise HTTPException(status_code=404, detail="策略不存在")
+    return success_response(
+        {
+            "id": r.id,
+            "name": r.name,
+            "priority": r.priority,
+            "is_enabled": r.is_enabled,
+            "match": r.match,
+            "actions": r.actions,
+            "match_desc": r.match_desc,
+            "actions_desc": r.actions_desc,
+        }
+    )
+
+
 @router.post("/policies", summary="创建推送策略")
 async def create_policy(
     payload: NotificationPolicyCreate,
@@ -507,6 +521,18 @@ async def create_policy(
     )
     db.add(row)
     await db.commit()
+    await set_notification_policy_in_redis(
+        {
+            "id": row.id,
+            "name": row.name,
+            "priority": row.priority,
+            "is_enabled": row.is_enabled,
+            "match": row.match,
+            "actions": row.actions,
+            "match_desc": row.match_desc,
+            "actions_desc": row.actions_desc,
+        }
+    )
     return success_response({"id": row.id})
 
 
@@ -541,7 +567,35 @@ async def update_policy(
         row.match_desc = match_desc
         row.actions_desc = actions_desc
     await db.commit()
+    await set_notification_policy_in_redis(
+        {
+            "id": row.id,
+            "name": row.name,
+            "priority": row.priority,
+            "is_enabled": row.is_enabled,
+            "match": row.match,
+            "actions": row.actions,
+            "match_desc": row.match_desc,
+            "actions_desc": row.actions_desc,
+        }
+    )
     return success_response({"updated": True})
+
+
+@router.delete("/policies/{policy_id}", summary="删除推送策略")
+async def delete_policy(
+    policy_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(NotificationPolicy).where(NotificationPolicy.id == policy_id))
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="策略不存在")
+    await db.delete(row)
+    await db.commit()
+    await delete_notification_policy_from_redis(policy_id)
+    return success_response({"deleted": True})
 
 
 @router.get("/delivery-logs", summary="获取推送审计日志（分页）")
@@ -580,28 +634,24 @@ async def test_send(
     payload: NotificationTestSendRequest,
     current_user: User = Depends(get_current_user),
 ):
-    import redis as _redis
+    from app.services.notification_service import enqueue_notification_event
 
-    r = _redis.from_url(settings.REDIS_URL, decode_responses=True)
-    try:
-        event = {
-            "category": payload.category,
-            "alarm_id": f"test_{generate_uuid()}",
-            "alarm_type": payload.alarm_type,
-            "level": payload.level,
-            "camera_id": None,
-            "camera_name": None,
-            "area_name": None,
-            "algorithm_id": None,
-            "algorithm_name": None,
-            "title": payload.title,
-            "text": payload.text,
-            "image_url": payload.image_url,
-            "link_url": payload.link_url,
-            # 让策略能精确命中：携带指定 endpoint/template（MVP：policy 里可直接写固定 endpoint_ids/template_id）
-        }
-        r.rpush(settings.NOTIFICATION_QUEUE_NAME, json.dumps(event, ensure_ascii=False))
-    finally:
-        r.close()
+    event = {
+        "category": payload.category,
+        "alarm_id": f"test_{generate_uuid()}",
+        "alarm_type": payload.alarm_type,
+        "level": payload.level,
+        "camera_id": None,
+        "camera_name": None,
+        "area_name": None,
+        "algorithm_id": None,
+        "algorithm_name": None,
+        "title": payload.title,
+        "text": payload.text,
+        "image_url": payload.image_url,
+        "link_url": payload.link_url,
+        # 让策略能精确命中：携带指定 endpoint/template（MVP：policy 里可直接写固定 endpoint_ids/template_id）
+    }
+    enqueue_notification_event(event)
     return success_response({"queued": True})
 

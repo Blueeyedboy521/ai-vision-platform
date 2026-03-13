@@ -67,8 +67,8 @@
               <div>
                 <n-form-item label="报警类型 (多选)">
                   <div class="p-md border border-light rounded-lg bg-page flex flex-wrap gap-sm min-h-[46px] items-center">
-                    <n-tag v-for="item in selectedAlarmTypes" :key="item" closable @close="handleRemoveAlarmType(item)">
-                      {{ item }}
+                    <n-tag v-for="item in selectedAlarmTypes" :key="item.value" closable @close="handleRemoveAlarmType(item)">
+                      {{ item.label }}
                     </n-tag>
                     <n-select
                       v-if="showAlarmTypeSelect"
@@ -90,7 +90,7 @@
               <div>
                 <n-form-item label="区域路径 (支持通配符)">
                   <div class="p-md border border-light rounded-lg bg-page flex flex-wrap gap-sm min-h-[46px] items-center">
-                    <n-tag v-for="item in selectedAreas" :key="item.id" closable @close="handleRemoveArea(item)">
+                    <n-tag v-for="item in selectedAreas" :key="item.value" closable @close="handleRemoveArea(item)">
                       {{ item.label }}
                     </n-tag>
                     <n-tree-select
@@ -115,7 +115,7 @@
                     <n-tag v-for="item in selectedDevices" :key="item.id" closable @close="handleRemoveDevice(item)">
                       {{ item.label }}
                     </n-tag>
-                    <n-button type="primary" dashed size="small" @click="showDeviceModal = true">
+                    <n-button type="primary" dashed size="small" @click="openDeviceModal">
                       <template #icon><n-icon><Add /></n-icon></template>
                       添加
                     </n-button>
@@ -150,8 +150,8 @@
               <div class="space-y-md">
                 <div>
                   <n-form-item label="排除区域">
-                    <div class="p-md border border-light rounded-lg bg-page flex flex-wrap gap-sm min-h-[42px] items-center">
-                      <n-tag v-for="item in excludedAreas" :key="item.id" closable @close="handleRemoveExcludedArea(item)" type="default">
+                  <div class="p-md border border-light rounded-lg bg-page flex flex-wrap gap-sm min-h-[42px] items-center">
+                      <n-tag v-for="item in excludedAreas" :key="item.value" closable @close="handleRemoveExcludedArea(item)" type="default">
                         {{ item.label }}
                       </n-tag>
                       <n-tree-select
@@ -176,7 +176,7 @@
                       <n-tag v-for="item in excludedDevices" :key="item.id" closable @close="handleRemoveExcludedDevice(item)" type="default">
                         {{ item.label }}
                       </n-tag>
-                      <n-button type="default" dashed size="small" @click="showExcludedDeviceModal = true">
+                      <n-button type="default" dashed size="small" @click="openExcludedDeviceModal">
                         <template #icon><n-icon><Add /></n-icon></template>
                         排除 ID
                       </n-button>
@@ -288,7 +288,7 @@
     </div>
 
     <!-- 设备选择弹框 -->
-    <n-modal v-model:show="showDeviceModal" preset="card" title="选择监控设备" style="width: 950px" :bordered="false">
+    <n-modal v-model:show="showDeviceModal" preset="card" title="选择监控设备" style="width: 980px" :bordered="false">
       <div class="device-selector">
         <div class="device-selector-left">
           <div class="device-selector-title">区域树</div>
@@ -367,7 +367,7 @@
     </n-modal>
 
     <!-- 排除设备选择弹框 -->
-    <n-modal v-model:show="showExcludedDeviceModal" preset="card" title="选择排除设备" style="width: 900px" :bordered="false">
+    <n-modal v-model:show="showExcludedDeviceModal" preset="card" title="选择排除设备" style="width: 980px" :bordered="false">
       <div class="device-selector">
         <div class="device-selector-left">
           <div class="device-selector-title">区域树</div>
@@ -431,23 +431,34 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, h, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { NButton, NInput, NSelect, NSwitch, NCheckbox, NFormItem, NTimePicker, NInputNumber, NIcon, NTag, NModal, NTree, NTreeSelect, NEmpty, NSkeleton, useMessage } from 'naive-ui'
+import { ref, reactive, computed, h, onMounted, markRaw } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { NButton, NInput, NSelect, NSwitch, NCheckbox, NFormItem, NTimePicker, NInputNumber, NIcon, NTag, NModal, NTree, NTreeSelect, NEmpty, NSkeleton, NPagination, useMessage } from 'naive-ui'
 import { Close, Add, TimeOutline, ChatbubbleOutline, MailOutline, TrashOutline, ChevronDown, AddCircle } from '@vicons/ionicons5'
 import { getAreaTree, type AreaTreeNode } from '@/api/area'
 import { getCameraList, type Camera, type CameraQueryParams } from '@/api/camera'
-import { getNotificationEndpoints, getNotificationTemplates, type NotificationEndpoint, type NotificationTemplate } from '@/api/notification'
+import {
+  getNotificationEndpoints,
+  getNotificationTemplates,
+  getNotificationPolicy,
+  createNotificationPolicy,
+  updateNotificationPolicy,
+  type NotificationEndpoint,
+  type NotificationTemplate,
+  type CreatePolicyRequest,
+  type UpdatePolicyRequest
+} from '@/api/notification'
 import { getAlgorithmList, type Algorithm } from '@/api/algorithm'
 
 const router = useRouter()
+const route = useRoute()
 const message = useMessage()
 
 const handleCancel = () => {
   router.push('/push/policies')
 }
 
-const handleSaveAndEnable = () => {
+const handleSaveAndEnable = async () => {
   // 表单校验
   if (!policyName.value) {
     message.warning('请输入策略名称')
@@ -482,25 +493,50 @@ const handleSaveAndEnable = () => {
   }
   
   // 组装数据
-  const data = {
+  const baseMatch = {
+    category: alarmType.value,
+    // 报警类型配置
+    alarm_config: selectedAlarmTypes.value.map(t => ({
+      value: t.value,
+      label: t.label
+    })),
+    // 区域配置
+    area_config: selectedAreas.value.map(a => ({
+      value: a.value,
+      label: a.label,
+      idPath: a.idPath
+    })),
+    // 设备配置
+    camera_config: selectedDevices.value.map(d => ({
+      value: d.id,
+      label: d.label
+    })),
+    level: Object.keys(alarmLevels).filter(key => alarmLevels[key as keyof typeof alarmLevels]),
+    exclude: {
+      alarm_config: [],
+      area_config: excludedAreas.value.map(a => ({
+        value: a.value,
+        label: a.label,
+        idPath: a.idPath
+      })),
+      camera_config: excludedDevices.value.map(d => ({
+        value: d.id,
+        label: d.label
+      }))
+    },
+    time_window: {
+      start: formatTimeHM(timeRange.start),
+      end: formatTimeHM(timeRange.end)
+    }
+  }
+
+  const payloadMatch = baseMatch
+
+  const createData: CreatePolicyRequest = {
     name: policyName.value,
     priority: parseInt(priority.value),
     is_enabled: isEnabled.value,
-    match: {
-      category: alarmType.value,
-      alarm_type: selectedAlarmTypes.value,
-      area_path: selectedAreas.value.map(a => a.id),
-      camera_id: selectedDevices.value.map(d => d.id),
-      level: Object.keys(alarmLevels).filter(key => alarmLevels[key as keyof typeof alarmLevels]),
-      exclude: {
-        area_path: excludedAreas.value.map(a => a.id),
-        camera_id: excludedDevices.value.map(d => d.id)
-      },
-      time_window: {
-        start: `${timeRange.start.getHours().toString().padStart(2, '0')}:${timeRange.start.getMinutes().toString().padStart(2, '0')}`,
-        end: `${timeRange.end.getHours().toString().padStart(2, '0')}:${timeRange.end.getMinutes().toString().padStart(2, '0')}`
-      }
-    },
+    match: payloadMatch,
     actions: pushActions.value.map(action => ({
       endpoint_ids: action.channels.map(c => c.value),
       template_id: action.template,
@@ -511,10 +547,26 @@ const handleSaveAndEnable = () => {
     match_desc: generateMatchDesc(),
     actions_desc: generateActionsDesc()
   }
-  
-  console.log('策略数据:', data)
-  message.success('策略保存成功并已启用')
-  router.push('/push/policies')
+  try {
+    if (policyId.value) {
+      const updateData: UpdatePolicyRequest = {
+        name: policyName.value,
+        priority: parseInt(priority.value),
+        is_enabled: isEnabled.value,
+        match: payloadMatch,
+        actions: createData.actions
+      }
+      await updateNotificationPolicy(policyId.value, updateData)
+      message.success('策略更新成功')
+    } else {
+      await createNotificationPolicy(createData)
+      message.success('策略保存成功并已启用')
+    }
+    router.push('/push/policies')
+  } catch (error: any) {
+    console.error('保存策略失败:', error)
+    message.error(error?.response?.data?.detail || error?.message || '保存策略失败')
+  }
 }
 
 // 生成匹配条件描述
@@ -525,11 +577,7 @@ function generateMatchDesc(): string {
   
   // 报警类型
   if (selectedAlarmTypes.value.length > 0) {
-    const typeLabels = selectedAlarmTypes.value.map(typeId => {
-      const option = aiAlarmTypes.value.find(opt => opt.value === typeId) || 
-                    systemAlarmTypes.find(opt => opt.value === typeId)
-      return option ? option.label : typeId
-    })
+    const typeLabels = selectedAlarmTypes.value.map(t => t.label)
     parts.push(`类型: ${typeLabels.join('、')}`)
   }
   
@@ -564,8 +612,8 @@ function generateMatchDesc(): string {
   }
   
   // 触发时段
-  const startTime = `${timeRange.start.getHours().toString().padStart(2, '0')}:${timeRange.start.getMinutes().toString().padStart(2, '0')}`
-  const endTime = `${timeRange.end.getHours().toString().padStart(2, '0')}:${timeRange.end.getMinutes().toString().padStart(2, '0')}`
+  const startTime = formatTimeHM(timeRange.start)
+  const endTime = formatTimeHM(timeRange.end)
   parts.push(`时段: ${startTime}-${endTime}`)
   
   return parts.join(' | ')
@@ -581,7 +629,7 @@ function generateActionsDesc(): string {
   return actionDescs.join('; ')
 }
 
-const policyId = ref('STRAT-20231024-001')
+const policyId = ref<string | null>(null)
 const policyName = ref('')
 const priority = ref('1')
 const isEnabled = ref(true)
@@ -599,18 +647,20 @@ const alarmType = ref('ai')
 const aiAlarmTypes = ref<any[]>([])
 const loadingAlgorithms = ref(false)
 
+// 系统告警类型：value 为内部 code，label 为中文描述
 const systemAlarmTypes = [
-  { label: '设备离线', value: '设备离线' },
-  { label: '存储异常', value: '存储异常' },
-  { label: '网络异常', value: '网络异常' },
-  { label: '系统错误', value: '系统错误' }
+  { label: '设备离线', value: 'camera_offline' },
+  { label: '设备上线', value: 'camera_online' },
+  { label: '存储异常', value: 'storage_error' },
+  { label: '网络异常', value: 'network_error' },
+  { label: '系统错误', value: 'system_error' }
 ]
 
 const currentAlarmTypeOptions = computed(() => {
   return alarmType.value === 'ai' ? aiAlarmTypes.value : systemAlarmTypes
 })
 
-const selectedAlarmTypes = ref<string[]>([])
+const selectedAlarmTypes = ref<{ value: string; label: string }[]>([])
 const showAlarmTypeSelect = ref(false)
 const currentAlarmType = ref(null)
 
@@ -619,32 +669,21 @@ async function loadAlgorithms() {
   loadingAlgorithms.value = true
   try {
     const response = await getAlgorithmList({ is_enabled: true })
-    if (response.data && response.data.data && response.data.data.items) {
-      aiAlarmTypes.value = response.data.data.items.map((algo: Algorithm) => ({
+    const res = response.data as any
+    const list = Array.isArray(res.data) ? res.data : res.data?.items ?? []
+    if (list.length > 0) {
+      aiAlarmTypes.value = list.map((algo: Algorithm) => ({
         label: `${algo.model_name || '未知模型'}-${algo.name}`,
         value: algo.id
       }))
     } else {
-      // 使用默认AI告警类型
-      aiAlarmTypes.value = [
-        { label: '火灾识别', value: '火灾识别' },
-        { label: '烟雾检测', value: '烟雾检测' },
-        { label: '人员入侵', value: '人员入侵' },
-        { label: '安全帽检测', value: '安全帽检测' },
-        { label: '反光衣检测', value: '反光衣检测' }
-      ]
+      // 若当前没有启用算法，保留一个空列表，避免误导
+      aiAlarmTypes.value = []
     }
   } catch (error: any) {
     console.error('加载算法列表失败:', error)
     message.error('加载算法列表失败')
-    // 使用默认AI告警类型
-    aiAlarmTypes.value = [
-      { label: '火灾识别', value: '火灾识别' },
-      { label: '烟雾检测', value: '烟雾检测' },
-      { label: '人员入侵', value: '人员入侵' },
-      { label: '安全帽检测', value: '安全帽检测' },
-      { label: '反光衣检测', value: '反光衣检测' }
-    ]
+    aiAlarmTypes.value = []
   } finally {
     loadingAlgorithms.value = false
   }
@@ -658,36 +697,47 @@ const handleAlarmTypeChange = (type: string) => {
 }
 
 const handleAlarmTypeSelect = (value: string) => {
-  if (value && !selectedAlarmTypes.value.includes(value)) {
-    selectedAlarmTypes.value.push(value)
+  if (!value) return
+  if (!selectedAlarmTypes.value.find(t => t.value === value)) {
+    const option = currentAlarmTypeOptions.value.find((opt: any) => opt.value === value)
+    selectedAlarmTypes.value.push({
+      value,
+      label: option ? option.label : value
+    })
   }
   showAlarmTypeSelect.value = false
   currentAlarmType.value = null
 }
 
-const handleRemoveAlarmType = (item: string) => {
-  selectedAlarmTypes.value = selectedAlarmTypes.value.filter(i => i !== item)
+const handleRemoveAlarmType = (item: { value: string }) => {
+  selectedAlarmTypes.value = selectedAlarmTypes.value.filter(i => i.value !== item.value)
 }
 
 // 区域树数据和加载状态
 const areaTreeOptions = ref<any[]>([])
 const loadingAreas = ref(false)
-const selectedAreas = ref<{id: string, label: string}[]>([])
+// 区域选择：value=node.id，label 使用名称层级路径（fullPath），idPath 使用 ID 层级路径（/1/1.1）
+const selectedAreas = ref<{value: string, label: string, idPath: string}[]>([])
 const showAreaSelect = ref(false)
 const currentArea = ref(null)
 
 // 将后端区域数据转换为树形结构
-function convertToTreeOption(node: AreaTreeNode, parentPath: string = ''): any {
-  const path = parentPath ? `${parentPath}/${node.id}` : `/${node.id}`
+// label: 当前节点名称；fullPath: 名称层级路径（默认区域 / LTDS / 5F）；idPath: ID 层级路径（/1/1.1/1.1.1）
+// value: node.id（供选中与匹配使用）
+function convertToTreeOption(node: AreaTreeNode, parentIdPath: string = '', parentNamePath: string = ''): any {
+  const idPath = parentIdPath ? `${parentIdPath}/${node.id}` : `/${node.id}`
+  const namePath = parentNamePath ? `${parentNamePath}/${node.name}` : node.name
+  const fullPath = namePath.split('/').join(' / ')
   const option: any = {
     key: node.id,
     label: node.name,
-    value: path,
-    fullPath: path,
+    value: node.id,
+    fullPath,
+    idPath,
     name: node.name
   }
   if (node.children && node.children.length > 0) {
-    option.children = node.children.map(child => convertToTreeOption(child, path))
+    option.children = node.children.map(child => convertToTreeOption(child, idPath, namePath))
   }
   return option
 }
@@ -708,8 +758,9 @@ async function loadAreaTree() {
       {
         label: '默认园区',
         key: 'default-area',
-        value: '/default-area',
-        fullPath: '/default-area',
+        value: 'default-area',
+        fullPath: '默认园区',
+        idPath: '/default-area',
         name: '默认园区',
         children: []
       }
@@ -720,11 +771,16 @@ async function loadAreaTree() {
 }
 
 // 递归查找区域信息
-function findAreaInfo(path: string, nodes: any[] = areaTreeOptions.value): {id: string, label: string} | null {
+// 返回：value=node.id，label=fullPath（名称层级），idPath=ID 层级路径
+function findAreaInfo(id: string, nodes: any[] = areaTreeOptions.value): {value: string, label: string, idPath: string} | null {
   for (const node of nodes) {
-    if (node.value === path) return { id: path, label: node.label }
+    if (node.value === id) {
+      const idPath = node.idPath || `/${node.key}`
+      const namePath = node.fullPath || node.label
+      return { value: id, label: namePath, idPath }
+    }
     if (node.children) {
-      const found = findAreaInfo(path, node.children)
+      const found = findAreaInfo(id, node.children)
       if (found) return found
     }
   }
@@ -732,18 +788,25 @@ function findAreaInfo(path: string, nodes: any[] = areaTreeOptions.value): {id: 
 }
 
 const handleAreaSelect = (value: string) => {
-  if (value && !selectedAreas.value.find(a => a.id === value)) {
-    const areaInfo = findAreaInfo(value)
-    if (areaInfo) {
-      selectedAreas.value.push(areaInfo)
-    }
+  if (!value) {
+    showAreaSelect.value = false
+    currentArea.value = null
+    return
   }
+  // 已选择则不重复添加（按 value 去重）
+  if (selectedAreas.value.find(a => a.value === value)) {
+    showAreaSelect.value = false
+    currentArea.value = null
+    return
+  }
+  const areaInfo = findAreaInfo(value) || { value, label: value, idPath: value }
+  selectedAreas.value.push(areaInfo)
   showAreaSelect.value = false
   currentArea.value = null
 }
 
 const handleRemoveArea = (item: any) => {
-  selectedAreas.value = selectedAreas.value.filter(i => i.id !== item.id)
+  selectedAreas.value = selectedAreas.value.filter(i => i.value !== item.value)
 }
 
 // 设备数据和加载状态
@@ -762,25 +825,23 @@ const devicePage = ref(1)
 const devicePageSize = ref(10)
 const deviceTotal = ref(0)
 
-// 加载设备列表
+// 加载设备列表（areaId 为空时表示全部区域）
 async function loadCameras(areaId?: string, page: number = 1) {
   loadingDevices.value = true
   try {
     const params: CameraQueryParams = {
-      page: page,
+      page,
       page_size: devicePageSize.value
     }
-    if (areaId) {
-      params.area_id = areaId
-    }
+    if (areaId) params.area_id = areaId
+
     const response = await getCameraList(params)
-    if (response.data && response.data.data) {
-      allDevices.value = response.data.data.items || []
-      deviceTotal.value = response.data.data.total || 0
-    } else {
-      allDevices.value = []
-      deviceTotal.value = 0
-    }
+    const res = response.data as any
+    // 兼容后端两种返回结构：data 为数组或 {items,page_info}
+    const list = Array.isArray(res.data) ? res.data : res.data?.items ?? []
+    const pageInfo = res.page_info || {}
+    allDevices.value = list
+    deviceTotal.value = pageInfo.total ?? list.length
   } catch (error: any) {
     console.error('加载设备列表失败:', error)
     message.error('加载设备列表失败')
@@ -792,7 +853,7 @@ async function loadCameras(areaId?: string, page: number = 1) {
 }
 
 const currentDeviceList = computed(() => {
-  if (selectedDeviceTreeKeys.value.length === 0) {
+  if (selectedDeviceTreeKeys.value.length === 0 || selectedDeviceTreeKeys.value[0] === 'root') {
     return allDevices.value
   }
   const selectedKey = selectedDeviceTreeKeys.value[0]
@@ -803,7 +864,11 @@ const handleDeviceTreeSelect = async (keys: string[]) => {
   selectedDeviceTreeKeys.value = keys
   devicePage.value = 1 // 重置分页
   if (keys.length > 0) {
-    await loadCameras(keys[0], 1)
+    if (keys[0] === 'root') {
+      await loadCameras(undefined, 1)
+    } else {
+      await loadCameras(keys[0], 1)
+    }
   } else {
     await loadCameras(undefined, 1)
   }
@@ -831,7 +896,12 @@ const handleRemoveTempDevice = (device: any) => {
 const handleDevicePageChange = async (page: number) => {
   devicePage.value = page
   if (selectedDeviceTreeKeys.value.length > 0) {
-    await loadCameras(selectedDeviceTreeKeys.value[0], page)
+    const key = selectedDeviceTreeKeys.value[0]
+    if (key === 'root') {
+      await loadCameras(undefined, page)
+    } else {
+      await loadCameras(key, page)
+    }
   } else {
     await loadCameras(undefined, page)
   }
@@ -841,7 +911,12 @@ const handleDevicePageSizeChange = async (pageSize: number) => {
   devicePageSize.value = pageSize
   devicePage.value = 1
   if (selectedDeviceTreeKeys.value.length > 0) {
-    await loadCameras(selectedDeviceTreeKeys.value[0], 1)
+    const key = selectedDeviceTreeKeys.value[0]
+    if (key === 'root') {
+      await loadCameras(undefined, 1)
+    } else {
+      await loadCameras(key, 1)
+    }
   } else {
     await loadCameras(undefined, 1)
   }
@@ -862,6 +937,14 @@ const handleRemoveDevice = (item: any) => {
   selectedDevices.value = selectedDevices.value.filter(i => i.id !== item.id)
 }
 
+// 打开设备选择弹框时，默认选中“全部区域”并加载第一页设备
+const openDeviceModal = async () => {
+  showDeviceModal.value = true
+  selectedDeviceTreeKeys.value = ['root']
+  devicePage.value = 1
+  await loadCameras(undefined, 1)
+}
+
 const alarmLevels = reactive({
   danger: true,
   critical: true,
@@ -869,23 +952,22 @@ const alarmLevels = reactive({
   info: false
 })
 
-const excludedAreas = ref<{id: string, label: string}[]>([])
+// 排除区域与选中区域结构保持一致：value=node.id，label=名称层级路径，idPath=ID 层级路径
+const excludedAreas = ref<{value: string, label: string, idPath: string}[]>([])
 const showExcludedAreaSelect = ref(false)
 const currentExcludedArea = ref(null)
 
 const handleExcludedAreaSelect = (value: string) => {
-  if (value && !excludedAreas.value.find(a => a.id === value)) {
-    const areaInfo = findAreaInfo(value)
-    if (areaInfo) {
-      excludedAreas.value.push(areaInfo)
-    }
+  if (value && !excludedAreas.value.find(a => a.value === value)) {
+    const areaInfo = findAreaInfo(value) || { value, label: value, idPath: value }
+    excludedAreas.value.push(areaInfo)
   }
   showExcludedAreaSelect.value = false
   currentExcludedArea.value = null
 }
 
 const handleRemoveExcludedArea = (item: any) => {
-  excludedAreas.value = excludedAreas.value.filter(i => i.id !== item.id)
+  excludedAreas.value = excludedAreas.value.filter(i => i.value !== item.value)
 }
 
 const excludedDevices = ref<{id: string, label: string}[]>([])
@@ -894,7 +976,7 @@ const selectedExcludedDeviceTreeKeys = ref<string[]>([])
 const tempExcludedDevices = ref<{id: string, label: string}[]>([])
 
 const currentExcludedDeviceList = computed(() => {
-  if (selectedExcludedDeviceTreeKeys.value.length === 0) {
+  if (selectedExcludedDeviceTreeKeys.value.length === 0 || selectedExcludedDeviceTreeKeys.value[0] === 'root') {
     return allDevices.value
   }
   const selectedKey = selectedExcludedDeviceTreeKeys.value[0]
@@ -904,7 +986,11 @@ const currentExcludedDeviceList = computed(() => {
 const handleExcludedDeviceTreeSelect = async (keys: string[]) => {
   selectedExcludedDeviceTreeKeys.value = keys
   if (keys.length > 0) {
-    await loadCameras(keys[0])
+    if (keys[0] === 'root') {
+      await loadCameras()
+    } else {
+      await loadCameras(keys[0])
+    }
   } else {
     await loadCameras()
   }
@@ -943,12 +1029,19 @@ const handleRemoveExcludedDevice = (item: any) => {
   excludedDevices.value = excludedDevices.value.filter(i => i.id !== item.id)
 }
 
+// 打开排除设备弹框时，默认选中“全部区域”并加载设备
+const openExcludedDeviceModal = async () => {
+  showExcludedDeviceModal.value = true
+  selectedExcludedDeviceTreeKeys.value = ['root']
+  await loadCameras()
+}
+
 // 推送动作数组
 const pushActions = ref<any[]>([
   {
     id: 1,
     channels: [] as any[],
-    template: 'template1',
+    template: '',
     silenceTime: 300,
     sendOrder: 1,
     deduplicationKeys: [] as string[],
@@ -969,14 +1062,26 @@ async function loadChannels() {
   try {
     const response = await getNotificationEndpoints()
     if (response.data && response.data.data) {
-      channelOptions.value = response.data.data.map((item: NotificationEndpoint) => ({
-        id: item.id,
-        label: item.name,
-        value: item.id,
-        provider: item.provider,
-        type: item.provider === 'dingtalk_bot' || item.provider === 'wechat' ? 'primary' : 'success',
-        icon: item.provider === 'dingtalk_bot' || item.provider === 'wechat' ? ChatbubbleOutline : MailOutline
-      }))
+      channelOptions.value = response.data.data.map((item: NotificationEndpoint) => {
+        // 按 provider 区分样式：同一 provider 颜色与图标保持一致
+        let type: 'default' | 'error' | 'warning' | 'success' | 'primary' | 'info' = 'default'
+        let icon: any = markRaw(MailOutline)
+        if (item.provider === 'dingtalk_bot') {
+          type = 'primary'
+          icon = markRaw(ChatbubbleOutline)
+        } else if (item.provider === 'wecom_bot') {
+          type = 'success'
+          icon = markRaw(ChatbubbleOutline)
+        }
+        return {
+          id: item.id,
+          label: item.name,
+          value: item.id,
+          provider: item.provider,
+          type,
+          icon
+        }
+      })
     }
   } catch (error: any) {
     console.error('加载通道列表失败:', error)
@@ -1063,6 +1168,109 @@ const handleRemoveChannel = (actionId: number, item: any) => {
   }
 }
 
+async function loadPolicyForEdit(id: string) {
+  try {
+    const res = await getNotificationPolicy(id)
+    const p: any = res.data?.data
+    if (!p) return
+    policyId.value = p.id
+    policyName.value = p.name
+    priority.value = String(p.priority ?? 1)
+    isEnabled.value = !!p.is_enabled
+
+    const m: any = p.match || {}
+    alarmType.value = m.category || 'ai'
+
+    // alarm_config
+    const alarmCfgs = Array.isArray(m.alarm_config) ? m.alarm_config : []
+    selectedAlarmTypes.value = alarmCfgs.map((x: any) => ({
+      value: String(x.value || ''),
+      label: String(x.label || x.value || '')
+    }))
+
+    // area_config
+    const areaCfgs = Array.isArray(m.area_config) ? m.area_config : []
+    selectedAreas.value = areaCfgs.map((x: any) => ({
+      value: String(x.value || ''),
+      label: String(x.label || ''),
+      idPath: String(x.idPath || '')
+    }))
+
+    // camera_config
+    const camCfgs = Array.isArray(m.camera_config) ? m.camera_config : []
+    selectedDevices.value = camCfgs.map((x: any) => ({
+      id: String(x.value || ''),
+      label: String(x.label || x.value || '')
+    }))
+
+    // level
+    const lvls: string[] = Array.isArray(m.level) ? m.level : []
+    alarmLevels.danger = lvls.includes('danger')
+    alarmLevels.critical = lvls.includes('critical')
+    alarmLevels.warning = lvls.includes('warning')
+    alarmLevels.info = lvls.includes('info')
+
+    // exclude
+    const ex: any = typeof m.exclude === 'object' && m.exclude ? m.exclude : {}
+    const exAreaCfgs = Array.isArray(ex.area_config) ? ex.area_config : []
+    excludedAreas.value = exAreaCfgs.map((x: any) => ({
+      value: String(x.value || ''),
+      label: String(x.label || ''),
+      idPath: String(x.idPath || '')
+    }))
+    const exCamCfgs = Array.isArray(ex.camera_config) ? ex.camera_config : []
+    excludedDevices.value = exCamCfgs.map((x: any) => ({
+      id: String(x.value || ''),
+      label: String(x.label || x.value || '')
+    }))
+
+    // time_window
+    const tw: any = m.time_window || {}
+    if (tw.start && tw.end) {
+      const [sh, sm] = String(tw.start).split(':').map((x: string) => parseInt(x, 10) || 0)
+      const [eh, em] = String(tw.end).split(':').map((x: string) => parseInt(x, 10) || 0)
+      const s = new Date()
+      s.setHours(sh, sm, 0, 0)
+      const e = new Date()
+      e.setHours(eh, em, 0, 0)
+      timeRange.start = s.getTime()
+      timeRange.end = e.getTime()
+    }
+
+    // actions
+    const acts: any[] = Array.isArray(p.actions) ? p.actions : []
+    pushActions.value = acts.map((a, idx) => ({
+      id: idx + 1,
+      channels: (a.endpoint_ids || []).map((eid: string) => {
+        return channelOptions.value.find((c: any) => c.value === eid) || { value: eid, label: eid }
+      }),
+      template: a.template_id || '',
+      silenceTime: Number(a.throttle_sec || 0),
+      sendOrder: Number(a.push_order || idx + 1),
+      deduplicationKeys: String(a.dedup_key || '')
+        .split('+')
+        .map((k) => k.trim())
+        .filter((k) => k),
+      showChannelSelect: false,
+      currentChannel: null
+    }))
+    if (pushActions.value.length === 0) {
+      pushActions.value.push({
+        id: 1,
+        channels: [] as any[],
+        template: templateOptions.value[0]?.value || '',
+        silenceTime: 300,
+        sendOrder: 1,
+        deduplicationKeys: [] as string[],
+        showChannelSelect: false,
+        currentChannel: null
+      })
+    }
+  } catch (e) {
+    console.error('加载策略详情失败:', e)
+  }
+}
+
 // 组件挂载时加载数据
 onMounted(async () => {
   await loadAreaTree()
@@ -1071,12 +1279,24 @@ onMounted(async () => {
   await loadChannels()
   await loadTemplates()
   await loadAlgorithms()
+
+  const id = route.query.id as string | undefined
+  if (id) {
+    await loadPolicyForEdit(id)
+  }
 })
 
 const timeRange = reactive({
-  start: new Date(),
-  end: new Date()
+  start: 0 as number,
+  end: 0 as number
 })
+
+function formatTimeHM(ts: number): string {
+  const d = new Date(ts)
+  const h = d.getHours().toString().padStart(2, '0')
+  const m = d.getMinutes().toString().padStart(2, '0')
+  return `${h}:${m}`
+}
 
 const initTime = () => {
   const startDate = new Date()
@@ -1085,8 +1305,8 @@ const initTime = () => {
   const endDate = new Date()
   endDate.setHours(23, 59, 59, 999)
   
-  timeRange.start = startDate
-  timeRange.end = endDate
+  timeRange.start = startDate.getTime()
+  timeRange.end = endDate.getTime()
 }
 
 initTime()

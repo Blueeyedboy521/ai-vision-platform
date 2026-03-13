@@ -86,17 +86,23 @@ Policy 负责：**匹配条件 → 输出推送动作**。一个 Policy 可命�
 - `id`、`name`、`priority`、`is_enabled`
 - `match_desc`：匹配条件中文描述（冗余，由后端自动生成，便于前端列表展示/搜索）
 - `actions_desc`：动作中文描述（冗余，由后端自动生成，便于前端列表展示/搜索）
-- `match`：
+ - `match`：
   - `category`：`ai`（业务告警）/ `system`（系统告警）
-  - `alarm_type[]`：支持多选，统一使用该字段表达业务/系统类型：
-    - 当 `category=ai` 时，如 `intrusion` / `ppe` / `smoke` 等。
-    - 当 `category=system` 时，如 `camera_offline` / `camera_online` / `storage_error` 等。
-  - `area_path[]`：区域路径匹配（支持通配符 `*`/`?`），例如：`/厂区A/涂装车间/*`
-  - `camera_id[]`（可选，支持多选）
-  - `algorithm_id[]`（可选，支持多选；仅当 `category=ai` 时有意义）
+  - `alarm_config[]`：报警类型配置（支持多选），数组元素结构：
+    - `value`：内部标识  
+      - 当 `category=ai` 时，存 `algorithm_id`（算法 ID，对应算法管理中的启用算法）；  
+      - 当 `category=system` 时，存系统告警 code（如 `camera_offline` / `storage_error` 等）。
+    - `label`：人类可读名称（例如 `烟火模型-烟雾检测`、`设备离线`），用于前端展示与中文搜索。
+  - `area_config[]`：区域配置（支持多选），数组元素结构：
+    - `value`：区域 ID（`areas.id`）；  
+    - `label`：名称层级路径，例如 `默认区域 / 车间1 / 产线A`；  
+    - `idPath`：ID 层级路径，例如 `/area_root/area_child/area_leaf`，匹配时会根据此路径做 `area_path` 判断（含通配符）。
+  - `camera_config[]`（可选，支持多选）：监控设备配置，数组元素结构：
+    - `value`：摄像头 ID（`cameras.id`）；  
+    - `label`：摄像头名称。
   - `level[]`（支持多选：info/warning/danger/critical）
-  - `exclude`（可选，排除条件，结构同上字段）：
-    - `area_path[]` / `camera_id[]` / `algorithm_id[]` / `alarm_type[]` / `level[]`
+  - `exclude`（可选，排除条件，结构与上面一致）：
+    - `alarm_config[]` / `area_config[]` / `camera_config[]` / `level[]`
   - `time_window`（可选，控制策略生效时间段）：
     - `start: "HH:MM"`，`end: "HH:MM"`。
     - 若 `start <= end`：表示同一天内，例如 `08:00-18:00`。
@@ -113,8 +119,11 @@ Policy 负责：**匹配条件 → 输出推送动作**。一个 Policy 可命�
 
 说明：
 
+- `match` 中不再直接暴露 `alarm_type[]/area_path[]/camera_id[]` 等原始字段，而是通过 `alarm_config/area_config/camera_config` 这三类配置对象统一承载 **id + label (+ idPath)**，方便前后端在匹配和展示之间解耦：
+  - 匹配时，后端从 `alarm_config.value/area_config.idPath/camera_config.value` 还原出用于判断的内部 ID 或路径；
+  - 展示与搜索时，优先使用 `label` 做人类可读的中文描述。
 - `actions` 的标准形态为数组（`list[dict]`），用于表达「同一 match 下，不同模板/不同通道组/不同节流与重试策略」。
-- `match_desc/actions_desc` 会在创建/更新策略时由后端自动生成：解析 `camera_id/algorithm_id/endpoint_ids/template_id` 等为名称并拼成可读中文，用于列表展示与关键字搜索（避免前端面对大量 id）。
+- `match_desc/actions_desc` 会在创建/更新策略时由后端自动生成：解析 `alarm_config/area_config/camera_config/endpoint_ids/template_id` 等为名称并拼成可读中文，用于列表展示与关键字搜索（避免前端面对大量 id）。
 
 说明：
 
@@ -177,18 +186,50 @@ Policy 负责：**匹配条件 → 输出推送动作**。一个 Policy 可命�
 
 ## 4. 推送引擎执行流程（建议）
 
-1. 输入：`alarm`（业务告警）或 `system_event`（系统告警，仍使用 alarm_id 作为唯一标识）
-2. 匹配：按 `priority` 从高到低匹配所有启用的 Policy
-3. 生成动作：将命中策略展开为 `actions[]`，每条 action 可多 endpoint
-4. 去重/节流：
-   - 若命中 throttle，则记录 `DeliveryLog=skipped`（可选）
-5. 渲染：
-   - 模板渲染为抽象消息
-   - provider 渲染器转成最终 payload
-6. 发送：
-   - 同步发送或入队异步 worker（推荐：异步）
-7. 审计：
-   - 写 `DeliveryLog`（成功/失败、错误原因）
+### 4.1 dispatch_event（Worker 消费侧）执行步骤
+
+> 目标：**高内聚、低耦合**，且尽量减少 DB 全表读取；配置数据优先走 Redis 快照缓存。
+
+#### 事件入队与消费机制（Redis Stream）
+
+- **生产者**（AlarmConsumer / live_heartbeat_monitor 等）：调用 `enqueue_notification_event(event)`  
+  - 通过 `XADD notification:events:stream * data "<json>"` 写入事件流。
+- **消费者**（NotificationWorkerPool）：使用 Consumer Group 监听  
+  - `XREADGROUP GROUP notification_workers <consumer> BLOCK 1000 COUNT 1 STREAMS notification:events:stream >`
+  - 成功处理后 `XACK` 确认。
+
+1. 输入：`event`（业务告警或系统事件，统一结构）
+2. 获取策略列表 `policies`（按类别拆分）：
+   - 调用 `_load_policies_by_category(category)`（与 `dispatch_event` 平级函数）
+   - **先查 Redis Hash**：
+     - AI 告警：`notification:policies:ai`
+     - 系统告警：`notification:policies:system`
+   - 若 Redis 不存在/为空：**读取 DB**（按 `match.category` 过滤该类别的启用策略）并 **回写 Redis Hash**（field=id,value=json）
+3. 循环 `policies`，判断是否匹配 `_match_policy(event, policy.match)`：
+   - 匹配则将该策略的 `actions[]` 展开写入 `matched_actions`（并附带 `_policy_id`）
+4. 对 `matched_actions` 排序：
+   - `push_order` 越小越先执行
+5. 循环执行 `matched_actions`（不考虑历史 actions 兼容形态）：
+   1) **限流/去重**（action 级）：
+      - 若同时配置 `dedup_key` 与 `throttle_sec>0`，则计算 `dedup_value`
+      - 在 Redis 写入节流键：`SET notif:throttle:{policy_id}:{dedup_value} 1 NX EX {throttle_sec}`
+      - 若写入失败（key 已存在）则表示仍在窗口期：**直接跳过该 action，不做任何推送动作**
+   2) **获取模板**：
+      - **按需单条获取**（在 action 循环里）：
+        - 先 Redis：`HGET notification:templates:snapshot {template_id}`
+        - 缓存 miss 再 DB 查一条，并 `HSET` 回写 Redis
+      - 模板禁用或不存在则回退使用 `event.title/event.text`
+   3) **渲染抽象消息**：
+      - 调用 `_render_text_with_vars()` 做 `{{var}}` 变量替换
+      - 输出抽象消息：`title/text/image_url/link_url`
+   4) **循环 endpoint_ids 推送**：
+      - endpoint 同样 **按需单条获取**（在 endpoint_ids 循环里）：
+        - 先 Redis：`HGET notification:endpoints:snapshot {endpoint_id}`
+        - 缓存 miss 再 DB 查一条，并 `HSET` 回写 Redis
+      - 根据 endpoint.provider 获取 provider 实现并发送（必要时解密 endpoint.encrypted_config）
+      - 本阶段**不做重试**：每个 endpoint 只发送一次（失败记录到 DeliveryLog）
+   5) **审计**：
+      - 写 `NotificationDeliveryLog`（success/failed，失败原因截断）
 
 ---
 

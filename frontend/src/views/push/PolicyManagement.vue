@@ -25,7 +25,7 @@
             <n-icon><DocumentTextOutline /></n-icon>
           </div>
         </div>
-        <div class="stat-card__value">42</div>
+        <div class="stat-card__value">{{ totalPolicies }}</div>
       </div>
       <div class="stat-card card card-border-xl">
         <div class="stat-card__header">
@@ -34,7 +34,7 @@
             <n-icon><ToggleOutline /></n-icon>
           </div>
         </div>
-        <div class="stat-card__value">36</div>
+        <div class="stat-card__value">{{ enabledPolicies }}</div>
       </div>
       <div class="stat-card card card-border-xl">
         <div class="stat-card__header">
@@ -43,7 +43,7 @@
             <n-icon><SettingsOutline /></n-icon>
           </div>
         </div>
-        <div class="stat-card__value">18</div>
+        <div class="stat-card__value">{{ systemPolicies }}</div>
       </div>
       <div class="stat-card card card-border-xl">
         <div class="stat-card__header">
@@ -52,7 +52,7 @@
             <n-icon><BusinessOutline /></n-icon>
           </div>
         </div>
-        <div class="stat-card__value">24</div>
+        <div class="stat-card__value">{{ businessPolicies }}</div>
       </div>
     </div>
 
@@ -62,6 +62,8 @@
         <div class="filter-group">
           <span class="filter-label">策略类型</span>
           <n-select
+            v-model:value="filterType"
+            :options="typeOptions"
             placeholder="全部类型"
             clearable
             size="small"
@@ -72,6 +74,8 @@
         <div class="filter-group">
           <span class="filter-label">状态</span>
           <n-select
+            v-model:value="filterStatus"
+            :options="statusOptions"
             placeholder="全部状态"
             clearable
             size="small"
@@ -81,10 +85,12 @@
         </div>
         <div class="filter-group filter-group--search">
           <n-input
+            v-model:value="filterKeyword"
             placeholder="快速搜索策略名称..."
             size="small"
             clearable
             class="filter-search"
+            @keyup.enter="handleSearch"
           >
             <template #prefix>
               <n-icon :size="16">
@@ -94,13 +100,13 @@
           </n-input>
         </div>
         <div class="filter-actions">
-          <n-button type="primary" size="small" class="filter-btn">
+          <n-button type="primary" size="small" class="filter-btn" @click="handleSearch">
             <template #icon>
               <n-icon><SearchOutline /></n-icon>
             </template>
             查询
           </n-button>
-          <n-button size="small" class="filter-btn">
+          <n-button size="small" class="filter-btn" @click="handleReset">
             重置
           </n-button>
         </div>
@@ -124,7 +130,7 @@
       <!-- 列表内容 -->
       <div class="list-body">
         <div
-          v-for="(policy, index) in policies"
+          v-for="(policy, index) in pagedPolicies"
           :key="policy.id"
           class="list-row"
           :class="`list-row--${policy.status ? 'enabled' : 'disabled'}`"
@@ -148,27 +154,57 @@
               </n-tag>
           </div>
           <div class="list-row__col list-row__col--alarm">
-            <n-tag type="warning" size="small">{{ policy.alarmType }}</n-tag>
+            <n-tooltip trigger="hover" :disabled="!policy.alarmType">
+              <template #trigger>
+                <n-tag type="warning" size="small" class="ellipsis-tag">{{ policy.alarmType || '-' }}</n-tag>
+              </template>
+              <span>{{ policy.alarmType }}</span>
+            </n-tooltip>
           </div>
           <div class="list-row__col list-row__col--rule">
-            <span class="rule-text">{{ policy.matchRule }}</span>
+            <n-tooltip trigger="hover" :disabled="!policy.matchRule">
+              <template #trigger>
+                <span class="rule-text ellipsis">{{ policy.matchRule || '-' }}</span>
+              </template>
+              <span>{{ policy.matchRule }}</span>
+            </n-tooltip>
           </div>
           <div class="list-row__col list-row__col--desc">
-            <span class="desc-text">{{ policy.actionDesc }}</span>
+            <n-tooltip trigger="hover" :disabled="!policy.actionDesc">
+              <template #trigger>
+                <span class="desc-text ellipsis">{{ policy.actionDesc || '-' }}</span>
+              </template>
+              <span>{{ policy.actionDesc }}</span>
+            </n-tooltip>
           </div>
           <div class="list-row__col list-row__col--channel">
-            <div class="channel-tags">
-              <n-tag v-for="(channel, idx) in policy.channels" :key="idx" size="small" type="default" class="channel-tag">
-                {{ channel }}
-              </n-tag>
-            </div>
+            <n-tooltip trigger="hover" :disabled="policy.channels.length <= 1">
+              <template #trigger>
+                <div class="channel-tags">
+                  <n-tag
+                    v-for="(channel, idx) in policy.channels.slice(0, 2)"
+                    :key="idx"
+                    size="small"
+                    type="default"
+                    class="channel-tag"
+                  >
+                    {{ channel }}
+                  </n-tag>
+                  <n-tag v-if="policy.channels.length > 2" size="small" type="default" class="channel-tag">
+                    +{{ policy.channels.length - 2 }}
+                  </n-tag>
+                  <span v-if="policy.channels.length === 0" class="text-muted">-</span>
+                </div>
+              </template>
+              <span>{{ policy.channels.join('、') }}</span>
+            </n-tooltip>
           </div>
           <div class="list-row__col list-row__col--status">
-            <n-switch v-model:value="policy.status" size="small" />
+            <n-switch v-model:value="policy.status" size="small" @update:value="() => handleToggleStatus(policy)" />
           </div>
           <div class="list-row__col list-row__col--action">
-            <n-button text type="primary" size="small">编辑</n-button>
-            <n-button text type="error" size="small">删除</n-button>
+            <n-button text type="primary" size="small" @click="handleEditPolicy(policy)">编辑</n-button>
+            <n-button text type="error" size="small" @click="handleDeletePolicy(policy)">删除</n-button>
           </div>
         </div>
         <div v-if="policies.length === 0" class="empty-state">
@@ -179,12 +215,12 @@
       <!-- 分页 -->
       <div class="list-footer">
         <div class="list-footer__info">
-          显示第 1 到 5 条，共 42 条策略
+          显示第 {{ pageStart }} 到 {{ pageEnd }} 条，共 {{ filteredPolicies.length }} 条策略
         </div>
         <n-pagination
-          :page="1"
-          :item-count="42"
-          :page-size="5"
+          v-model:page="page"
+          v-model:page-size="pageSize"
+          :item-count="filteredPolicies.length"
           show-size-picker
           size="small"
           :page-sizes="[5, 10, 20]"
@@ -195,14 +231,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-
-const router = useRouter()
-
-function handleAddPolicy() {
-  router.push('/push/add-policy')
-}
 import { 
   DocumentTextOutline, 
   ToggleOutline, 
@@ -214,68 +244,181 @@ import {
   BusinessOutline,
   AddOutline
 } from '@vicons/ionicons5'
-import { NButton, NInput, NIcon, NTag, NSelect, NEmpty, NPagination, NSwitch } from 'naive-ui'
+import { NButton, NInput, NIcon, NTag, NSelect, NEmpty, NPagination, NSwitch, NTooltip, useMessage } from 'naive-ui'
+import {
+  getNotificationPolicies,
+  getNotificationEndpoints,
+  deleteNotificationPolicy,
+  updateNotificationPolicy,
+  type NotificationPolicy,
+  type NotificationEndpoint
+} from '@/api/notification'
 
-// 策略数据
-const policies = ref([
-  {
-    id: 1,
-    name: '新用户注册欢迎',
-    type: '触发式',
-    alarmType: '用户注册',
-    matchRule: 'event = user_register',
-    actionDesc: '发送欢迎消息',
-    channels: ['短信', '邮件'],
-    status: true
-  },
-  {
-    id: 2,
-    name: '周报推送（每周一）',
-    type: '定时',
-    alarmType: '系统任务',
-    matchRule: 'cron = 0 0 * * 1',
-    actionDesc: '每周一推送周报',
-    channels: ['邮件'],
-    status: true
-  },
-  {
-    id: 3,
-    name: '告警通知（高优先级）',
-    type: '触发式',
-    alarmType: '高优先级告警',
-    matchRule: 'level >= critical',
-    actionDesc: '发送告警通知',
-    channels: ['短信', '邮件', '企业微信'],
-    status: true
-  },
-  {
-    id: 4,
-    name: '促销活动通知',
-    type: '定时',
-    alarmType: '营销活动',
-    matchRule: 'cron = 0 9 * * *',
-    actionDesc: '推送促销信息',
-    channels: ['短信', '邮件', 'APP推送'],
-    status: false
-  },
-  {
-    id: 5,
-    name: '系统维护通知',
-    type: '触发式',
-    alarmType: '系统事件',
-    matchRule: 'event = system_maintenance',
-    actionDesc: '发送维护通知',
-    channels: ['邮件', '企业微信'],
-    status: true
+const router = useRouter()
+const message = useMessage()
+
+function handleAddPolicy() {
+  router.push('/push/add-policy')
+}
+
+interface PolicyRow {
+  id: string
+  name: string
+  type: string
+  alarmType: string
+  matchRule: string
+  actionDesc: string
+  channels: string[]
+  status: boolean
+}
+
+const policies = ref<PolicyRow[]>([])
+const loading = ref(false)
+const endpointNameMap = ref<Record<string, string>>({})
+
+// 查询条件
+const filterType = ref<string | null>(null)
+const filterStatus = ref<string | null>(null)
+const filterKeyword = ref('')
+
+const typeOptions = [
+  { label: 'AI告警', value: 'AI告警' },
+  { label: '系统告警', value: '系统告警' }
+]
+
+const statusOptions = [
+  { label: '已启用', value: 'enabled' },
+  { label: '已禁用', value: 'disabled' }
+]
+
+const totalPolicies = computed(() => policies.value.length)
+const enabledPolicies = computed(() => policies.value.filter((p) => p.status).length)
+const systemPolicies = computed(() => policies.value.filter((p) => p.type === '系统告警').length)
+const businessPolicies = computed(() => policies.value.filter((p) => p.type === 'AI告警').length)
+
+const filteredPolicies = computed(() => {
+  return policies.value.filter((p) => {
+    if (filterType.value && p.type !== filterType.value) return false
+    if (filterStatus.value === 'enabled' && !p.status) return false
+    if (filterStatus.value === 'disabled' && p.status) return false
+    const kw = filterKeyword.value.trim().toLowerCase()
+    if (kw) {
+      const joined = `${p.name} ${p.alarmType} ${p.matchRule} ${p.actionDesc}`.toLowerCase()
+      if (!joined.includes(kw)) return false
+    }
+    return true
+  })
+})
+
+const page = ref(1)
+const pageSize = ref(5)
+
+const pagedPolicies = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return filteredPolicies.value.slice(start, start + pageSize.value)
+})
+
+const pageStart = computed(() =>
+  filteredPolicies.value.length === 0 ? 0 : (page.value - 1) * pageSize.value + 1
+)
+const pageEnd = computed(() =>
+  Math.min(page.value * pageSize.value, filteredPolicies.value.length)
+)
+
+async function fetchPolicies() {
+  loading.value = true
+  try {
+    const res = await getNotificationPolicies()
+    const list = (res.data?.data || []) as NotificationPolicy[]
+    policies.value = list.map((p) => ({
+      id: p.id,
+      name: p.name,
+      type: (p.match as any)?.category === 'system' ? '系统告警' : 'AI告警',
+      alarmType: (() => {
+        const m: any = p.match || {}
+        const cfg = Array.isArray(m.alarm_config) ? m.alarm_config : []
+        const labels = cfg
+          .map((x: any) => String(x?.label || x?.value || ''))
+          .filter((x: string) => x)
+        return labels.join('、') || ''
+      })(),
+      matchRule: p.match_desc || '',
+      actionDesc: p.actions_desc || '',
+      channels: (() => {
+        const acts: any[] = Array.isArray(p.actions) ? p.actions : []
+        const ids = new Set<string>()
+        for (const a of acts) {
+          const epIds = Array.isArray(a?.endpoint_ids) ? a.endpoint_ids : []
+          for (const eid of epIds) ids.add(String(eid))
+        }
+        return Array.from(ids).map((id) => endpointNameMap.value[id] || id)
+      })(),
+      status: p.is_enabled
+    }))
+  } catch (e: any) {
+    console.error('加载策略列表失败:', e)
+    message.error(e?.message || '加载策略列表失败')
+  } finally {
+    loading.value = false
   }
-])
+}
 
-// 获取头像样式类
+function handleSearch() {
+  page.value = 1
+}
+
+function handleReset() {
+  filterType.value = null
+  filterStatus.value = null
+  filterKeyword.value = ''
+  page.value = 1
+}
+
+async function fetchEndpoints() {
+  try {
+    const res = await getNotificationEndpoints()
+    const list = (res.data?.data || []) as NotificationEndpoint[]
+    const map: Record<string, string> = {}
+    for (const ep of list) map[ep.id] = ep.name
+    endpointNameMap.value = map
+  } catch {
+    endpointNameMap.value = {}
+  }
+}
+
 function getAvatarClass(name: string): string {
   const firstChar = name.charAt(0)
   const classes = ['primary', 'success', 'warning', 'info', 'secondary']
   return classes[firstChar.charCodeAt(0) % classes.length]
 }
+
+async function handleToggleStatus(row: PolicyRow) {
+  try {
+    await updateNotificationPolicy(row.id, { is_enabled: row.status })
+    message.success(row.status ? '已启用' : '已禁用')
+  } catch (e: any) {
+    message.error(e?.message || '更新状态失败')
+    row.status = !row.status
+  }
+}
+
+async function handleDeletePolicy(row: PolicyRow) {
+  try {
+    await deleteNotificationPolicy(row.id)
+    policies.value = policies.value.filter((p) => p.id !== row.id)
+    message.success('删除成功')
+  } catch (e: any) {
+    message.error(e?.message || '删除失败')
+  }
+}
+
+function handleEditPolicy(row: PolicyRow) {
+  router.push({ path: '/push/add-policy', query: { id: row.id } })
+}
+
+onMounted(() => {
+  Promise.resolve(fetchEndpoints()).finally(fetchPolicies)
+})
 </script>
 
 <style scoped>
@@ -454,7 +597,7 @@ function getAvatarClass(name: string): string {
 /* 表头 */
 .list-header {
   display: grid;
-  grid-template-columns: 1.5fr 1fr 1fr 1.2fr 1.5fr 1.2fr 1fr 1fr;
+  grid-template-columns: 2fr 0.9fr 1.2fr 2fr 2fr 1.5fr 0.8fr 0.9fr;
   gap: var(--spacing-md);
   align-items: center;
   padding: var(--spacing-md) var(--spacing-lg);
@@ -483,7 +626,7 @@ function getAvatarClass(name: string): string {
 
 .list-row {
   display: grid;
-  grid-template-columns: 1.5fr 1fr 1fr 1.2fr 1.5fr 1.2fr 1fr 1fr;
+  grid-template-columns: 2fr 0.9fr 1.2fr 2fr 2fr 1.5fr 0.8fr 0.9fr;
   gap: var(--spacing-md);
   align-items: center;
   padding: var(--spacing-md) var(--spacing-lg);
@@ -507,6 +650,18 @@ function getAvatarClass(name: string): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ellipsis {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ellipsis-tag {
+  max-width: 100%;
 }
 
 .list-row__col--action {
