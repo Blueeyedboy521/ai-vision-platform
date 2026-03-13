@@ -130,3 +130,8 @@ class RedisKeys:
         return f"{RedisKeys.CAMERA_LIVE_HEARTBEAT_PREFIX}{camera_id}"
 
     # 推理启停不需要心跳 Key，目前用集合即可
+
+    # ==================== 通知推送配置快照 ====================
+    # 使用 Hash：field=id，value=单条 JSON。增/改 HSET 一条，删 HDEL 一条。消费方 HGETALL 后对 value 做 json.loads 得列表。
+    NOTIFICATION_ENDPOINTS_SNAPSHOT = "notification:endpoints:snapshot"
+    NOTIFICATION_TEMPLATES_SNAPSHOT = "notification:templates:snapshot"

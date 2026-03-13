@@ -358,3 +358,64 @@ async def update_camera_live_heartbeat(
     except Exception as e:
         logger.error(f"更新摄像头直播心跳失败: {camera_id}, 错误: {e}")
     return ts
+
+
+# ===================== 通知推送配置快照（按条更新，不查全表） =====================
+# 使用 Hash：key 为快照键，field 为 id，value 为单条 JSON。增/改 HSET 一条，删 HDEL 一条。
+# 消费方 HGETALL 后对 value 做 json.loads 即得列表。
+
+
+async def set_notification_endpoint_in_redis(item: Dict[str, Any]) -> None:
+    """
+    新增或更新单条推送通道到 Redis。不查库、不循环，只写一条。
+    Hash key: NOTIFICATION_ENDPOINTS_SNAPSHOT，field: id，value: JSON。
+    """
+    endpoint_id = str((item or {}).get("id") or "").strip()
+    if not endpoint_id:
+        return
+    try:
+        redis = get_redis()
+        await redis.client.hset(
+            RedisKeys.NOTIFICATION_ENDPOINTS_SNAPSHOT,
+            endpoint_id,
+            json.dumps(item, ensure_ascii=False),
+        )
+    except Exception as e:
+        logger.warning(f"写入推送通道到 Redis 失败: {endpoint_id}, {e}")
+
+
+async def delete_notification_endpoint_from_redis(endpoint_id: str) -> None:
+    """从 Redis 删除单条推送通道。只 HDEL 一条。"""
+    try:
+        redis = get_redis()
+        await redis.client.hdel(RedisKeys.NOTIFICATION_ENDPOINTS_SNAPSHOT, endpoint_id)
+    except Exception as e:
+        logger.warning(f"从 Redis 删除推送通道失败: {endpoint_id}, {e}")
+
+
+async def set_notification_template_in_redis(item: Dict[str, Any]) -> None:
+    """
+    新增或更新单条推送模板到 Redis。不查库、不循环，只写一条。
+    Hash key: NOTIFICATION_TEMPLATES_SNAPSHOT，field: id，value: JSON。
+    """
+    template_id = str((item or {}).get("id") or "").strip()
+    if not template_id:
+        return
+    try:
+        redis = get_redis()
+        await redis.client.hset(
+            RedisKeys.NOTIFICATION_TEMPLATES_SNAPSHOT,
+            template_id,
+            json.dumps(item, ensure_ascii=False),
+        )
+    except Exception as e:
+        logger.warning(f"写入推送模板到 Redis 失败: {template_id}, {e}")
+
+
+async def delete_notification_template_from_redis(template_id: str) -> None:
+    """从 Redis 删除单条推送模板。只 HDEL 一条。"""
+    try:
+        redis = get_redis()
+        await redis.client.hdel(RedisKeys.NOTIFICATION_TEMPLATES_SNAPSHOT, template_id)
+    except Exception as e:
+        logger.warning(f"从 Redis 删除推送模板失败: {template_id}, {e}")

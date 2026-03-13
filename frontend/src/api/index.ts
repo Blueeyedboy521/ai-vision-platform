@@ -28,6 +28,9 @@ export * from './alarm'
 // 推送配置
 export * from './push'
 
+// 消息推送（通道/模板）
+export * from './notification'
+
 // 用户管理
 export * from './user'
 

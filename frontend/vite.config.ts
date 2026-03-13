@@ -12,11 +12,12 @@ export default defineConfig({
   server: {
     port: 3000,
     host: '127.0.0.1',
-    // 开发时把 /api 代理到后端，避免浏览器跨域
+    // 开发时把 /api 代理到后端（后端需在 8000 端口运行），避免浏览器跨域
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',
-        changeOrigin: true
+        changeOrigin: true,
+        secure: false
       },
       '/ws': {
         target: 'ws://127.0.0.1:8000',

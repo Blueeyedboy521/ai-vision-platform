@@ -1,5 +1,11 @@
 ## Changelog
 
+### v2.8.6 - 2026-03-13
+
+- **推送通道与模板管理联调**：完成 `/api/v1/notifications/endpoints` 与 `/api/v1/notifications/templates` 的前后端打通，通道与模板支持增删改查、启用开关与配置加密/脱敏，前端 `ChannelManager.vue` / `TemplateManagement.vue` 接入统一 `notification` API 模块并按设计稿保持页面布局与交互风格。
+- **通知配置 Redis 增量同步**：通道与模板在 CRUD 后不再全量扫描 DB 重写快照，而是通过 Redis Hash（`notification:endpoints:snapshot` / `notification:templates:snapshot`）按 id 做单条 HSET/HDEL，降低大规模配置场景下的启动与变更开销。
+- **模板占位符示例与变量提示**：在模板编辑弹窗中新增标题/正文示例与占位符说明区域，统一约定并展示可用变量（如 `{{camera_name}}`、`{{area_name}}`、`{{alarm_type}}`、`{{level}}`、`{{alarm_time}}`、`{{snapshot_url}}` 等），便于业务侧快速配置符合告警上下文的消息内容。
+
 ### v2.8.5 - 2026-03-12
 
 - **推送管理前端页面补全**：新增并纳入版本管理的推送配置前端页面，包括通道管理 `ChannelManager.vue`、模板管理 `TemplateManagement.vue` 以及策略新增表单 `AddPolicy.vue`，整体风格与 `stitch/*.html` 设计稿保持一致，为后续与通知后端接口联调提供完整 UI 入口。

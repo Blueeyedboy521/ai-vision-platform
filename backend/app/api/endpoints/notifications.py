@@ -48,6 +48,12 @@ from app.services.notification_crypto import (
 )
 from config.settings import settings
 from common.logging import logger
+from app.core.redis import (
+    set_notification_endpoint_in_redis,
+    delete_notification_endpoint_from_redis,
+    set_notification_template_in_redis,
+    delete_notification_template_from_redis,
+)
 
 
 router = APIRouter()
@@ -304,6 +310,13 @@ async def create_endpoint(
     )
     db.add(row)
     await db.commit()
+    await set_notification_endpoint_in_redis({
+        "id": row.id,
+        "name": row.name,
+        "provider": row.provider,
+        "is_enabled": row.is_enabled,
+        "config_hint": row.config_hint,
+    })
     return success_response({"id": row.id})
 
 
@@ -335,7 +348,30 @@ async def update_endpoint(
         row.config_hint = json.dumps(mask_config(row.provider, merged), ensure_ascii=False)
 
     await db.commit()
+    await set_notification_endpoint_in_redis({
+        "id": row.id,
+        "name": row.name,
+        "provider": row.provider,
+        "is_enabled": row.is_enabled,
+        "config_hint": row.config_hint,
+    })
     return success_response({"updated": True})
+
+
+@router.delete("/endpoints/{endpoint_id}", summary="删除推送通道")
+async def delete_endpoint(
+    endpoint_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(NotificationEndpoint).where(NotificationEndpoint.id == endpoint_id))
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="通道不存在")
+    await db.delete(row)
+    await db.commit()
+    await delete_notification_endpoint_from_redis(endpoint_id)
+    return success_response({"deleted": True})
 
 
 @router.get("/templates", summary="获取推送模板列表")
@@ -373,6 +409,12 @@ async def create_template(
     )
     db.add(row)
     await db.commit()
+    await set_notification_template_in_redis({
+        "id": row.id,
+        "name": row.name,
+        "type": row.type,
+        "is_enabled": row.is_enabled,
+    })
     return success_response({"id": row.id})
 
 
@@ -394,7 +436,29 @@ async def update_template(
     if payload.content is not None:
         row.content = payload.content
     await db.commit()
+    await set_notification_template_in_redis({
+        "id": row.id,
+        "name": row.name,
+        "type": row.type,
+        "is_enabled": row.is_enabled,
+    })
     return success_response({"updated": True})
+
+
+@router.delete("/templates/{template_id}", summary="删除推送模板")
+async def delete_template(
+    template_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(NotificationTemplate).where(NotificationTemplate.id == template_id))
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="模板不存在")
+    await db.delete(row)
+    await db.commit()
+    await delete_notification_template_from_redis(template_id)
+    return success_response({"deleted": True})
 
 
 @router.get("/policies", summary="获取推送策略列表")
