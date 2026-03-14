@@ -106,7 +106,7 @@ async def _build_policy_desc(
     """
     根据新的 match 结构生成中文描述：
     - alarm_config: [{value,label}]
-    - area_config: [{value,label,idPath}]
+    - area_config: [{value,label,area_id_path,area_name_path}]
     - camera_config: [{value,label}]
     - exclude: 同上结构
     """
@@ -643,6 +643,8 @@ async def test_send(
         "level": payload.level,
         "camera_id": None,
         "camera_name": None,
+        "area_id_path": None,
+        "area_name_path": None,
         "area_name": None,
         "algorithm_id": None,
         "algorithm_name": None,

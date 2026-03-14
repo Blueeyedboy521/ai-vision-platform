@@ -457,3 +457,26 @@ async def delete_notification_policy_from_redis(policy_id: str) -> None:
         )
     except Exception as e:
         logger.warning(f"从 Redis 删除推送策略失败: {policy_id}, {e}")
+
+
+def delete_camera_area_paths_from_redis(camera_id: str) -> None:
+    """删除摄像头区域路径缓存（摄像头变更或所属区域变更时调用）。"""
+    if not camera_id:
+        return
+    try:
+        get_redis().sync_client.delete(RedisKeys.camera_area_paths(camera_id))
+    except Exception as e:
+        logger.warning(f"删除摄像头区域路径缓存失败: camera_id={camera_id}, {e}")
+
+
+def delete_camera_area_paths_for_cameras(camera_ids: List[str]) -> None:
+    """批量删除摄像头区域路径缓存（区域树变更时调用）。"""
+    if not camera_ids:
+        return
+    try:
+        client = get_redis().sync_client
+        for cid in camera_ids:
+            if cid:
+                client.delete(RedisKeys.camera_area_paths(cid))
+    except Exception as e:
+        logger.warning(f"批量删除摄像头区域路径缓存失败: {e}")

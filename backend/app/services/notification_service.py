@@ -27,6 +27,8 @@ from app.models import (
     NotificationTemplate,
     NotificationPolicy,
     NotificationDeliveryLog,
+    Camera,
+    Area,
 )
 from app.models.base import generate_uuid
 from app.services.notification_crypto import decrypt_config
@@ -123,7 +125,7 @@ def _match_any_value(event_val: Any, match_val: Any) -> bool:
 
 def _match_any_pattern(event_val: Any, patterns: Any) -> bool:
     """
-    支持通配符：* ?，用于 area_path 等字段。如果pattern是空
+    支持通配符：* ?，用于 area_id_path 等字段。如果 pattern 是空
     patterns 可为 str 或 list[str]。
     """
     ps = [str(x) for x in _as_list(patterns) if str(x).strip()]
@@ -179,11 +181,12 @@ def _match_policy(event: Dict[str, Any], policy_match: Dict[str, Any]) -> bool:
         return vals
 
     def _area_patterns(cfg_list: Any) -> List[str]:
+        """从 area_config 项中取 area_id_path，用于与 event.area_id_path 通配符匹配。"""
         ps: List[str] = []
         for x in _as_list(cfg_list):
             if not isinstance(x, dict):
                 continue
-            p = _to_str(x.get("idPath") or x.get("label")).strip()
+            p = _to_str(x.get("area_id_path")).strip()
             if p:
                 ps.append(p)
         return ps
@@ -198,13 +201,13 @@ def _match_policy(event: Dict[str, Any], policy_match: Dict[str, Any]) -> bool:
         # 2.1 区域排除：只有配置了 area_config 才参与排除判断
         ex_area_patterns = _area_patterns(ex.get("area_config"))
         if ex_area_patterns:
-            if _match_any_pattern(event.get("area_path"), ex_area_patterns):
+            if _match_any_pattern(event.get("area_id_path"), ex_area_patterns):
                 logger.info(
-                    f"ex 匹配 area_path 命中排除: event_area={event.get('area_path')}, ex_area_patterns={ex_area_patterns}"
+                    f"ex 匹配 area_id_path 命中排除: event_area={event.get('area_id_path')}, ex_area_patterns={ex_area_patterns}"
                 )
                 return False
         logger.info(
-            f"ex 匹配 area_path 完成: event_area={event.get('area_path')}, ex_area_cfg={ex.get('area_config')}"
+            f"ex 匹配 area_id_path 完成: event_area={event.get('area_id_path')}, ex_area_cfg={ex.get('area_config')}"
         )
 
         # 2.2 设备排除：只有配置了 camera_config 才参与排除判断
@@ -262,10 +265,10 @@ def _match_policy(event: Dict[str, Any], policy_match: Dict[str, Any]) -> bool:
         if not _match_any_value(event.get("camera_id"), cam_vals):
             return False
     logger.info(f"匹配camera_id: {event.get('camera_id')},camera_config: {m.get('camera_config')}, m: {m}")
-    # 6) area_config（通配符匹配）
-    if not _match_any_pattern(event.get("area_path"), _area_patterns(m.get("area_config"))):
+    # 6) area_config（通配符匹配：event.area_id_path 与 area_config[].area_id_path）
+    if not _match_any_pattern(event.get("area_id_path"), _area_patterns(m.get("area_config"))):
         return False
-    logger.info(f"匹配area_path: {event.get('area_path')},area_config: {m.get('area_config')}, m: {m}")
+    logger.info(f"匹配 area_id_path: {event.get('area_id_path')}, area_config: {m.get('area_config')}, m: {m}")
     # 7) time_window
     if not _now_in_time_window(datetime.now(), m.get("time_window")):
         return False
@@ -437,6 +440,48 @@ def _load_endpoint_by_id(
     return obj
 
 
+def get_camera_area_paths(
+    session: Any,
+    redis_client: Any,
+    camera_id: str,
+) -> Optional[Dict[str, str]]:
+    """
+    获取摄像头所属区域的 area_id_path / area_name_path（供策略 area 匹配与展示）。
+    先 Redis（camera:area_paths:{id}），未命中再查库并回写 Redis。
+    若摄像头无 area_id 或区域无路径，返回 None。
+    返回与 event 统一命名：area_id_path、area_name_path。
+    """
+    cid = _to_str(camera_id).strip()
+    if not cid:
+        return None
+    key = RedisKeys.camera_area_paths(cid)
+    try:
+        raw = redis_client.get(key)
+        obj = _json_loads_safe(raw)
+        if isinstance(obj, dict) and ("area_id_path" in obj or "area_name_path" in obj):
+            return {
+                "area_id_path": _to_str(obj.get("area_id_path")),
+                "area_name_path": _to_str(obj.get("area_name_path")),
+            }
+    except Exception as e:
+        logger.warning(f"读取摄像头区域路径缓存失败: camera_id={cid}, {e}")
+
+    row = session.query(Camera).filter(Camera.id == cid).first()
+    if not row or not getattr(row, "area_id", None):
+        return None
+    area = session.query(Area).filter(Area.id == row.area_id).first()
+    if not area:
+        return None
+    area_id_path = _to_str(getattr(area, "id_path", None)).strip()
+    area_name_path = _to_str(getattr(area, "hierarchy_path", None) or getattr(area, "name", None)).strip()
+    payload = {"area_id_path": area_id_path, "area_name_path": area_name_path}
+    try:
+        redis_client.set(key, json.dumps(payload, ensure_ascii=False))
+    except Exception as e:
+        logger.warning(f"回写摄像头区域路径缓存失败(可忽略): camera_id={cid}, {e}")
+    return payload
+
+
 def dispatch_event(event: Dict[str, Any]) -> None:
     """
     入口：被 NotificationWorker 调用（同步）
@@ -444,6 +489,16 @@ def dispatch_event(event: Dict[str, Any]) -> None:
     logger.info(f"dispatch_event start: {event}")
     with get_sync_db_session() as session:
         redis_client = get_redis().sync_client
+
+        # 0) 若告警带 camera_id，先补全 area_id_path / area_name_path，供策略区域匹配与模板展示
+        camera_id = event.get("camera_id")
+        if camera_id:
+            paths = get_camera_area_paths(session, redis_client, _to_str(camera_id))
+            if paths:
+                event["area_id_path"] = paths.get("area_id_path") or ""
+                event["area_name_path"] = paths.get("area_name_path") or ""
+                event["area_name"] = paths.get("area_name_path") or ""  # 兼容模板 {{area_name}}
+
         # 1) 获取 policies（先 Redis，后 DB，DB 兜底后回写 Redis）
         category = _to_str(event.get("category") or "ai")
         policies = _load_policies_by_category(
@@ -529,7 +584,17 @@ def dispatch_event(event: Dict[str, Any]) -> None:
                 try:
                     cfg = decrypt_config(_to_str(endpoint_obj.get("encrypted_config")))
                     provider = get_provider(_to_str(endpoint_obj.get("provider")))
-                    logger.info(f"provider: {provider}")
+                    provider_name = _to_str(endpoint_obj.get("provider"))
+                    endpoint_id = _to_str(endpoint_obj.get("id"))
+                    logger.info(
+                        "【最终推送内容】 endpoint_id=%s provider=%s title=%s text=%s image_url=%s link_url=%s",
+                        endpoint_id,
+                        provider_name,
+                        msg.title,
+                        msg.text,
+                        msg.image_url,
+                        msg.link_url,
+                    )
                     provider.send_sync(cfg, msg)
                     delivery.status = "success"
                     delivery.error = None

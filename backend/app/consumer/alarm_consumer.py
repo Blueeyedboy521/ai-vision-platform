@@ -157,10 +157,10 @@ def enqueue_notification_event_from_alarm(alarm_data: dict) -> None:
         "level": _map_alert_level(alarm_data.get("alert_level", "info")),
         "camera_id": alarm_data.get("camera_id"),
         "camera_name": alarm_data.get("camera_name"),
-        # 统一用 area_path 做策略匹配（层级路径，如 /厂区A/涂装车间/产线1）
-        "area_path": alarm_data.get("area_name") or alarm_data.get("region_name"),
-        # 兼容旧字段：模板渲染/展示仍可用 area_name
-        "area_name": alarm_data.get("area_name") or alarm_data.get("region_name"),
+        # 区域路径：dispatch_event 会根据 camera_id 补全 area_id_path/area_name_path；此处仅预填名称路径供无 camera_id 时展示
+        "area_id_path": None,
+        "area_name_path": alarm_data.get("area_name") or alarm_data.get("region_name"),
+        "area_name": alarm_data.get("area_name") or alarm_data.get("region_name"),  # 模板 {{area_name}}
         "algorithm_id": alarm_data.get("algorithm_id"),
         "algorithm_name": alarm_data.get("algorithm_name"),
         "title": alarm_data.get("title") or alarm_data.get("algorithm_name") or "告警通知",

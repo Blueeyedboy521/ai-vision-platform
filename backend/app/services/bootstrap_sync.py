@@ -27,12 +27,11 @@ async def sync_configs_to_redis_and_streams() -> None:
   stream_manager = get_stream_manager()
 
   async with get_db_session() as session:
-    # 启动期数据修复（幂等）：补齐区域层级与告警冗余字段
-    # TODO: 暂时关闭启动期 data_fix（包括 alarms 冗余字段修复），避免影响启动性能/行为。
-    # try:
-    #   await run_startup_data_fix(session)
-    # except Exception as e:
-    #   logger.warning(f"启动期数据修复失败(可忽略): {e}")
+    # 启动期数据修复（幂等）：补齐 areas.level/hierarchy_path/id_path、alarms 冗余字段、推送策略描述
+    try:
+      await run_startup_data_fix(session)
+    except Exception as e:
+      logger.warning(f"启动期数据修复失败(可忽略): {e}")
 
     # 同步模型配置
     result = await session.execute(select(Model))

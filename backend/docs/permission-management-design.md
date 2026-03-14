@@ -147,54 +147,60 @@
     └── 编辑资源 (api: PUT /api/resources/{id})
 ```
 
-### 4.3 现有前端资源属性结构
+### 4.3 现有前端资源属性结构（树表结构）
 
-#### 4.3.1 菜单资源
-| key | name | type | path | component | icon |
-|-----|------|------|------|-----------|------|
-| dashboard | 首页概览 | menu | /dashboard | @/views/Dashboard.vue | home |
-| messages | 消息中心 | menu | /messages | @/views/Messages.vue | message |
-| video_management | 视频管理 | menu | /video | @/views/RouterViewWrapper.vue | video |
-| video_cameras | 摄像头管理 | menu | /video/cameras | @/views/CameraManagement.vue | camera |
-| video_preview | 视频预览 | menu | /video/preview | @/views/VideoPreview.vue | eye |
-| algorithm_management | 算法管理 | menu | /algorithm | @/views/AlgorithmManagement.vue | code |
-| push_management | 推送管理 | menu | /push | @/views/RouterViewWrapper.vue | send |
-| push_channels | 通道配置 | menu | /push/channels | @/views/push/ChannelManager.vue | settings |
-| push_templates | 模板配置 | menu | /push/templates | @/views/push/TemplateManagement.vue | file-text |
-| push_policies | 推送策略 | menu | /push/policies | @/views/push/PolicyManagement.vue | list |
-| push_add_policy | 新建推送策略 | menu | /push/add-policy | @/views/push/AddPolicy.vue | plus |
-| alarm_management | 告警管理 | menu | /alarm | @/views/RouterViewWrapper.vue | alert-circle |
-| alarm_list | 告警列表 | menu | /alarm/list | @/views/alarm/AlarmList.vue | list |
-| alarm_stats | 告警统计 | menu | /alarm/stats | @/views/alarm/AlarmStats.vue | bar-chart |
-| system_config | 系统配置 | menu | /system | @/views/RouterViewWrapper.vue | settings |
-| system_overview | 系统概览 | menu | /system/overview | @/views/system/SystemOverview.vue | info |
-| system_users | 用户管理 | menu | /system/users | @/views/system/UserManagement.vue | users |
-| system_roles | 角色权限 | menu | /system/roles | @/views/system/RoleManagement.vue | shield |
-| system_settings | 系统设置 | menu | /system/settings | @/views/system/SystemSettings.vue | cog |
-| system_logs | 操作日志 | menu | /system/logs | @/views/system/OperationLogs.vue | log |
+#### 4.3.1 资源树表结构
+| key | name | type | path | api_url | method | icon | component | 父资源key |
+|-----|------|------|------|---------|--------|------|-----------|-----------|
+| dashboard:view | 首页概览 | menu | /dashboard | - | - | home | @/views/Dashboard.vue | - |
+| messages:view | 消息中心 | menu | /messages | - | - | message | @/views/Messages.vue | - |
+| video:view | 视频管理 | menu | /video | - | - | video | @/views/RouterViewWrapper.vue | - |
+| video:view:cameras | 摄像头管理 | menu | /video/cameras | /cameras | GET | camera | @/views/CameraManagement.vue | video:view |
+| video:view:preview | 视频预览 | menu | /video/preview | - | - | eye | @/views/VideoPreview.vue | video:view |
+| algorithm:view | 算法管理 | menu | /algorithm | /models | GET | code | @/views/AlgorithmManagement.vue | - |
+| push:view | 推送管理 | menu | /push | - | - | send | @/views/RouterViewWrapper.vue | - |
+| push:view:channels | 通道配置 | menu | /push/channels | - | - | settings | @/views/push/ChannelManager.vue | push:view |
+| push:view:templates | 模板配置 | menu | /push/templates | - | - | file-text | @/views/push/TemplateManagement.vue | push:view |
+| push:view:policies | 推送策略 | menu | /push/policies | - | - | list | @/views/push/PolicyManagement.vue | push:view |
+| push:add:policy | 新建推送策略 | menu | /push/add-policy | - | - | plus | @/views/push/AddPolicy.vue | push:view |
+| alarm:view | 告警管理 | menu | /alarm | - | - | alert-circle | @/views/RouterViewWrapper.vue | - |
+| alarm:view:list | 告警列表 | menu | /alarm/list | - | - | list | @/views/alarm/AlarmList.vue | alarm:view |
+| alarm:view:stats | 告警统计 | menu | /alarm/stats | - | - | bar-chart | @/views/alarm/AlarmStats.vue | alarm:view |
+| system:view | 系统配置 | menu | /system | - | - | settings | @/views/RouterViewWrapper.vue | - |
+| system:view:overview | 系统概览 | menu | /system/overview | /system/dashboard | GET | info | @/views/system/SystemOverview.vue | system:view |
+| system:view:users | 用户管理 | menu | /system/users | - | - | users | @/views/system/UserManagement.vue | system:view |
+| system:view:roles | 角色权限 | menu | /system/roles | - | - | shield | @/views/system/RoleManagement.vue | system:view |
+| system:view:settings | 系统设置 | menu | /system/settings | /system/config | GET | cog | @/views/system/SystemSettings.vue | system:view |
+| system:view:logs | 操作日志 | menu | /system/logs | /system/logs | GET | log | @/views/system/OperationLogs.vue | system:view |
 
-#### 4.3.2 API资源
-| key | name | type | api_url | method |
-|-----|------|------|---------|--------|
-| system_health | 系统健康状态 | api | /system/health | GET |
-| system_info | 系统信息 | api | /system/info | GET |
-| system_dashboard | 系统统计 | api | /system/dashboard | GET |
-| system_logs | 系统日志 | api | /system/logs | GET |
-| system_cleanup | 清理过期数据 | api | /system/cleanup | POST |
-| system_config | 系统配置 | api | /system/config | GET |
-| system_config_update | 更新系统配置 | api | /system/config | PUT |
-| models_list | 模型列表 | api | /models | GET |
-| models_detail | 模型详情 | api | /models/{id} | GET |
-| models_create | 创建模型 | api | /models | POST |
-| models_update | 更新模型 | api | /models/{id} | PUT |
-| models_delete | 删除模型 | api | /models/{id} | DELETE |
-| models_load | 加载模型 | api | /models/{id}/load | POST |
-| models_unload | 卸载模型 | api | /models/{id}/unload | POST |
-| models_classes | 模型类别 | api | /models/{id}/classes | GET |
+#### 4.3.2 API资源（作为菜单的子资源）
+| key | name | type | path | api_url | method | icon | component | 父资源key |
+|-----|------|------|------|---------|--------|------|-----------|-----------|
+| video:view:cameras:detail | 查看摄像头详情 | api | - | /cameras/{id} | GET | - | - | video:view:cameras |
+| video:view:cameras:add | 新增摄像头 | api | - | /cameras | POST | - | - | video:view:cameras |
+| video:view:cameras:edit | 编辑摄像头基础信息 | api | - | /cameras/{id} | PUT | - | - | video:view:cameras |
+| video:view:cameras:edit:config | 编辑摄像头核心配置 | api | - | /cameras/{id}/config | PUT | - | - | video:view:cameras |
+| video:view:cameras:delete | 删除摄像头 | api | - | /cameras/{id} | DELETE | - | - | video:view:cameras |
+| video:view:cameras:operate:reboot | 远程重启摄像头 | api | - | /cameras/{id}/reboot | POST | - | - | video:view:cameras |
+| video:view:cameras:operate:enable | 启用摄像头 | api | - | /cameras/{id}/enable | POST | - | - | video:view:cameras |
+| video:view:cameras:operate:disable | 禁用摄像头 | api | - | /cameras/{id}/disable | POST | - | - | video:view:cameras |
+| video:view:cameras:bind:algorithm | 绑定算法 | api | - | /cameras/{id}/bind-algorithm | POST | - | - | video:view:cameras |
+| video:view:cameras:export | 导出摄像头列表 | api | - | /cameras/export | GET | - | - | video:view:cameras |
+| algorithm:view:detail | 模型详情 | api | - | /models/{id} | GET | - | - | algorithm:view |
+| algorithm:view:add | 创建模型 | api | - | /models | POST | - | - | algorithm:view |
+| algorithm:view:edit | 更新模型 | api | - | /models/{id} | PUT | - | - | algorithm:view |
+| algorithm:view:delete | 删除模型 | api | - | /models/{id} | DELETE | - | - | algorithm:view |
+| algorithm:view:operate:load | 加载模型 | api | - | /models/{id}/load | POST | - | - | algorithm:view |
+| algorithm:view:operate:unload | 卸载模型 | api | - | /models/{id}/unload | POST | - | - | algorithm:view |
+| algorithm:view:classes | 模型类别 | api | - | /models/{id}/classes | GET | - | - | algorithm:view |
+| system:view:overview:health | 系统健康状态 | api | - | /system/health | GET | - | - | system:view:overview |
+| system:view:overview:info | 系统信息 | api | - | /system/info | GET | - | - | system:view:overview |
+| system:view:settings:edit | 更新系统配置 | api | - | /system/config | PUT | - | - | system:view:settings |
+| system:view:settings:cleanup | 清理过期数据 | api | - | /system/cleanup | POST | - | - | system:view:settings |
 
 ### 4.4 资源管理功能
 - 资源的增删改查
-- 资源的树形展示
+- 资源的树形展示（支持展开/折叠）
 - 资源的层级管理
 - 权限Key的生成与管理
 - 前端路由与后端API的关联

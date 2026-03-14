@@ -72,13 +72,19 @@ class Area(Base, AuditMixin):
         default=1,
         comment="层级深度（根=1）"
     )
-    # hierarchy_path: 按名称拼接的层级路径，如 “一级/二级/三级”
+    # hierarchy_path: 按名称拼接的层级路径，如 “根节点/车间/A区域”
     hierarchy_path: Mapped[Optional[str]] = mapped_column(
         String(500),
         nullable=True,
         comment="层级路径（按名称拼接，用于展示）"
     )
-    
+    # id_path: ID 层级路径，如 /root_id/1/1.1，用于策略 area 通配符匹配
+    id_path: Mapped[Optional[str]] = mapped_column(
+        String(1000),
+        nullable=True,
+        comment="ID层级路径，用于策略区域匹配"
+    )
+
     # ==================== 排序 ====================
     sort_order: Mapped[int] = mapped_column(
         Integer,
@@ -121,13 +127,16 @@ class Area(Base, AuditMixin):
 
     def compute_hierarchy(self, parent: Optional["Area"]) -> None:
         """
-        计算并写入 level/hierarchy_path。
-        约定：hierarchy_path 使用 “/” 分隔，便于前端展示与冗余到告警表。
+        计算并写入 level / hierarchy_path / id_path。
+        hierarchy_path：名称层级路径；id_path：ID 层级路径，供策略 area 匹配。
         """
         if parent is None:
             self.level = 1
             self.hierarchy_path = self.name
+            self.id_path = f"/{self.id}"
         else:
             self.level = int(getattr(parent, "level", 1)) + 1
             base = getattr(parent, "hierarchy_path", None) or parent.name
             self.hierarchy_path = f"{base}/{self.name}"
+            parent_id_path = getattr(parent, "id_path", None) or f"/{parent.id}"
+            self.id_path = f"{parent_id_path.rstrip('/')}/{self.id}"

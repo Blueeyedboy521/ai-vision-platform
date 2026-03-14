@@ -500,11 +500,12 @@ const handleSaveAndEnable = async () => {
       value: t.value,
       label: t.label
     })),
-    // 区域配置
+    // 区域配置（与 event 统一；policy 存盘用下划线与其它 match 字段一致）
     area_config: selectedAreas.value.map(a => ({
       value: a.value,
       label: a.label,
-      idPath: a.idPath
+      area_id_path: a.idPath,
+      area_name_path: a.label
     })),
     // 设备配置
     camera_config: selectedDevices.value.map(d => ({
@@ -517,7 +518,8 @@ const handleSaveAndEnable = async () => {
       area_config: excludedAreas.value.map(a => ({
         value: a.value,
         label: a.label,
-        idPath: a.idPath
+        area_id_path: a.idPath,
+        area_name_path: a.label
       })),
       camera_config: excludedDevices.value.map(d => ({
         value: d.id,
@@ -793,13 +795,28 @@ const handleAreaSelect = (value: string) => {
     currentArea.value = null
     return
   }
-  // 已选择则不重复添加（按 value 去重）
+  
+  const areaInfo = findAreaInfo(value)
+  
+  if (!areaInfo) {
+    showAreaSelect.value = false
+    currentArea.value = null
+    return
+  }
+  
+  if (!areaInfo.idPath || areaInfo.idPath.split('/').length <= 2) {
+    message.warning('不允许选择根节点，请选择具体的子区域')
+    showAreaSelect.value = false
+    currentArea.value = null
+    return
+  }
+  
   if (selectedAreas.value.find(a => a.value === value)) {
     showAreaSelect.value = false
     currentArea.value = null
     return
   }
-  const areaInfo = findAreaInfo(value) || { value, label: value, idPath: value }
+  
   selectedAreas.value.push(areaInfo)
   showAreaSelect.value = false
   currentArea.value = null
@@ -958,8 +975,28 @@ const showExcludedAreaSelect = ref(false)
 const currentExcludedArea = ref(null)
 
 const handleExcludedAreaSelect = (value: string) => {
+  if (!value) {
+    showExcludedAreaSelect.value = false
+    currentExcludedArea.value = null
+    return
+  }
+  
+  const areaInfo = findAreaInfo(value)
+  
+  if (!areaInfo) {
+    showExcludedAreaSelect.value = false
+    currentExcludedArea.value = null
+    return
+  }
+  
+  if (!areaInfo.idPath || areaInfo.idPath.split('/').length <= 2) {
+    message.warning('不允许选择根节点，请选择具体的子区域')
+    showExcludedAreaSelect.value = false
+    currentExcludedArea.value = null
+    return
+  }
+  
   if (value && !excludedAreas.value.find(a => a.value === value)) {
-    const areaInfo = findAreaInfo(value) || { value, label: value, idPath: value }
     excludedAreas.value.push(areaInfo)
   }
   showExcludedAreaSelect.value = false
@@ -1192,8 +1229,8 @@ async function loadPolicyForEdit(id: string) {
     const areaCfgs = Array.isArray(m.area_config) ? m.area_config : []
     selectedAreas.value = areaCfgs.map((x: any) => ({
       value: String(x.value || ''),
-      label: String(x.label || ''),
-      idPath: String(x.idPath || '')
+      label: String(x.label || x.area_name_path || ''),
+      idPath: String(x.area_id_path || '')
     }))
 
     // camera_config
@@ -1215,8 +1252,8 @@ async function loadPolicyForEdit(id: string) {
     const exAreaCfgs = Array.isArray(ex.area_config) ? ex.area_config : []
     excludedAreas.value = exAreaCfgs.map((x: any) => ({
       value: String(x.value || ''),
-      label: String(x.label || ''),
-      idPath: String(x.idPath || '')
+      label: String(x.label || x.area_name_path || ''),
+      idPath: String(x.area_id_path || '')
     }))
     const exCamCfgs = Array.isArray(ex.camera_config) ? ex.camera_config : []
     excludedDevices.value = exCamCfgs.map((x: any) => ({

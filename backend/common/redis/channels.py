@@ -137,6 +137,14 @@ class RedisKeys:
         """获取摄像头直播心跳的 Key（建议设置 TTL，如 90 秒）"""
         return f"{RedisKeys.CAMERA_LIVE_HEARTBEAT_PREFIX}{camera_id}"
 
+    # 摄像头所属区域层级路径缓存（area_id_path / area_name_path），用于通知策略 area 匹配；摄像头/区域变更时需删除
+    CAMERA_AREA_PATHS_PREFIX = "camera:area_paths:"
+
+    @staticmethod
+    def camera_area_paths(camera_id: str) -> str:
+        """摄像头区域路径缓存 Key，value 为 JSON { area_id_path, area_name_path }"""
+        return f"{RedisKeys.CAMERA_AREA_PATHS_PREFIX}{camera_id}"
+
     # 推理启停不需要心跳 Key，目前用集合即可
 
     # ==================== 通知推送配置快照 ====================

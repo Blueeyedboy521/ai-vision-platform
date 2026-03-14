@@ -26,6 +26,7 @@ from app.core.redis import (
     remove_camera_live_started,
     update_camera_live_heartbeat,
     is_camera_online,
+    delete_camera_area_paths_from_redis,
 )
 from app.api.deps import get_current_user
 from app.models import User, Camera, Area, CameraAlgorithm
@@ -366,6 +367,9 @@ async def create_camera(
 
     # 写入 Redis 缓存，与 Engine 及流管理一致（封装在 core.redis）
     await write_camera_to_redis(camera)
+
+    # 摄像头区域路径缓存：新建后无缓存，为保持一致性在变更时统一删除（此处删除一次，避免若曾预写则失效）
+    delete_camera_area_paths_from_redis(camera.id)
     
     # 注册流
     stream_manager = get_stream_manager()
@@ -427,6 +431,9 @@ async def update_camera(
     
     # 更新 Redis 缓存
     await write_camera_to_redis(camera)
+
+    # 摄像头区域路径缓存：更新后失效，通知策略 area 匹配会按需重建
+    delete_camera_area_paths_from_redis(camera_id)
     
     # 重新注册流（地址可能已变更）
     stream_manager = get_stream_manager()
@@ -473,6 +480,7 @@ async def delete_camera(
     # 从直播集合与缓存中移除
     await remove_camera_live_started(camera_id)
     await delete_camera_from_redis(camera_id)
+    delete_camera_area_paths_from_redis(camera_id)
     
     # 注销流
     stream_manager = get_stream_manager()

@@ -3,7 +3,7 @@
 启动期数据修复（幂等）
 
 用于补齐：
-- areas.level / areas.hierarchy_path
+- areas.level / areas.hierarchy_path / areas.id_path（需先执行 database/add_areas_id_path.sql）
 - alarms.camera_name / alarms.algorithm_name / alarms.area_name(层级路径)
 
 注意：
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Area
@@ -24,41 +24,42 @@ from common.logging import logger
 
 async def fix_area_hierarchy(session: AsyncSession) -> int:
     """
-    计算并回填所有 Area 的 level/hierarchy_path。
-    返回更新的记录数（估算）。
+    计算并回填所有 Area 的 level / hierarchy_path / id_path。
+    在内存中计算后，用显式 UPDATE 写回数据库，确保 id_path 等字段被持久化。
+    返回更新的记录数。
     """
     result = await session.execute(select(Area))
     areas: List[Area] = result.scalars().all()
     if not areas:
         return 0
 
-    by_id: Dict[str, Area] = {a.id: a for a in areas}
     children: Dict[Optional[str], List[Area]] = {}
     for a in areas:
         children.setdefault(a.parent_id, []).append(a)
 
-    updated = 0
-
     def dfs(node: Area) -> None:
-        nonlocal updated
         for ch in children.get(node.id, []):
-            before_level = getattr(ch, "level", None)
-            before_path = getattr(ch, "hierarchy_path", None)
             ch.compute_hierarchy(node)
-            if before_level != ch.level or before_path != ch.hierarchy_path:
-                updated += 1
             dfs(ch)
 
-    # roots
     roots = children.get(None, [])
     for r in roots:
-        before_level = getattr(r, "level", None)
-        before_path = getattr(r, "hierarchy_path", None)
         r.compute_hierarchy(None)
-        if before_level != r.level or before_path != r.hierarchy_path:
-            updated += 1
         dfs(r)
 
+    # 显式写回 DB，避免 AsyncSession 未持久化内存中的属性修改
+    updated = 0
+    for a in areas:
+        await session.execute(
+            update(Area)
+            .where(Area.id == a.id)
+            .values(
+                level=a.level,
+                hierarchy_path=a.hierarchy_path,
+                id_path=a.id_path,
+            )
+        )
+        updated += 1
     await session.commit()
     return updated
 
@@ -145,9 +146,9 @@ async def run_startup_data_fix(session: AsyncSession) -> None:
     try:
         updated = await fix_area_hierarchy(session)
         if updated:
-            logger.info(f"[data_fix] areas 层级字段已回填/更新: {updated} 条")
+            logger.info(f"[data_fix] areas 层级字段(level/hierarchy_path/id_path)已回填: {updated} 条")
     except Exception as e:
-        logger.warning(f"[data_fix] 回填 areas 层级字段失败(可忽略): {e}")
+        logger.warning(f"[data_fix] 回填 areas 层级字段失败(可忽略): {e}", exc_info=True)
 
     try:
         await fix_alarm_denormalized_fields(session)
@@ -267,7 +268,13 @@ async def fix_notification_policies(session: AsyncSession) -> int:
             if lvl:
                 parts.append(level_cn.get(lvl, lvl))
 
-        area_items = format_area_items(m.get("area_path"))
+        area_paths = []
+        for x in as_list(m.get("area_config") or []):
+            if isinstance(x, dict):
+                p = str(x.get("area_id_path") or "").strip()
+                if p:
+                    area_paths.append(p)
+        area_items = format_area_items(area_paths)
         if area_items:
             parts.append("、".join(area_items))
 
@@ -311,7 +318,13 @@ async def fix_notification_policies(session: AsyncSession) -> int:
         ex = m.get("exclude") if isinstance(m.get("exclude"), dict) else {}
         if ex:
             ex_parts: list[str] = []
-            ex_areas = format_area_items(ex.get("area_path"))
+            ex_area_paths = []
+            for x in as_list(ex.get("area_config") or []):
+                if isinstance(x, dict):
+                    p = str(x.get("area_id_path") or "").strip()
+                    if p:
+                        ex_area_paths.append(p)
+            ex_areas = format_area_items(ex_area_paths)
             if ex_areas:
                 ex_parts.append("区域=" + "、".join(ex_areas))
             for k, label in (("camera_id", "摄像头"), ("algorithm_id", "算法"), ("alarm_type", "类型"), ("level", "等级")):

@@ -78,7 +78,8 @@ async def _run_heartbeat_check() -> None:
                         "camera_id": camera_id,
                         "camera_name": camera_name,
                         # 目前仅携带名称，后续可升级为完整层级路径
-                        "area_path": None,
+                        "area_id_path": None,
+                        "area_name_path": None,
                         "area_name": None,
                         "algorithm_id": None,
                         "algorithm_name": None,

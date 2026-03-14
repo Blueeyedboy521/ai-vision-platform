@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.redis import delete_camera_area_paths_for_cameras
 from app.api.deps import get_current_user
 from app.models import User, Area, Camera
 from app.models.base import generate_uuid
@@ -52,6 +53,28 @@ async def _refresh_subtree_hierarchy(db: AsyncSession, root_id: str) -> None:
 
     # root 自己已经 compute_hierarchy 过，这里只更新子树
     dfs(root)
+
+
+async def _get_subtree_area_ids(db: AsyncSession, root_id: str) -> List[str]:
+    """返回以 root_id 为根的子树（含自身）的所有区域 id 列表。"""
+    result = await db.execute(select(Area))
+    areas = result.scalars().all()
+    area_by_id: Dict[str, Area] = {a.id: a for a in areas}
+    children: Dict[Optional[str], List[Area]] = {}
+    for a in areas:
+        children.setdefault(a.parent_id, []).append(a)
+    root = area_by_id.get(root_id)
+    if root is None:
+        return []
+    ids: List[str] = []
+
+    def collect(node: Area) -> None:
+        ids.append(node.id)
+        for ch in children.get(node.id, []):
+            collect(ch)
+
+    collect(root)
+    return ids
 
 
 @router.get("", summary="获取区域列表")
@@ -276,6 +299,17 @@ async def update_area(
         area.compute_hierarchy(parent)
         await _refresh_subtree_hierarchy(db, area.id)
     await db.commit()
+
+    # 区域树变更时，使该节点及子树下所有摄像头的区域路径缓存失效
+    if "name" in update_data or "parent_id" in update_data:
+        subtree_ids = await _get_subtree_area_ids(db, area_id)
+        if subtree_ids:
+            cam_result = await db.execute(
+                select(Camera.id).where(Camera.area_id.in_(subtree_ids))
+            )
+            camera_ids = [r[0] for r in cam_result.all()]
+            if camera_ids:
+                delete_camera_area_paths_for_cameras(camera_ids)
     
     logger.info(f"区域已更新: {area_id}")
     

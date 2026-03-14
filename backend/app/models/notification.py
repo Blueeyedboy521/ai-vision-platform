@@ -55,7 +55,7 @@ class NotificationPolicy(Base, TimestampMixin):
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, comment="是否启用")
 
     # 匹配条件（JSON）：支持多选/通配符/排除：
-    # category, alarm_type[], area_path[], camera_id[], algorithm_id[], level[], exclude{}, time_window{}
+    # category, alarm_type[], area_config[]（项内 area_id_path 与 event.area_id_path 匹配）, camera_id[], algorithm_id[], level[], exclude{}, time_window{}
     match: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, comment="匹配条件 JSON")
 
     # 动作（JSON）：标准为 list[dict]（同一 match 下可配置多个 action）
