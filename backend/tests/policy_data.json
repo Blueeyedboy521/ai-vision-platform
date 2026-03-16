@@ -1,0 +1,479 @@
+[
+  {
+    "name": "策略1-仅AI且危险级",
+    "priority": 100,
+    "match": {
+      "category": "ai",
+      "level": [
+        "danger",
+        "critical"
+      ],
+      "alarm_config": [],
+      "area_config": [],
+      "camera_config": [],
+      "time_window": {
+        "start": "00:00",
+        "end": "23:59"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  },
+  {
+    "name": "策略2-某区域精确",
+    "priority": 100,
+    "match": {
+      "category": "ai",
+      "level": [],
+      "alarm_config": [],
+      "area_config": [
+        {
+          "value": "0329b4beb5574b2e9c79f6a966f2accc",
+          "label": "产线1",
+          "area_id_path": "/root/0329b4beb5574b2e9c79f6a966f2accc"
+        }
+      ],
+      "camera_config": [],
+      "time_window": {
+        "start": "00:00",
+        "end": "23:59"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  },
+  {
+    "name": "策略3-精确区域路径",
+    "priority": 100,
+    "match": {
+      "category": "ai",
+      "level": [],
+      "alarm_config": [],
+      "area_config": [
+        {
+          "value": "0329b4beb5574b2e9c79f6a966f2accc",
+          "label": "产线1",
+          "area_id_path": "/root/0329b4beb5574b2e9c79f6a966f2accc"
+        }
+      ],
+      "camera_config": [],
+      "time_window": {
+        "start": "00:00",
+        "end": "23:59"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  },
+  {
+    "name": "策略4-排除某区域",
+    "priority": 100,
+    "match": {
+      "category": "ai",
+      "level": [],
+      "alarm_config": [],
+      "area_config": [],
+      "camera_config": [],
+      "exclude": {
+        "area_config": [
+          {
+            "value": "0329b4beb5574b2e9c79f6a966f2accc",
+            "label": "产线1",
+            "area_id_path": "/root/0329b4beb5574b2e9c79f6a966f2accc"
+          }
+        ]
+      },
+      "time_window": {
+        "start": "00:00",
+        "end": "23:59"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  },
+  {
+    "name": "策略5-仅某摄像头",
+    "priority": 100,
+    "match": {
+      "category": "ai",
+      "level": [],
+      "alarm_config": [],
+      "area_config": [],
+      "camera_config": [
+        {
+          "value": "37d229432677484c82b9c65ca1d0d0ba",
+          "label": "device_1"
+        }
+      ],
+      "time_window": {
+        "start": "00:00",
+        "end": "23:59"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  },
+  {
+    "name": "策略6-仅某算法",
+    "priority": 100,
+    "match": {
+      "category": "ai",
+      "level": [],
+      "alarm_config": [
+        {
+          "value": "4d0b350a7f19493481a00da4bad3e788",
+          "label": "人"
+        }
+      ],
+      "area_config": [],
+      "camera_config": [],
+      "time_window": {
+        "start": "00:00",
+        "end": "23:59"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  },
+  {
+    "name": "策略7-仅系统告警",
+    "priority": 100,
+    "match": {
+      "category": "system",
+      "level": [],
+      "alarm_config": [],
+      "area_config": [],
+      "camera_config": [],
+      "time_window": {
+        "start": "00:00",
+        "end": "23:59"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  },
+  {
+    "name": "策略8-工作时间9-18点",
+    "priority": 100,
+    "match": {
+      "category": "ai",
+      "level": [],
+      "alarm_config": [],
+      "area_config": [],
+      "camera_config": [],
+      "time_window": {
+        "start": "09:00",
+        "end": "18:00"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  },
+  {
+    "name": "策略9-排除某摄像头",
+    "priority": 100,
+    "match": {
+      "category": "ai",
+      "level": [],
+      "alarm_config": [],
+      "area_config": [],
+      "camera_config": [],
+      "exclude": {
+        "camera_config": [
+          {
+            "value": "37d229432677484c82b9c65ca1d0d0ba",
+            "label": "device_1"
+          }
+        ]
+      },
+      "time_window": {
+        "start": "00:00",
+        "end": "23:59"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  },
+  {
+    "name": "策略10-排除warning等级",
+    "priority": 100,
+    "match": {
+      "category": "ai",
+      "level": [
+        "danger",
+        "critical",
+        "info"
+      ],
+      "alarm_config": [],
+      "area_config": [],
+      "camera_config": [],
+      "exclude": {
+        "level": [
+          "warning"
+        ]
+      },
+      "time_window": {
+        "start": "00:00",
+        "end": "23:59"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  },
+  {
+    "name": "策略11-另一区域精确",
+    "priority": 100,
+    "match": {
+      "category": "ai",
+      "level": [],
+      "alarm_config": [],
+      "area_config": [
+        {
+          "value": "bc02accc027d4abbab11c3ccf36f2e5f",
+          "label": "5F",
+          "area_id_path": "/root/0329b4beb5574b2e9c79f6a966f2accc/bc02accc027d4abbab11c3ccf36f2e5f"
+        }
+      ],
+      "camera_config": [],
+      "time_window": {
+        "start": "00:00",
+        "end": "23:59"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  },
+  {
+    "name": "策略12-两区域精确",
+    "priority": 100,
+    "match": {
+      "category": "ai",
+      "level": [],
+      "alarm_config": [],
+      "area_config": [
+        {
+          "value": "0329b4beb5574b2e9c79f6a966f2accc",
+          "label": "产线1",
+          "area_id_path": "/root/0329b4beb5574b2e9c79f6a966f2accc"
+        },
+        {
+          "value": "bc02accc027d4abbab11c3ccf36f2e5f",
+          "label": "5F",
+          "area_id_path": "/root/0329b4beb5574b2e9c79f6a966f2accc/bc02accc027d4abbab11c3ccf36f2e5f"
+        }
+      ],
+      "camera_config": [],
+      "time_window": {
+        "start": "00:00",
+        "end": "23:59"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  },
+  {
+    "name": "策略13-系统+流异常",
+    "priority": 100,
+    "match": {
+      "category": "system",
+      "level": [],
+      "alarm_config": [
+        {
+          "value": "stream_failed",
+          "label": "流异常"
+        }
+      ],
+      "area_config": [],
+      "camera_config": [],
+      "time_window": {
+        "start": "00:00",
+        "end": "23:59"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  },
+  {
+    "name": "策略14-多条件:区域+等级+算法",
+    "priority": 100,
+    "match": {
+      "category": "ai",
+      "level": [
+        "danger",
+        "critical"
+      ],
+      "alarm_config": [
+        {
+          "value": "4d0b350a7f19493481a00da4bad3e788",
+          "label": "人"
+        }
+      ],
+      "area_config": [
+        {
+          "value": "0329b4beb5574b2e9c79f6a966f2accc",
+          "label": "产线1",
+          "area_id_path": "/root/0329b4beb5574b2e9c79f6a966f2accc"
+        }
+      ],
+      "camera_config": [],
+      "time_window": {
+        "start": "00:00",
+        "end": "23:59"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  },
+  {
+    "name": "策略15-无限制(全匹配)",
+    "priority": 100,
+    "match": {
+      "category": "ai",
+      "level": [],
+      "alarm_config": [],
+      "area_config": [],
+      "camera_config": [],
+      "time_window": {
+        "start": "00:00",
+        "end": "23:59"
+      }
+    },
+    "actions": [
+      {
+        "endpoint_ids": [
+          "b41aabd159124c1e9c0a9ec6fd6c85f8",
+          "7026c54b5ce1470c879c161de2e4ea8d",
+          "9373bf021da74629a2064859d1a776a6"
+        ],
+        "template_id": "76f6db30d57a4fd5a12f991d96a0b0a6",
+        "push_order": 1
+      }
+    ]
+  }
+]

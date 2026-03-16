@@ -375,6 +375,15 @@ const paginatedTemplates = computed(() => {
   return filteredTemplates.value.slice(start, start + pageSize.value)
 })
 
+async function fetchList() {
+  try {
+    const res = await getNotificationTemplates()
+    templates.value = (res.data?.data ?? []) as ApiTemplate[]
+  } catch (e: any) {
+    message.error(e?.message || '获取模板列表失败')
+  }
+}
+
 const stats = computed(() => {
   const total = templates.value.length
   const text = templates.value.filter((t) => t.type === 'text').length
@@ -383,23 +392,19 @@ const stats = computed(() => {
   return { total, text, rich, enabled }
 })
 
-function applyFilter() {
+async function applyFilter() {
   page.value = 1
+  // 重新从后端拉取最新列表，保证查询行为有请求后台
+  await fetchList()
 }
-function resetFilter() {
+
+async function resetFilter() {
   filterType.value = null
   filterEnabled.value = null
   filterName.value = ''
   page.value = 1
-}
-
-async function fetchList() {
-  try {
-    const res = await getNotificationTemplates()
-    templates.value = (res.data?.data ?? []) as ApiTemplate[]
-  } catch (e: any) {
-    message.error(e?.message || '获取模板列表失败')
-  }
+  // 重置后重新拉取，保持与后端一致
+  await fetchList()
 }
 
 async function toggleTemplateEnabled(row: ApiTemplate, v: boolean) {

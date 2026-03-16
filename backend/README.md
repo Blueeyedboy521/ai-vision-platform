@@ -136,29 +136,42 @@ python -m engine.main
 backend/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py              # 应用入口
+│   ├── main.py                  # 应用入口
 │   ├── api/
-│   │   ├── __init__.py      # API 路由聚合
-│   │   └── endpoints/       # API 端点
-│   │       ├── auth.py      # 认证
-│   │       ├── cameras.py   # 摄像头管理
-│   │       ├── areas.py     # 区域管理
-│   │       ├── alarms.py    # 告警管理
-│   │       ├── algorithms.py # 算法管理
-│   │       └── system.py    # 系统管理
+│   │   ├── __init__.py          # API 路由聚合
+│   │   └── endpoints/           # API 控制器 (FastAPI Router)
+│   │       ├── auth_controller.py         # 认证
+│   │       ├── cameras_controller.py      # 摄像头管理
+│   │       ├── areas_controller.py        # 区域管理
+│   │       ├── alarms_controller.py       # 告警管理
+│   │       ├── algorithms_controller.py   # 算法管理
+│   │       ├── system_controller.py       # 系统信息/仪表盘
+│   │       └── media_hooks_controller.py  # 流媒体 Hook 回调
+│   ├── services/               # 业务服务层（高内聚、可复用）
+│   │   ├── auth_service.py
+│   │   ├── camera_service.py
+│   │   ├── area_service.py
+│   │   ├── alarm_service.py
+│   │   ├── algorithm_service.py
+│   │   ├── model_service.py
+│   │   ├── file_service.py
+│   │   ├── notification_config_service.py
+│   │   ├── notification_service.py
+│   │   └── system_service.py
 │   ├── core/
-│   │   ├── config.py        # 配置
-│   │   └── security.py      # 安全/认证
-│   └── models/              # 数据模型
+│   │   ├── config.py            # 配置
+│   │   ├── security.py          # 安全/认证
+│   │   └── redis.py             # Redis 连接与常用操作封装（支持 async + sync）
+│   └── models/                  # 数据模型
 │       ├── user.py
 │       ├── camera.py
 │       ├── area.py
 │       ├── alarm.py
 │       └── algorithm.py
-├── tests/                   # 测试
-├── requirements.txt         # 依赖
-├── pyproject.toml          # 项目配置
-└── .env.example            # 环境变量示例
+├── tests/                       # 测试
+├── requirements.txt             # 依赖
+├── pyproject.toml              # 项目配置
+└── .env.example                # 环境变量示例
 ```
 
 ## API 概览
@@ -208,3 +221,4 @@ ffplay -x 1280 -y 720 -fflags nobuffer -flags low_delay -i "rtmp://172.21.68.125
 
  ffplay -fflags nobuffer -flags low_delay -i "rtsp://172.21.68.125:8554/live/camera_local"
 ```
+

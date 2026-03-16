@@ -363,17 +363,6 @@ async function fetchPolicies() {
   }
 }
 
-function handleSearch() {
-  page.value = 1
-}
-
-function handleReset() {
-  filterType.value = null
-  filterStatus.value = null
-  filterKeyword.value = ''
-  page.value = 1
-}
-
 async function fetchEndpoints() {
   try {
     const res = await getNotificationEndpoints()
@@ -414,6 +403,21 @@ async function handleDeletePolicy(row: PolicyRow) {
 
 function handleEditPolicy(row: PolicyRow) {
   router.push({ path: '/push/add-policy', query: { id: row.id } })
+}
+
+async function handleSearch() {
+  page.value = 1
+  // 查询时重新从后端拉取策略列表，保证按钮会请求后台
+  await fetchPolicies()
+}
+
+async function handleReset() {
+  filterType.value = null
+  filterStatus.value = null
+  filterKeyword.value = ''
+  page.value = 1
+  // 重置后也重新拉取，保持与后端数据同步
+  await fetchPolicies()
 }
 
 onMounted(() => {

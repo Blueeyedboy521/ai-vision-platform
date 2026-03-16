@@ -394,25 +394,20 @@ class ResultHandler:
         if det_algo_id:
             algo_id_str = str(det_algo_id)
             for a in self.algorithms or []:
+                # a:{'id': '9110c2491b6a47969b5a13b642c4226b', 'model_id': 'c130d645e3094936ad852d93449d1c21', 'config': {'confidence': 0.6, 'alert_config': {'trigger_type': 'instant', 'duration_seconds': 0, 'count_threshold': 0, 'cooldown_seconds': 30, 'alert_level': 'critical'}, 'regions': [], 'inference_interval_sec': 5, 'alarm_interval_sec': 30}}
                 if str((a or {}).get("id") or "") == algo_id_str:
                     algorithm_id = algo_id_str
                     model_id = (a or {}).get("model_id")
-                    cfg = (a or {}).get("config") or {}
+                    cfg = a.get("config") or {}
                     break
-        # fallback：仍然兼容旧逻辑
-        if algorithm_id is None:
-            algo = (self.algorithms or [None])[0] or {}
-            algorithm_id = algo.get("id")
-            model_id = algo.get("model_id")
-            cfg = (algo or {}).get("config") or {}
-
+        logger.info(f"algorithm_id: {algorithm_id}, cfg: {cfg} ")
         # 从检测结果中尽量获取更友好的算法名称与代码（比如 algo_name / class_name）
         algorithm_name = first_det.get("algo_name") or ""
         algorithm_code = first_det.get("class_name") or ""
         # 额外输出模型维度与告警配置，便于前端展示与筛选
         alert_config = cfg.get("alert_config") or {}
         regions = cfg.get("regions") or []
-
+        alert_level = alert_config.get("alert_level") 
         from datetime import datetime
         alarm_data = {
             "alarm_id": alarm_id,
@@ -422,7 +417,7 @@ class ResultHandler:
             "algorithm_name": algorithm_name,
             "algorithm_code": algorithm_code,
             "model_id": model_id,
-            "alert_level": "info",
+            "alert_level": alert_level,
             "description": "",
             "timestamp": datetime.fromtimestamp(ts).isoformat(),
             "detections": detections,
@@ -431,7 +426,7 @@ class ResultHandler:
             # 同一 local_snapshot_path 预计会被引用的次数（多算法时用于上传去重与本地文件回收）
             "local_snapshot_ref_total": max(1, int(ref_total)),
             # 告警配置与区域信息直接透出，前端可用于渲染与过滤
-            "alert_config": alert_config,
+            # "alert_config": alert_config,
             "regions": regions,
         }
         logger.info(f"摄像头 {self.camera_id} 生成告警: {alarm_data}")

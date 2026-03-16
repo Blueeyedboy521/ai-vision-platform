@@ -31,6 +31,12 @@ async def init_redis() -> None:
     global redis_client
     redis_client = get_redis_client()
     await redis_client.connect()
+    # 业务侧既有 async 也有 sync 使用场景（如 worker/consumer/stream enqueue），这里一并初始化
+    try:
+        redis_client.connect_sync()
+    except Exception as e:
+        # 不阻塞应用启动：sync 连接失败时，相关功能会在调用处报错并可重试
+        logger.warning(f"Redis 同步连接初始化失败: {e}")
     logger.info("Redis 连接已初始化")
 
 
@@ -41,6 +47,10 @@ async def close_redis() -> None:
     """
     global redis_client
     if redis_client is not None:
+        try:
+            redis_client.disconnect_sync()
+        except Exception as e:
+            logger.warning(f"Redis 同步连接关闭失败(可忽略): {e}")
         await redis_client.disconnect()
         redis_client = None
         logger.info("Redis 连接已关闭")

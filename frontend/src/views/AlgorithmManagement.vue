@@ -462,7 +462,7 @@ interface AlertConfig {
   duration_seconds: number
   count_threshold: number
   cooldown_seconds: number
-  alert_level: 'info' | 'warning' | 'danger'
+  alert_level: 'info' | 'warning' | 'danger' | 'critical'
 }
 
 interface Algorithm {
@@ -628,7 +628,7 @@ const algorithmForm = ref({
     duration_seconds: 3,
     count_threshold: 1,
     cooldown_seconds: 30,
-    alert_level: 'warning' as 'info' | 'warning' | 'danger'
+    alert_level: 'warning' as 'info' | 'warning' | 'danger' | 'critical'
   },
   description: ''
 })
@@ -645,10 +645,12 @@ const algorithmRules = {
   }
 }
 
+// 与添加策略 AddPolicy.vue 一致：危险、严重、一般、提示
 const alertLevelOptions = [
-  { label: '提示 (Info)', value: 'info' },
-  { label: '警告 (Warning)', value: 'warning' },
-  { label: '危险 (Danger)', value: 'danger' }
+  { label: '危险', value: 'danger' },
+  { label: '严重', value: 'critical' },
+  { label: '一般', value: 'warning' },
+  { label: '提示', value: 'info' }
 ]
 
 // Computed
@@ -708,8 +710,9 @@ function formatModelType(type?: string | null): string {
 function getAlertLevelText(level?: string): string {
   const map: Record<string, string> = {
     info: '提示',
-    warning: '警告',
-    danger: '危险'
+    warning: '一般',
+    danger: '危险',
+    critical: '严重'
   }
   return map[level || 'warning'] || level || '-'
 }

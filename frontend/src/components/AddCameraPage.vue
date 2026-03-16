@@ -387,11 +387,7 @@
         <n-form-item label="告警级别">
           <n-select
             v-model:value="alertStrategyForm.alert_level"
-            :options="[
-              { label: '提示', value: 'info' },
-              { label: '警告', value: 'warning' },
-              { label: '危险', value: 'danger' }
-            ]"
+            :options="alertLevelOptions"
             style="width: 100%"
           />
         </n-form-item>
@@ -462,13 +458,21 @@ interface Region {
   type: string
 }
 
+/** 告警级别选项（与添加策略 AddPolicy.vue 一致：危险、严重、一般、提示） */
+const alertLevelOptions = [
+  { label: '危险', value: 'danger' },
+  { label: '严重', value: 'critical' },
+  { label: '一般', value: 'warning' },
+  { label: '提示', value: 'info' }
+]
+
 /** 告警策略配置（算法默认 + 摄像头可覆盖） */
 interface AlertStrategyConfig {
   trigger_type: 'instant' | 'duration' | 'count'
   duration_seconds: number
   count_threshold: number
   cooldown_seconds: number
-  alert_level: 'info' | 'warning' | 'danger'
+  alert_level: 'info' | 'warning' | 'danger' | 'critical'
 }
 
 interface Algorithm {

@@ -1,53 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-推送配置管理 API
+通知配置相关业务逻辑：
+- 推送通道（endpoints）
+- 模板（templates）
+- 策略（policies）
+- 审计日志 / 测试发送的事件构造
 
-包含：
-- endpoints（通道实例）
-- templates（模板）
-- policies（路由策略）
-- delivery logs（审计）
-- test send（测试发送）
+控制层仅负责 HTTP / 权限与响应包装，具体业务逻辑集中在本模块，便于复用与测试。
 """
 
 from __future__ import annotations
 
 import json
-from typing import Optional, List, Any, Dict
+from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
-from app.core.database import get_db
-from app.models import User
-from app.models.notification import (
-    NotificationEndpoint,
-    NotificationTemplate,
-    NotificationPolicy,
-    NotificationDeliveryLog,
-)
-from app.models import Camera, Algorithm
-from app.models.base import generate_uuid
-from app.schemas.common import success_response, page_response
-from app.schemas.notification import (
-    NotificationEndpointCreate,
-    NotificationEndpointUpdate,
-    NotificationTemplateCreate,
-    NotificationTemplateUpdate,
-    NotificationPolicyCreate,
-    NotificationPolicyUpdate,
-    NotificationTestSendRequest,
-)
-from app.services.notification_crypto import (
-    encrypt_config,
-    decrypt_config,
-    mask_config,
-    merge_update_config,
-)
-from config.settings import settings
-from common.logging import logger
 from app.core.redis import (
     set_notification_endpoint_in_redis,
     delete_notification_endpoint_from_redis,
@@ -56,9 +25,29 @@ from app.core.redis import (
     set_notification_policy_in_redis,
     delete_notification_policy_from_redis,
 )
+from app.models.notification import (
+    NotificationEndpoint,
+    NotificationTemplate,
+    NotificationPolicy,
+    NotificationDeliveryLog,
+)
+from app.models.base import generate_uuid
+from app.schemas.notification import (
+    NotificationEndpointCreate,
+    NotificationEndpointUpdate,
+    NotificationTemplateCreate,
+    NotificationTemplateUpdate,
+    NotificationPolicyCreate,
+    NotificationPolicyUpdate,
+)
+from app.services.notification_crypto import (
+    encrypt_config,
+    decrypt_config,
+    mask_config,
+    merge_update_config,
+)
 
-
-router = APIRouter()
+from common.logging import logger
 
 _CATEGORY_CN = {"ai": "业务告警", "system": "系统告警"}
 _LEVEL_CN = {"info": "提示", "warning": "一般", "danger": "严重", "critical": "致命"}
@@ -78,7 +67,7 @@ async def _get_name_by_id(
     return getattr(row, name_field, None) if row else None
 
 
-async def _get_endpoint_meta(db: AsyncSession, endpoint_id: str) -> tuple[Optional[str], Optional[str]]:
+async def _get_endpoint_meta(db: AsyncSession, endpoint_id: str) -> Tuple[Optional[str], Optional[str]]:
     if not endpoint_id:
         return None, None
     result = await db.execute(select(NotificationEndpoint).where(NotificationEndpoint.id == endpoint_id))
@@ -98,17 +87,13 @@ def _format_time_window(tw: Any) -> Optional[str]:
     return f"{start}-{end}"
 
 
-async def _build_policy_desc(
+async def build_policy_desc(
     db: AsyncSession,
     match: Dict[str, Any],
     actions: Any,
-) -> tuple[str, str]:
+) -> Tuple[str, str]:
     """
-    根据新的 match 结构生成中文描述：
-    - alarm_config: [{value,label}]
-    - area_config: [{value,label,area_id_path,area_name_path}]
-    - camera_config: [{value,label}]
-    - exclude: 同上结构
+    根据 match/actions 生成策略的中文描述信息。
     """
     m = match or {}
 
@@ -119,12 +104,11 @@ async def _build_policy_desc(
             return v
         return [v]
 
-    parts: list[str] = []
+    parts: List[str] = []
     cat = str(m.get("category") or "").strip()
     if cat:
         parts.append(_CATEGORY_CN.get(cat, cat))
 
-    # 报警类型（alarm_config）
     alarm_cfgs = [x for x in _as_list(m.get("alarm_config")) if isinstance(x, dict)]
     if alarm_cfgs:
         labels = [str(x.get("label") or x.get("value") or "").strip() for x in alarm_cfgs]
@@ -132,21 +116,18 @@ async def _build_policy_desc(
         if labels:
             parts.append("类型: " + "、".join(labels))
 
-    # 区域（area_config）
     area_cfgs = [x for x in _as_list(m.get("area_config")) if isinstance(x, dict)]
     if area_cfgs:
         labels = [str(x.get("label") or "").strip() for x in area_cfgs if str(x.get("label") or "").strip()]
         if labels:
             parts.append("区域: " + "、".join(labels))
 
-    # 设备（camera_config）
     cam_cfgs = [x for x in _as_list(m.get("camera_config")) if isinstance(x, dict)]
     if cam_cfgs:
         labels = [str(x.get("label") or "").strip() for x in cam_cfgs if str(x.get("label") or "").strip()]
         if labels:
             parts.append("设备: " + "、".join(labels))
 
-    # 等级
     levels = m.get("level")
     if isinstance(levels, list):
         ls = [str(x).strip() for x in levels if str(x).strip()]
@@ -157,14 +138,12 @@ async def _build_policy_desc(
         if lvl:
             parts.append("等级: " + _LEVEL_CN.get(lvl, lvl))
 
-    # 触发时段
     tw = _format_time_window(m.get("time_window"))
     parts.append(f"时段: {tw}" if tw else "时段: 全天生效")
 
-    # exclude 描述（可选）
     ex = m.get("exclude") if isinstance(m.get("exclude"), dict) else {}
     if ex:
-        ex_parts: list[str] = []
+        ex_parts: List[str] = []
         ex_alarm_cfgs = [x for x in _as_list(ex.get("alarm_config")) if isinstance(x, dict)]
         if ex_alarm_cfgs:
             labels = [str(x.get("label") or x.get("value") or "").strip() for x in ex_alarm_cfgs]
@@ -199,20 +178,19 @@ async def _build_policy_desc(
 
     match_desc = " | ".join([p for p in parts if p]) if parts else "（无匹配条件）"
 
-    acts: list[dict] = []
+    acts: List[dict] = []
     if isinstance(actions, list):
         acts = [a for a in actions if isinstance(a, dict)]
     elif isinstance(actions, dict):
         acts = [actions]
 
-    act_descs: list[str] = []
+    act_descs: List[str] = []
     for a in acts:
         endpoint_ids = a.get("endpoint_ids") or []
         if not isinstance(endpoint_ids, list):
             endpoint_ids = []
-        # 解析 endpoint 名称与 provider
-        ep_names: list[str] = []
-        providers: list[str] = []
+        ep_names: List[str] = []
+        providers: List[str] = []
         for eid in endpoint_ids:
             pid, nm = await _get_endpoint_meta(db, str(eid))
             if pid:
@@ -233,7 +211,7 @@ async def _build_policy_desc(
             head += provider_cn + "-"
         head += "、".join(ep_names) if ep_names else "-"
 
-        details: list[str] = []
+        details: List[str] = []
         if tmpl_id:
             details.append(str(tmpl_name or tmpl_id))
         if throttle > 0:
@@ -253,14 +231,13 @@ async def _build_policy_desc(
     return match_desc, actions_desc
 
 
-@router.get("/endpoints", summary="获取推送通道列表")
-async def list_endpoints(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+# ---------- Endpoints ----------
+
+
+async def list_endpoints(db: AsyncSession) -> List[Dict[str, Any]]:
     result = await db.execute(select(NotificationEndpoint).order_by(NotificationEndpoint.created_at.desc()))
     rows = result.scalars().all()
-    data = []
+    data: List[Dict[str, Any]] = []
     for r in rows:
         try:
             cfg = decrypt_config(r.encrypted_config)
@@ -277,15 +254,10 @@ async def list_endpoints(
                 "updated_at": r.updated_at.isoformat() if r.updated_at else None,
             }
         )
-    return success_response(data)
+    return data
 
 
-@router.post("/endpoints", summary="创建推送通道")
-async def create_endpoint(
-    payload: NotificationEndpointCreate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+async def create_endpoint(db: AsyncSession, payload: NotificationEndpointCreate) -> str:
     cfg = payload.config or {}
     enc = encrypt_config(cfg)
     hint = json.dumps(mask_config(payload.provider, cfg), ensure_ascii=False)
@@ -299,27 +271,23 @@ async def create_endpoint(
     )
     db.add(row)
     await db.commit()
-    await set_notification_endpoint_in_redis({
-        "id": row.id,
-        "name": row.name,
-        "provider": row.provider,
-        "is_enabled": row.is_enabled,
-        "config_hint": row.config_hint,
-    })
-    return success_response({"id": row.id})
+    await set_notification_endpoint_in_redis(
+        {
+            "id": row.id,
+            "name": row.name,
+            "provider": row.provider,
+            "is_enabled": row.is_enabled,
+            "config_hint": row.config_hint,
+        }
+    )
+    return row.id
 
 
-@router.put("/endpoints/{endpoint_id}", summary="更新推送通道")
-async def update_endpoint(
-    endpoint_id: str,
-    payload: NotificationEndpointUpdate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+async def update_endpoint(db: AsyncSession, endpoint_id: str, payload: NotificationEndpointUpdate) -> bool:
     result = await db.execute(select(NotificationEndpoint).where(NotificationEndpoint.id == endpoint_id))
     row = result.scalar_one_or_none()
     if row is None:
-        raise HTTPException(status_code=404, detail="通道不存在")
+        return False
 
     if payload.name is not None:
         row.name = payload.name
@@ -337,41 +305,37 @@ async def update_endpoint(
         row.config_hint = json.dumps(mask_config(row.provider, merged), ensure_ascii=False)
 
     await db.commit()
-    await set_notification_endpoint_in_redis({
-        "id": row.id,
-        "name": row.name,
-        "provider": row.provider,
-        "is_enabled": row.is_enabled,
-        "encrypted_config": row.encrypted_config,
-        "config_hint": row.config_hint,
-    })
-    return success_response({"updated": True})
+    await set_notification_endpoint_in_redis(
+        {
+            "id": row.id,
+            "name": row.name,
+            "provider": row.provider,
+            "is_enabled": row.is_enabled,
+            "encrypted_config": row.encrypted_config,
+            "config_hint": row.config_hint,
+        }
+    )
+    return True
 
 
-@router.delete("/endpoints/{endpoint_id}", summary="删除推送通道")
-async def delete_endpoint(
-    endpoint_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+async def delete_endpoint(db: AsyncSession, endpoint_id: str) -> bool:
     result = await db.execute(select(NotificationEndpoint).where(NotificationEndpoint.id == endpoint_id))
     row = result.scalar_one_or_none()
     if row is None:
-        raise HTTPException(status_code=404, detail="通道不存在")
+        return False
     await db.delete(row)
     await db.commit()
     await delete_notification_endpoint_from_redis(endpoint_id)
-    return success_response({"deleted": True})
+    return True
 
 
-@router.get("/templates", summary="获取推送模板列表")
-async def list_templates(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+# ---------- Templates ----------
+
+
+async def list_templates(db: AsyncSession) -> List[Dict[str, Any]]:
     result = await db.execute(select(NotificationTemplate).order_by(NotificationTemplate.created_at.desc()))
     rows = result.scalars().all()
-    data = [
+    return [
         {
             "id": r.id,
             "name": r.name,
@@ -381,15 +345,9 @@ async def list_templates(
         }
         for r in rows
     ]
-    return success_response(data)
 
 
-@router.post("/templates", summary="创建推送模板")
-async def create_template(
-    payload: NotificationTemplateCreate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+async def create_template(db: AsyncSession, payload: NotificationTemplateCreate) -> str:
     row = NotificationTemplate(
         id=generate_uuid(),
         name=payload.name,
@@ -399,26 +357,23 @@ async def create_template(
     )
     db.add(row)
     await db.commit()
-    await set_notification_template_in_redis({
-        "id": row.id,
-        "name": row.name,
-        "type": row.type,
-        "is_enabled": row.is_enabled,
-    })
-    return success_response({"id": row.id})
+    await set_notification_template_in_redis(
+        {
+            "id": row.id,
+            "name": row.name,
+            "type": row.type,
+            "is_enabled": row.is_enabled,
+        }
+    )
+    return row.id
 
 
-@router.put("/templates/{template_id}", summary="更新推送模板")
-async def update_template(
-    template_id: str,
-    payload: NotificationTemplateUpdate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+async def update_template(db: AsyncSession, template_id: str, payload: NotificationTemplateUpdate) -> bool:
+    # logger.info(f"update_template: {payload} ")
     result = await db.execute(select(NotificationTemplate).where(NotificationTemplate.id == template_id))
     row = result.scalar_one_or_none()
     if row is None:
-        raise HTTPException(status_code=404, detail="模板不存在")
+        return False
     if payload.name is not None:
         row.name = payload.name
     if payload.is_enabled is not None:
@@ -426,39 +381,36 @@ async def update_template(
     if payload.content is not None:
         row.content = payload.content
     await db.commit()
-    await set_notification_template_in_redis({
-        "id": row.id,
-        "name": row.name,
-        "type": row.type,
-        "is_enabled": row.is_enabled,
-    })
-    return success_response({"updated": True})
+    await set_notification_template_in_redis(
+        {
+            "id": row.id,
+            "name": row.name,
+            "type": row.type,
+            "content": row.content,
+            "is_enabled": row.is_enabled,
+        }
+    )
+    return True
 
 
-@router.delete("/templates/{template_id}", summary="删除推送模板")
-async def delete_template(
-    template_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+async def delete_template(db: AsyncSession, template_id: str) -> bool:
     result = await db.execute(select(NotificationTemplate).where(NotificationTemplate.id == template_id))
     row = result.scalar_one_or_none()
     if row is None:
-        raise HTTPException(status_code=404, detail="模板不存在")
+        return False
     await db.delete(row)
     await db.commit()
     await delete_notification_template_from_redis(template_id)
-    return success_response({"deleted": True})
+    return True
 
 
-@router.get("/policies", summary="获取推送策略列表")
-async def list_policies(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+# ---------- Policies ----------
+
+
+async def list_policies(db: AsyncSession) -> List[Dict[str, Any]]:
     result = await db.execute(select(NotificationPolicy).order_by(NotificationPolicy.priority.asc()))
     rows = result.scalars().all()
-    data = [
+    return [
         {
             "id": r.id,
             "name": r.name,
@@ -471,44 +423,30 @@ async def list_policies(
         }
         for r in rows
     ]
-    return success_response(data)
 
 
-@router.get("/policies/{policy_id}", summary="获取推送策略详情")
-async def get_policy(
-    policy_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+async def get_policy(db: AsyncSession, policy_id: str) -> Optional[Dict[str, Any]]:
     result = await db.execute(select(NotificationPolicy).where(NotificationPolicy.id == policy_id))
     r = result.scalar_one_or_none()
     if r is None:
-        raise HTTPException(status_code=404, detail="策略不存在")
-    return success_response(
-        {
-            "id": r.id,
-            "name": r.name,
-            "priority": r.priority,
-            "is_enabled": r.is_enabled,
-            "match": r.match,
-            "actions": r.actions,
-            "match_desc": r.match_desc,
-            "actions_desc": r.actions_desc,
-        }
-    )
+        return None
+    return {
+        "id": r.id,
+        "name": r.name,
+        "priority": r.priority,
+        "is_enabled": r.is_enabled,
+        "match": r.match,
+        "actions": r.actions,
+        "match_desc": r.match_desc,
+        "actions_desc": r.actions_desc,
+    }
 
 
-@router.post("/policies", summary="创建推送策略")
-async def create_policy(
-    payload: NotificationPolicyCreate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    actions = payload.actions or []
-    # 兼容：旧形态为 dict 时包装成 list
+async def create_policy(db: AsyncSession, payload: NotificationPolicyCreate) -> str:
+    actions: Any = payload.actions or []
     if isinstance(actions, dict):
         actions = [actions]
-    match_desc, actions_desc = await _build_policy_desc(db, payload.match or {}, actions)
+    match_desc, actions_desc = await build_policy_desc(db, payload.match or {}, actions)
     row = NotificationPolicy(
         id=generate_uuid(),
         name=payload.name,
@@ -533,20 +471,14 @@ async def create_policy(
             "actions_desc": row.actions_desc,
         }
     )
-    return success_response({"id": row.id})
+    return row.id
 
 
-@router.put("/policies/{policy_id}", summary="更新推送策略")
-async def update_policy(
-    policy_id: str,
-    payload: NotificationPolicyUpdate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+async def update_policy(db: AsyncSession, policy_id: str, payload: NotificationPolicyUpdate) -> bool:
     result = await db.execute(select(NotificationPolicy).where(NotificationPolicy.id == policy_id))
     row = result.scalar_one_or_none()
     if row is None:
-        raise HTTPException(status_code=404, detail="策略不存在")
+        return False
     if payload.name is not None:
         row.name = payload.name
     if payload.priority is not None:
@@ -556,16 +488,16 @@ async def update_policy(
     if payload.match is not None:
         row.match = payload.match
     if payload.actions is not None:
-        actions = payload.actions
+        actions: Any = payload.actions
         if isinstance(actions, dict):
             actions = [actions]
         row.actions = actions
 
-    # 任何 match/actions 变更后，都重算描述（也允许仅改 name/priority 时保留原描述）
     if payload.match is not None or payload.actions is not None:
-        match_desc, actions_desc = await _build_policy_desc(db, row.match or {}, row.actions or {})
+        match_desc, actions_desc = await build_policy_desc(db, row.match or {}, row.actions or {})
         row.match_desc = match_desc
         row.actions_desc = actions_desc
+
     await db.commit()
     await set_notification_policy_in_redis(
         {
@@ -579,32 +511,28 @@ async def update_policy(
             "actions_desc": row.actions_desc,
         }
     )
-    return success_response({"updated": True})
+    return True
 
 
-@router.delete("/policies/{policy_id}", summary="删除推送策略")
-async def delete_policy(
-    policy_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+async def delete_policy(db: AsyncSession, policy_id: str) -> bool:
     result = await db.execute(select(NotificationPolicy).where(NotificationPolicy.id == policy_id))
     row = result.scalar_one_or_none()
     if row is None:
-        raise HTTPException(status_code=404, detail="策略不存在")
+        return False
     await db.delete(row)
     await db.commit()
     await delete_notification_policy_from_redis(policy_id)
-    return success_response({"deleted": True})
+    return True
 
 
-@router.get("/delivery-logs", summary="获取推送审计日志（分页）")
+# ---------- Delivery logs & test send ----------
+
+
 async def list_delivery_logs(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+    db: AsyncSession,
+    page: int,
+    page_size: int,
+) -> Tuple[List[Dict[str, Any]], int]:
     q = select(NotificationDeliveryLog).order_by(NotificationDeliveryLog.created_at.desc())
     total_res = await db.execute(select(func.count(NotificationDeliveryLog.id)))
     total = total_res.scalar() or 0
@@ -626,17 +554,14 @@ async def list_delivery_logs(
         }
         for r in rows
     ]
-    return page_response(items, page, page_size, total)
+    return items, total
 
 
-@router.post("/test-send", summary="测试发送（入队异步推送）")
-async def test_send(
-    payload: NotificationTestSendRequest,
-    current_user: User = Depends(get_current_user),
-):
-    from app.services.notification_service import enqueue_notification_event
-
-    event = {
+def build_test_event(payload: Any) -> Dict[str, Any]:
+    """
+    根据测试发送请求构造一条入队的通知事件。
+    """
+    return {
         "category": payload.category,
         "alarm_id": f"test_{generate_uuid()}",
         "alarm_type": payload.alarm_type,
@@ -652,8 +577,5 @@ async def test_send(
         "text": payload.text,
         "image_url": payload.image_url,
         "link_url": payload.link_url,
-        # 让策略能精确命中：携带指定 endpoint/template（MVP：policy 里可直接写固定 endpoint_ids/template_id）
     }
-    enqueue_notification_event(event)
-    return success_response({"queued": True})
 

@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-认证 API
+认证 API Controller
 
-提供登录、登出、Token 刷新等接口
+- 负责登录、登出、Token 刷新等 HTTP 路由
+- 业务能力通过 security/auth_service 等模块实现
 """
 import json
 from typing import Optional
@@ -17,7 +18,7 @@ from app.core.security import (
     verify_password,
     create_access_token,
     create_refresh_token,
-    hash_password
+    hash_password,
 )
 from app.core.config import settings
 from app.api.deps import get_current_user, get_client_ip
@@ -31,7 +32,7 @@ from app.schemas.auth import (
     UserInfo,
     RefreshTokenRequest,
     RefreshTokenResponse,
-    ChangePasswordRequest
+    ChangePasswordRequest,
 )
 from app.schemas.common import MessageResponse
 from common.redis.channels import RedisKeys
@@ -39,7 +40,16 @@ from common.logging import logger
 
 # 用户缓存 TTL（秒），与 access token 一致
 _USER_CACHE_TTL = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
-_USER_CACHE_KEYS = ("id", "username", "nickname", "email", "phone", "avatar", "role", "is_active")
+_USER_CACHE_KEYS = (
+    "id",
+    "username",
+    "nickname",
+    "email",
+    "phone",
+    "avatar",
+    "role",
+    "is_active",
+)
 
 
 router = APIRouter()
@@ -49,19 +59,17 @@ router = APIRouter()
 async def login(
     request: Request,
     login_data: LoginRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     用户登录
-    
+
     验证用户名密码，返回 Access Token 和 Refresh Token
     """
     # 查询用户
-    result = await db.execute(
-        select(User).where(User.username == login_data.username)
-    )
+    result = await db.execute(select(User).where(User.username == login_data.username))
     user = result.scalar_one_or_none()
-    
+
     # 验证用户存在
     if user is None:
         logger.warning(
@@ -70,10 +78,9 @@ async def login(
             f"ip={get_client_ip(request)}"
         )
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用户名或密码错误"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误"
         )
-    
+
     # 验证密码
     if not verify_password(login_data.password, user.password):
         logger.warning(
@@ -82,21 +89,18 @@ async def login(
             f"ip={get_client_ip(request)}"
         )
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用户名或密码错误"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误"
         )
-    
+
     # 检查用户是否启用
     if not user.is_active:
         logger.warning(
-            f"登录失败: 用户已禁用, "
-            f"username={login_data.username}"
+            f"登录失败: 用户已禁用, " f"username={login_data.username}"
         )
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="用户已被禁用"
+            status_code=status.HTTP_403_FORBIDDEN, detail="用户已被禁用"
         )
-    
+
     # 生成 Token
     token_data = {"sub": user.id}
     access_token = create_access_token(token_data)
@@ -115,10 +119,9 @@ async def login(
         logger.warning(f"登录后写入用户缓存失败: user_id={user.id}, err={e}")
 
     logger.info(
-        f"登录成功: username={user.username}, "
-        f"ip={get_client_ip(request)}"
+        f"登录成功: username={user.username}, " f"ip={get_client_ip(request)}"
     )
-    
+
     return LoginResponse(
         code=0,
         message="登录成功",
@@ -127,7 +130,7 @@ async def login(
                 access_token=access_token,
                 refresh_token=refresh_token,
                 token_type="Bearer",
-                expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+                expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
             ),
             user=UserInfo(
                 id=user.id,
@@ -137,64 +140,64 @@ async def login(
                 phone=user.phone,
                 avatar=user.avatar,
                 role=user.role,
-                is_admin=user.is_admin
-            )
-        )
+                is_admin=user.is_admin,
+            ),
+        ),
     )
 
 
 @router.post("/refresh", response_model=RefreshTokenResponse, summary="刷新Token")
 async def refresh_token(
-    refresh_data: RefreshTokenRequest
+    refresh_data: RefreshTokenRequest,
 ):
     """
     刷新 Access Token
-    
+
     使用 Refresh Token 获取新的 Token 对
     """
     auth_service = get_auth_service()
-    
+
     result = await auth_service.refresh_access_token(refresh_data.refresh_token)
-    
+
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh Token 无效或已过期"
+            detail="Refresh Token 无效或已过期",
         )
-    
+
     return RefreshTokenResponse(
         code=0,
         message="success",
-        data=TokenResponse(**result)
+        data=TokenResponse(**result),
     )
 
 
 @router.post("/logout", response_model=MessageResponse, summary="用户登出")
 async def logout(
     request: Request,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     用户登出
-    
+
     将当前 Token 加入黑名单
     """
     # 获取当前 Token
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.replace("Bearer ", "") if auth_header else None
-    
+
     if token:
         auth_service = get_auth_service()
         await auth_service.blacklist_token(token)
-    
+
     logger.info(f"用户登出: username={current_user.username}")
-    
+
     return MessageResponse(code=0, message="登出成功")
 
 
 @router.get("/me", summary="获取当前用户信息")
 async def get_me(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     获取当前登录用户信息
@@ -210,16 +213,20 @@ async def get_me(
             phone=current_user.phone,
             avatar=current_user.avatar,
             role=current_user.role,
-            is_admin=current_user.is_admin
-        )
+            is_admin=current_user.is_admin,
+        ),
     }
 
 
-@router.post("/change-password", response_model=MessageResponse, summary="修改密码")
+@router.post(
+    "/change-password",
+    response_model=MessageResponse,
+    summary="修改密码",
+)
 async def change_password(
     password_data: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     修改当前用户密码（从 DB 拉取用户以校验旧密码并更新，修改后清除 Redis 用户缓存）
@@ -232,7 +239,7 @@ async def change_password(
     if not verify_password(password_data.old_password, user.password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="旧密码错误"
+            detail="旧密码错误",
         )
 
     user.password = hash_password(password_data.new_password)
@@ -247,3 +254,4 @@ async def change_password(
 
     logger.info(f"密码已修改: username={user.username}")
     return MessageResponse(code=0, message="密码修改成功")
+

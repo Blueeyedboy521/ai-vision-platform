@@ -29,12 +29,18 @@ def process_alarm(alarm_data: dict) -> None:
     camera_id = alarm_data.get("camera_id")
     alert_level = alarm_data.get("alert_level", "info")
     
+    
+    # 处理时间 timestamp 转换为字符串”2026-02-01 21:12:12“格式保存到alarm_time
+    alarm_time = datetime.fromisoformat(
+                alarm_data.get("timestamp", datetime.now().isoformat())
+            )
+    alarm_data["alarm_time"] = alarm_time.strftime("%Y-%m-%d %H:%M:%S")
     logger.info(
         f"处理告警: alarm_id={alarm_id}, "
         f"camera_id={camera_id}, "
-        f"level={alert_level}"
+        f"level={alert_level}",
+        f"alarm_time={alarm_data.get('alarm_time')}"
     )
-    
     # 1. 保存到数据库
     try:
         save_alarm_to_db(alarm_data)
@@ -102,12 +108,10 @@ def save_alarm_to_db(alarm_data: dict) -> None:
             camera_id=alarm_data.get("camera_id"),
             algorithm_id=alarm_data.get("algorithm_id"),
             alarm_type=alarm_data.get("alarm_type", "detection"),
-            level=_map_alert_level(alarm_data.get("alert_level", "info")),
+            level=_map_alert_level(alarm_data.get("alert_level")),
             title=alarm_data.get("title"),
             description=alarm_data.get("description"),
-            alarm_time=datetime.fromisoformat(
-                alarm_data.get("timestamp", datetime.now().isoformat())
-            ),
+            alarm_time=alarm_data.get("alarm_time"),
             snapshot_url=alarm_data.get("snapshot_path"),
             detection_data=alarm_data.get("detections", []),
             # 冗余字段：减少告警列表页 join/循环查询
@@ -134,11 +138,8 @@ def _map_alert_level(level: str) -> str:
     """
     level_map = {
         "info": "info",
-        "low": "info",
         "warning": "warning",
-        "medium": "warning",
         "danger": "danger",
-        "high": "danger",
         "critical": "critical"
     }
     return level_map.get(level.lower(), "info")
@@ -157,18 +158,20 @@ def enqueue_notification_event_from_alarm(alarm_data: dict) -> None:
         "level": _map_alert_level(alarm_data.get("alert_level", "info")),
         "camera_id": alarm_data.get("camera_id"),
         "camera_name": alarm_data.get("camera_name"),
+        "alarm_time": alarm_data.get('alarm_time'),
         # 区域路径：dispatch_event 会根据 camera_id 补全 area_id_path/area_name_path；此处仅预填名称路径供无 camera_id 时展示
         "area_id_path": None,
         "area_name_path": alarm_data.get("area_name") or alarm_data.get("region_name"),
         "area_name": alarm_data.get("area_name") or alarm_data.get("region_name"),  # 模板 {{area_name}}
         "algorithm_id": alarm_data.get("algorithm_id"),
         "algorithm_name": alarm_data.get("algorithm_name"),
-        "title": alarm_data.get("title") or alarm_data.get("algorithm_name") or "告警通知",
+        "title": alarm_data.get("title") or alarm_data.get("algorithm_name") ,
         "text": alarm_data.get("description") or "",
         # snapshot_url 建议走 preview（缩略图），由模板决定是否使用
         "image_url": None,
         "link_url": None,
     }
+    logger.info(f"enqueue_notification_event_from_alarm: {payload} ")
     enqueue_notification_event(payload)
 
 
@@ -236,6 +239,7 @@ def publish_realtime_alarm(alarm_data: dict) -> None:
             "level": alarm_data.get("alert_level", "info"),
             "title": alarm_data.get("title"),
             "timestamp": alarm_data.get("timestamp"),
+            "alarm_time": alarm_data.get("alarm_time"),
             "snapshot_path": snapshot_key,
             "snapshot_url": snapshot_url,
             "detection_data": alarm_data.get("detections", []),

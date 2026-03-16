@@ -290,12 +290,13 @@ def _render_message_from_template(
     输入 template dict（来自 Redis/DB 快照），渲染为抽象消息。
     template_obj 为空时回退 event.title/text。
     """
+    logger.info(f"template_obj: {template_obj}, event: {event} ")
     content = (template_obj or {}).get("content") or {}
     title_tpl = _to_str(content.get("title") or event.get("title") or "告警通知")
     text_tpl = _to_str(content.get("text") or event.get("text") or "")
     image_tpl = content.get("image_url") or event.get("image_url")
     link_tpl = content.get("link_url") or event.get("link_url")
-
+    logger.info(f"title_tpl: {title_tpl}, text_tpl: {text_tpl}, image_tpl: {image_tpl}, link_tpl: {link_tpl},content: {content} ")
     return RenderedMessage(
         title=_render_text_with_vars(title_tpl, event),
         text=_render_text_with_vars(text_tpl, event),
@@ -586,15 +587,7 @@ def dispatch_event(event: Dict[str, Any]) -> None:
                     provider = get_provider(_to_str(endpoint_obj.get("provider")))
                     provider_name = _to_str(endpoint_obj.get("provider"))
                     endpoint_id = _to_str(endpoint_obj.get("id"))
-                    logger.info(
-                        "【最终推送内容】 endpoint_id=%s provider=%s title=%s text=%s image_url=%s link_url=%s",
-                        endpoint_id,
-                        provider_name,
-                        msg.title,
-                        msg.text,
-                        msg.image_url,
-                        msg.link_url,
-                    )
+                    logger.info(f"最终推送内容: endpoint_id={endpoint_id}, provider={provider_name}, title={msg.title}, text={msg.text}, image_url={msg.image_url}, link_url={msg.link_url} ")
                     provider.send_sync(cfg, msg)
                     delivery.status = "success"
                     delivery.error = None

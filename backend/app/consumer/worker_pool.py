@@ -14,7 +14,7 @@ from common.logging import logger
 from config.settings import settings
 from common.redis.channels import RedisKeys
 
-from common.redis.client import get_redis_client
+from common.redis.client import RedisClient
 
 
 class AlarmWorkerPool:
@@ -44,15 +44,18 @@ class AlarmWorkerPool:
         
         self.running = True
         
-        # 创建同步 Redis 客户端
-        redis_wrapper = get_redis_client()
+        # 创建独立的同步 Redis 客户端（避免与其它线程池共享同一连接后被 close）
+        redis_wrapper = RedisClient(
+            url=settings.REDIS_URL,
+            max_connections=settings.REDIS_MAX_CONNECTIONS,
+            decode_responses=True,
+        )
         try:
             redis_wrapper.connect_sync()
         except Exception as e:
             logger.error(f"告警线程池初始化 Redis 连接失败: {e}")
             self.running = False
             return
-        # 使用底层同步客户端，便于在线程中阻塞 blpop
         self.redis_client = redis_wrapper.sync_client
         
         # 创建 Worker 线程
@@ -147,7 +150,23 @@ class AlarmWorkerPool:
             except redis.ConnectionError as e:
                 logger.error(f"Redis 连接错误: {e}")
                 if self.running:
-                    # 等待后重试
+                    # 重建连接（Windows 下 socket 失效常见：10038）
+                    try:
+                        with self._lock:
+                            if self.redis_client:
+                                try:
+                                    self.redis_client.close()
+                                except Exception:
+                                    pass
+                            wrapper = RedisClient(
+                                url=settings.REDIS_URL,
+                                max_connections=settings.REDIS_MAX_CONNECTIONS,
+                                decode_responses=True,
+                            )
+                            wrapper.connect_sync()
+                            self.redis_client = wrapper.sync_client
+                    except Exception:
+                        pass
                     threading.Event().wait(timeout=1.0)
                     
             except Exception as e:

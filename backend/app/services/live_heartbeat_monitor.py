@@ -17,7 +17,7 @@ from common.redis import RedisKeys
 from app.core.redis import get_redis
 from app.services.config_publisher import get_config_publisher
 from config.settings import settings
-
+from datetime import datetime
 
 # 检测间隔（秒）
 CHECK_INTERVAL_SEC = 45
@@ -69,7 +69,8 @@ async def _run_heartbeat_check() -> None:
                 logger.info(f"摄像头{camera_name}（{camera_id}）在线状态发生变化: was_online={was_online}, now_online={now_online}")
                 try:
                     from app.services.notification_service import enqueue_notification_event
-
+                    # 将time转换为字符串”2026-02-01 21:12:12“格式
+                    alarm_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     payload = {
                         "category": "system",
                         "alarm_id": f"camera_{'online' if now_online else 'offline'}_{camera_id}_{int(time.time())}",
@@ -77,6 +78,7 @@ async def _run_heartbeat_check() -> None:
                         "level": "info" if now_online else "warning",
                         "camera_id": camera_id,
                         "camera_name": camera_name,
+                        "alarm_time": alarm_time,
                         # 目前仅携带名称，后续可升级为完整层级路径
                         "area_id_path": None,
                         "area_name_path": None,

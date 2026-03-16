@@ -14,8 +14,9 @@ from typing import List, Optional
 import redis
 
 from common.logging import logger
-from common.redis.client import get_redis_client
+from common.redis.client import RedisClient
 from common.redis.channels import RedisKeys
+from config.settings import settings
 
 
 class NotificationWorkerPool:
@@ -31,7 +32,12 @@ class NotificationWorkerPool:
             return
         self.running = True
 
-        wrapper = get_redis_client()
+        # 创建独立的同步 Redis 客户端（避免与其它线程池共享同一连接后被 close）
+        wrapper = RedisClient(
+            url=settings.REDIS_URL,
+            max_connections=settings.REDIS_MAX_CONNECTIONS,
+            decode_responses=True,
+        )
         try:
             wrapper.connect_sync()
         except Exception as e:
@@ -122,6 +128,22 @@ class NotificationWorkerPool:
                     )
             except redis.ConnectionError as e:
                 logger.error(f"{name} Redis 连接错误: {e}")
+                # 重建连接（Windows 下 socket 失效常见：10038）
+                try:
+                    if self.redis_client:
+                        try:
+                            self.redis_client.close()
+                        except Exception:
+                            pass
+                    wrapper = RedisClient(
+                        url=settings.REDIS_URL,
+                        max_connections=settings.REDIS_MAX_CONNECTIONS,
+                        decode_responses=True,
+                    )
+                    wrapper.connect_sync()
+                    self.redis_client = wrapper.sync_client
+                except Exception:
+                    pass
                 threading.Event().wait(timeout=1.0)
             except Exception as e:
                 logger.error(f"{name} 处理推送异常: {e}")

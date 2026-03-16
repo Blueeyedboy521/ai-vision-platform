@@ -7,16 +7,16 @@ API 模块
 from fastapi import APIRouter
 
 from .endpoints import (
-    auth,
-    cameras,
-    areas,
-    models,
-    algorithms,
-    alarms,
-    system,
-    media_hooks,
-    files,
-    notifications,
+    auth_controller,
+    cameras_controller,
+    areas_controller,
+    models_controller,
+    algorithms_controller,
+    alarms_controller,
+    system_controller,
+    media_hooks_controller,
+    notifications_controller,
+    files_controller,
 )
 
 
@@ -25,61 +25,61 @@ api_router = APIRouter()
 
 # 注册子路由
 api_router.include_router(
-    auth.router,
+    auth_controller.router,
     prefix="/auth",
-    tags=["认证"]
+    tags=["认证"],
 )
 
 api_router.include_router(
-    cameras.router,
+    cameras_controller.router,
     prefix="/cameras",
-    tags=["摄像头"]
+    tags=["摄像头"],
 )
 
 api_router.include_router(
-    areas.router,
+    areas_controller.router,
     prefix="/areas",
-    tags=["区域"]
+    tags=["区域"],
 )
 
 api_router.include_router(
-    models.router,
+    models_controller.router,
     prefix="/models",
-    tags=["模型"]
+    tags=["模型"],
 )
 
 api_router.include_router(
-    algorithms.router,
+    algorithms_controller.router,
     prefix="/algorithms",
-    tags=["算法"]
+    tags=["算法"],
 )
 
 api_router.include_router(
-    alarms.router,
+    alarms_controller.router,
     prefix="/alarms",
-    tags=["告警"]
+    tags=["告警"],
 )
 
 api_router.include_router(
-    system.router,
+    system_controller.router,
     prefix="/system",
-    tags=["系统"]
+    tags=["系统"],
 )
 
 api_router.include_router(
-    files.router,
+    files_controller.router,
     prefix="/files",
-    tags=["文件"]
+    tags=["文件"],
 )
 
 api_router.include_router(
-    media_hooks.router,
+    media_hooks_controller.router,
     prefix="/media/hook",
-    tags=["流媒体Hook"]
+    tags=["流媒体Hook"],
 )
 
 api_router.include_router(
-    notifications.router,
+    notifications_controller.router,
     prefix="/notifications",
     tags=["推送配置"]
 )

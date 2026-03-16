@@ -372,24 +372,6 @@ const paginatedChannels = computed(() => {
   return filteredChannels.value.slice(start, start + pageSize.value)
 })
 
-const stats = computed(() => {
-  const total = channels.value.length
-  const enabled = channels.value.filter((c) => c.is_enabled).length
-  const dingtalk = channels.value.filter((c) => c.provider === 'dingtalk_bot').length
-  return { total, enabled, disabled: total - enabled, dingtalk }
-})
-
-function applyFilter() {
-  page.value = 1
-}
-
-function resetFilter() {
-  filterProvider.value = null
-  filterEnabled.value = null
-  filterName.value = ''
-  page.value = 1
-}
-
 async function fetchList() {
   loading.value = true
   try {
@@ -400,6 +382,28 @@ async function fetchList() {
   } finally {
     loading.value = false
   }
+}
+
+const stats = computed(() => {
+  const total = channels.value.length
+  const enabled = channels.value.filter((c) => c.is_enabled).length
+  const dingtalk = channels.value.filter((c) => c.provider === 'dingtalk_bot').length
+  return { total, enabled, disabled: total - enabled, dingtalk }
+})
+
+async function applyFilter() {
+  page.value = 1
+  // 查询时重新调用后端接口，确保有请求后台
+  await fetchList()
+}
+
+async function resetFilter() {
+  filterProvider.value = null
+  filterEnabled.value = null
+  filterName.value = ''
+  page.value = 1
+  // 重置后也重新拉取列表
+  await fetchList()
 }
 
 onMounted(() => {
